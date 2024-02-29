@@ -5,9 +5,6 @@
 *.o
 /.config
 /build
-/build-*
-# nix
-/result
 /.clangd
 /.cache
 /artifacts
@@ -26,7 +23,6 @@ tools/.ipynb_checkpoints
 .venv
 # where stuff gets installed to
 /local
-/deps
 
 /musl
 
@@ -35,31 +31,6 @@ tools/.ipynb_checkpoints
 /test/SPEC2017/bitcodes
 test/npb/MG/penmp
 
-/runtime/include/alaska/autoconf.h
+# /runtime/include/alaska/autoconf.h
 .vscode
 .ipynb_checkpoints
-
-
-/.direnv
-
-# Nix result
-/result
-/opt
-/build
-/bench
-
-# Byte-compiled / optimized / DLL files
-__pycache__/
-*.py[cod]
-
-# C extensions
-*.so
-.ipynb_checkpoints
-
-*.o
-*.bc.o
-*.o.bc
-/results
-/memcached/libevent/config.log
-/redis/mesh
-/rss.trace
