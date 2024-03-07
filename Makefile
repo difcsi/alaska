@@ -69,4 +69,91 @@ local/bin/clang:
 redis: FORCE
 	nix develop --command bash -c "source enable && make -C test/redis"
 
-FORCE: # anything you want to force, depend on this
+
+
+# Build memcached w/ anchorage
+memcached/bin/memcached-alaska:
+	@ . opt/enable-alaska-anchorage \
+		&& $(MAKE) -C memcached memcached
+
+# Build redis w/ anchorage
+redis/bin/redis-server-alaska: venv opt/enable-alaska-anchorage
+	@. venv/bin/activate && \
+		. opt/enable-alaska-anchorage \
+		&& $(MAKE) -C redis redis
+
+redis/bin/redis-server-ad: venv opt/enable-alaska-anchorage
+	@. venv/bin/activate && \
+		. opt/enable-alaska-anchorage \
+		&& $(MAKE) -C redis redis
+
+
+
+
+# Create the results for redis
+results/figure9.pdf: venv
+
+	@echo "Compiling redis"
+	@. opt/enable-alaska-anchorage \
+		&& make -C redis redis
+
+	@echo "Generating data for figure 9"
+	@mkdir -p results
+	@. venv/bin/activate \
+		&& . opt/enable-alaska-anchorage \
+		&& ulimit -s unlimited \
+		&& python3 -m redis.frag \
+		&& python3 plotgen/figure9.py
+
+
+
+
+# Create the results for redis (the large version)
+results/redis-alaska-large.csv: venv redis/bin/redis-server-alaska
+	@echo "Generating data for figure 11"
+	@mkdir -p results
+	@. venv/bin/activate \
+	   && . opt/enable-alaska-anchorage \
+		 && ulimit -s unlimited \
+		 && python3 -m redis.frag_large
+
+results/figure11.pdf: venv results/redis-alaska-large.csv
+	@echo "Plotting figure 11"
+	@. venv/bin/activate \
+		&& python3 plotgen/figure9.py
+
+
+
+
+results/memcached-sweep.csv: venv memcached/bin/memcached-alaska
+	@echo "Generating data for figure 9"
+	@mkdir -p results
+	@. venv/bin/activate \
+	   && . opt/enable-alaska-anchorage \
+		 && ulimit -s unlimited \
+		 && python3 -m memcached.ycsb
+
+results/figure12.pdf: venv results/memcached-sweep.csv
+	@echo "Plotting figure 12"
+	@. venv/bin/activate \
+		&& python3 plotgen/figure12.py
+
+
+
+compile:
+	@./build.sh
+
+
+
+distclean:
+	make -C redis clean
+	rm -rf opt build bench
+
+# If these files don't exist, we need to compile.
+opt/enable-alaska-noservice: compile
+opt/enable-alaska-anchorage: compile
+
+in-docker: FORCE
+	docker build --progress=plain -o results .
+
+FORCE:
