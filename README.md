@@ -85,6 +85,16 @@ $ RISCV=/opt/riscv ../tools/build_yukon.sh
 This produces `runtime/libyukon.so.2`, which can be used as a `LD_PRELOAD` library.
 # Alaska ASPLOS'24 Aritfact
 
+This repository serves as an artifact for the ASPLOS'24 paper "Getting a Handle on Unmanaged Memory" by Nick Wanninger, Tommy McMichen, Simone Campanoni, and Peter Dinda.
+
+This artifact contains the following components:
+
+- The Alaska compiler (`./alaska/compiler/`)
+- The Alaska runtime (`./alaska/runtime/`)
+- Evaluation and plotting scripts to *automatically* recreate the experimental results from the paper.
+- Example results from our paper and other runs (`./example-results/`)
+
+
 
 ## What is Alaska?
 
