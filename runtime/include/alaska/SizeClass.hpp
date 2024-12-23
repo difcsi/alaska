@@ -15,27 +15,6 @@
 #include <alaska/HeapPage.hpp>
 
 namespace alaska {
-  namespace internal {
-    // Helper function to statically compute integer logarithms.
-    template <size_t BaseNumerator, size_t BaseDenominator, size_t Value>
-    class ilog;
-
-    template <size_t BaseNumerator, size_t BaseDenominator>
-    class ilog<BaseNumerator, BaseDenominator, 1> {
-     public:
-      enum { VALUE = 0 };
-    };
-
-    template <size_t BaseNumerator, size_t BaseDenominator, size_t Value>
-    class ilog {
-     public:
-      enum {
-        VALUE =
-            1 +
-            ilog<BaseNumerator, BaseDenominator, (Value * BaseDenominator) / BaseNumerator>::VALUE
-      };
-    };
-  }  // namespace internal
 
 
   // ...
