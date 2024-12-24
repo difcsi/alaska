@@ -18,6 +18,7 @@
 #include <alaska/alaska.hpp>
 #include <alaska/rt/barrier.hpp>
 #include "alaska/ObjectReference.hpp"
+#include "alaska/SizeClass.hpp"
 #include <pthread.h>
 #include <stdio.h>
 #include <signal.h>
@@ -42,13 +43,13 @@ static pthread_t barrier_thread;
 static void *barrier_thread_func(void *) {
   bool in_marking_state = true;
 
-  FILE *log_file = fopen("cold.csv", "w");
-  // fprintf(log_file, "cold_objects\n");
+
+
   while (1) {
     auto &rt = alaska::Runtime::get();
-    usleep(50 * 1000);
-
+    usleep(250 * 1000);
     // continue;
+
     long already_invalid = 0;
     long total_handles = 0;
     long newly_marked = 0;
@@ -57,8 +58,12 @@ static void *barrier_thread_func(void *) {
     // Linear Congruential Generator parameters
     unsigned int seed = 123456789;  // You can set this to any initial value
 
+
+    int stride = 20;
+    int offset = 0;
+
     rt.with_barrier([&]() {
-      // printf("\033[2J\033[H");
+      printf("\033[2J\033[H");
       // rt.handle_table.dump(stdout);
       rt.heap.dump(stdout);
       return;
@@ -75,6 +80,7 @@ static void *barrier_thread_func(void *) {
       };
 
       auto should_mark = [&]() -> bool {
+        return true;
         // return in_marking_state;
         // return in_marking_state and (random_range(0, 2) == 1);
         return random_range(0, 10) == 1;
@@ -97,21 +103,18 @@ static void *barrier_thread_func(void *) {
       };
 
       auto &slabs = rt.handle_table.get_slabs();
-      // printf("slabs = %d\n", slabs.size());
 
       auto start = alaska_timestamp();
       if (slabs.size() != 0) {
         auto *slab = slabs[random_range(0, slabs.size() - 1)];
         mark_in_slab(slab);
       }
+
       // for (auto *slab : slabs)
       //   mark_in_slab(slab);
 
       auto end = alaska_timestamp();
-
       auto duration = (end - start) / 1000.0 / 1000.0;
-
-
 
       cold_perc = ((float)already_invalid / (float)total_handles);
       if (cold_perc > 0.7) {
@@ -122,14 +125,7 @@ static void *barrier_thread_func(void *) {
         in_marking_state = true;
       }
 
-      fprintf(log_file, "%f\n", cold_perc * 100.0);
-      fflush(log_file);
-      // printf(
-      //     "%d | cold objects: %12.6f%% | %8lu inv | %8lu obj | %8zu faults | %8lu added |
-      //     %12fms\n", in_marking_state, 100.0 * cold_perc, already_invalid, total_handles,
-      //     rt.handle_faults, newly_marked, duration);
-      // printf("Compacting\n");
-      // alaska::Runtime::get().heap.compact_sizedpages();
+      printf("handle faults per second: %f\n", rt.handle_faults.digest());
     });
   }
 
@@ -137,6 +133,15 @@ static void *barrier_thread_func(void *) {
 }
 
 void __attribute__((constructor(102))) alaska_init(void) {
+
+
+  printf("/// %8s, %8s, %20s\n", "class", "size", "page type");
+  for (int i = 0; i < alaska::num_size_classes; i++) {
+    size_t size = alaska::class_to_size(i);
+    printf("_SC(%8d, %8zu, %20s)\n", i, size, "alaska::SizedPage");
+  }
+
+  exit(-1);
   // Allocate the runtime simply by creating a new instance of it. Everywhere
   // we use it, we will use alaska::Runtime::get() to get the singleton instance.
   the_runtime = new alaska::Runtime();
