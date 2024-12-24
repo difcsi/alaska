@@ -127,19 +127,27 @@ namespace alaska {
       return this->runtime.heap.huge_allocator.allocate(size);
     }
 
+
+
     log_info("ThreadCache::halloc size=%zu", size);
+    alaska::AllocationRequest req(*this, size);
+    req.zero = zero;
 
-    // Allocate a new mapping
-    Mapping *m = new_mapping();
-    log_info("ThreadCache::halloc mapping=%p", m);
+    int cls = alaska::size_to_class(size);
+    this->allocation_rate.track(1);
+    void *ptr;
+    SizedPage *page = size_classes[cls];
+    if (unlikely(page == nullptr)) page = new_sized_page(cls);
 
-    void *ptr = allocate_backing_data(*m, size);
-    if (zero) {
-      memset(ptr, 0, size);
+    ptr = page->allocate_handle(req);
+    if (unlikely(ptr == nullptr)) {
+      // OOM?
+      page = new_sized_page(cls);
+      ptr = page->allocate_handle(req);
+      ALASKA_ASSERT(ptr != nullptr, "OOM!");
     }
 
-    m->set_pointer(ptr);
-    return m->to_handle();
+    return ptr;
   }
 
 
@@ -266,6 +274,8 @@ namespace alaska {
 
     return m;
   }
+
+  void ThreadCache::free_mapping(alaska::Mapping *m) { this->runtime.handle_table.put(m, this); }
 
 
   bool ThreadCache::localize(void *handle, uint64_t epoch) {
