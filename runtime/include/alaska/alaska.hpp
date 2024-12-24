@@ -139,7 +139,11 @@ namespace alaska {
       return (void *)out;
     }
 
-    static void *translate(void *handle) { return alaska::Mapping::from_handle(handle)->ptr; }
+    static void *translate(void *handle) {
+      auto h = alaska::Mapping::from_handle_safe(handle);
+      if (h == nullptr) return handle;
+      return h->get_pointer();
+    }
 
     // Extract an encoded mapping out of the bits of a handle. WARNING: this function does not
     // perform any checking, and will blindly translate any pointer regardless of if it really
@@ -169,6 +173,12 @@ namespace alaska {
   extern void record_translation_info(bool hit);
 
 
+
+  inline void handle_memcpy(void *dst, void *src, size_t size) {
+    void *src_data = alaska::Mapping::translate(src);
+    void *dst_data = alaska::Mapping::translate(dst);
+    memcpy(dst_data, src_data, size);
+  }
 
 
   // template <typename T, typename... Args>
