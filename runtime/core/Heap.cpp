@@ -327,41 +327,7 @@ namespace alaska {
         return true;
       });
     }
-    // printf("bytes that are zero: %6.2f%%, z:%12zu t:%12zu objects:%12zu\n",
-    //     100.0 * (zero_bytes / (float)total_bytes), zero_bytes, total_bytes, total_objects);
-    return 0;
-
-    // for (int i = 0; i <= 0xFF; i++) {
-    //   long v = byte_histogram[i];
-    //   float p = 100.0 * (v / (float)total_bytes);
-    //   printf("%d,%f\n", i, p);
-    // }
-
-    long col = 0;
-    long row = 0;
-    printf("   ");
-    for (int i = 0; i < 16; i++) {
-      printf("%12X ", i);
-    }
-    printf("\n");
-    for (int i = 0; i <= 0xff; i++) {
-      if (col == 0) {
-        printf("%X  ", row++);
-      }
-      long v = byte_histogram[i];
-      float p = 100.0 * (v / (float)total_bytes);
-      // printf("%12ld ", v);
-      printf("%12f ", p);
-
-      if (++col >= 16) {
-        printf("\n");
-        col = 0;
-      }
-
-
-      // printf("%02x: %20.14f%% %ld\n", i, p, v);
-    }
-    return c;
+    return bytes_saved;
   }
 
   long Heap::compact_locality_pages(void) {
