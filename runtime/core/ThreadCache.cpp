@@ -155,35 +155,11 @@ namespace alaska {
     // TODO: There is a race here... I think its okay, as a realloc really should
     // be treated like a UAF, and ideally another thread would not access the handle
     // while it is being reallocated.
-
-
     alaska::Mapping *m = alaska::Mapping::from_handle_safe(handle);
-    void *original_data = NULL;
-    size_t original_size = 0;
 
-    bool old_was_handle = m != nullptr;
-    bool new_data_is_huge = alaska::should_be_huge_object(new_size);
-    void *new_data = NULL;
-    void *return_value = handle;
-
-
+    auto original_size = this->get_size(handle);
     void *new_handle = this->halloc(new_size);
-    printf("hrealloc %p -> %p\n", handle, new_handle);
 
-    // There are two case here:
-    if (not old_was_handle) {
-      // 1. The original object is a huge object, in which case the object is *not* a pointer, and
-      //    we need to return a *different* value.
-      original_data = handle;
-      // original_size = this->runtime.heap.huge_allocator.size_of(handle);
-    } else {
-      // 2. The original object is a handle, in which case we update the handle to point to the new
-      //    data. This is the normal case.
-      original_data = m->get_pointer();
-      // auto *page = this->runtime.heap.pt.get_unaligned(original_data);
-      // original_size = page->size_of(original_data);
-    }
-    original_size = this->get_size(handle);
 
     // We should copy the minimum of the two sizes between the allocations.
     size_t copy_size = original_size > new_size ? new_size : original_size;
