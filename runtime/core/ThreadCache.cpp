@@ -188,7 +188,7 @@ namespace alaska {
     // We should copy the minimum of the two sizes between the allocations.
     size_t copy_size = original_size > new_size ? new_size : original_size;
 
-    handle_memcpy(handle, new_handle, copy_size);
+    handle_memcpy(new_handle, handle, copy_size);
 
     hfree(handle);
 
