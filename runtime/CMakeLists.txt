@@ -54,6 +54,7 @@ set(CORE_SOURCES
 
   core/HeapPage.cpp
   core/SizedPage.cpp
+  core/ConjoinedPage.cpp
   core/LocalityPage.cpp
   core/Localizer.cpp
 

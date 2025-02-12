@@ -23,7 +23,13 @@
 #include <sys/mman.h>
 #include <sys/prctl.h>
 
+#include <stdlib.h>
 
+
+
+#ifdef __riscv
+static int dev_alaska_fd = -1;
+#endif
 
 namespace alaska {
 
@@ -39,9 +45,19 @@ namespace alaska {
     uintptr_t table_start = config.handle_table_location;
     m_capacity = HandleTable::initial_capacity;
 
+
+#ifdef __riscv
+    if (dev_alaska_fd == -1) dev_alaska_fd = open("/dev/alaska", O_RDWR);
+
+    m_table = (Mapping *)mmap((void *)table_start, m_capacity * HandleTable::slab_size,
+        PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED, dev_alaska_fd, 0);
+    printf("Yukon: allocated handle table to %p with the kernel module!\n", m_table);
+
+#else
     // Attempt to allocate the initial memory for the table.
     m_table = (Mapping *)mmap((void *)table_start, m_capacity * HandleTable::slab_size,
         PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+#endif
 
     // Validate that the table was allocated
     ALASKA_ASSERT(

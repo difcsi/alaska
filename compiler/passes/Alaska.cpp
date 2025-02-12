@@ -185,6 +185,8 @@ extern "C" LLVM_ATTRIBUTE_WEAK ::llvm::PassPluginLibraryInfo llvmGetPassPluginIn
             MPM.addPass(WholeProgramDevirtPass());
             MPM.addPass(SimpleFunctionPass());
             MPM.addPass(AlaskaNormalizePass());
+
+            MPM.addPass(OptimisticTypesPass());
             return true;
           }
 

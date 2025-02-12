@@ -63,9 +63,9 @@ static void *barrier_thread_func(void *) {
     int offset = 0;
 
     rt.with_barrier([&]() {
-      printf("\033[2J\033[H");
-      // rt.handle_table.dump(stdout);
-      rt.heap.dump(stdout);
+      // printf("\033[2J\033[H");
+      // // rt.handle_table.dump(stdout);
+      // rt.heap.dump(stdout);
       return;
 
 
@@ -144,7 +144,8 @@ void __attribute__((constructor(102))) alaska_init(void) {
   //     size_t per_entry = 256 / size;
   //     size_t blk_size = size * per_entry;
 
-  //     snprintf(type_buf, sizeof type_buf, "alaska::ConjoinedPage<%zu, %2zu> /* %zu %zu */", size, per_entry, blk_size, blk_size / 16);
+  //     snprintf(type_buf, sizeof type_buf, "alaska::ConjoinedPage<%zu, %2zu> /* %zu %zu */", size,
+  //     per_entry, blk_size, blk_size / 16);
   //   }
 
   //   printf("_SC(%8d, %8zu, %32s)\n", i, size, type_buf);

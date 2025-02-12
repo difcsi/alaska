@@ -117,7 +117,6 @@ namespace alaska {
     return lp;
   }
 
-  // Stub out the methods of ThreadCache
   void *ThreadCache::halloc(size_t size, bool zero) {
     if (unlikely(size == 0)) return NULL;
 

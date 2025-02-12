@@ -23,7 +23,7 @@ namespace alaska {
   }
 
 
-  void * HeapPage::allocate_handle(const AllocationRequest &req) {
+  void *HeapPage::allocate_handle(const AllocationRequest &req) {
     alaska::Mapping *m = req.requestor.new_mapping();
     void *ptr = this->alloc(*m, req.size);
     // If the allocation request failed, make sure to free the handle too!
@@ -38,6 +38,8 @@ namespace alaska {
     m->set_pointer(ptr);
     return m->to_handle(0);
   }
+
+  void *HeapPage::alloc(const Mapping &m, AlignedSize size) { return nullptr; }
 
 
   void atomic_block_push(Block **list, Block *block) {

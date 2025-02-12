@@ -11,6 +11,8 @@ export LD=$ROOT/bin/riscv64-unknown-linux-gnu-ld
 
 make clean
 
+ls $ROOT/sysroot
+
 cmake ../ \
       -DALASKA_ENABLE_COMPILER=OFF \
       -DALASKA_ENABLE_TESTING=OFF \
