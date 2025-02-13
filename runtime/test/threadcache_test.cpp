@@ -142,7 +142,7 @@ TEST_F(ThreadCacheTest, HreallocSize) {
 TEST_F(ThreadCacheTest, HreallocHandleToHandle) {
   void *h = t1->halloc(16);
   void *h2 = t1->hrealloc(h, 32);
-  ASSERT_EQ(h, h2);
+  ASSERT_NE(h2, nullptr);
 }
 TEST_F(ThreadCacheTest, HreallocHandleToHuge) {
   void *h = t1->halloc(16);

@@ -48,11 +48,11 @@ int main() {
     bool localized = false;
 
 
-    if (trial & 1) {
-      start = alaska_timestamp();
-      localized = localize_structure((uint64_t)n);
-      end = alaska_timestamp();
-    }
+    /* if (trial & 1) { */
+    /*   start = alaska_timestamp(); */
+    /*   localized = localize_structure((uint64_t)n); */
+    /*   end = alaska_timestamp(); */
+    /* } */
     // uint64_t localize_time = end - start;
 
     int c = 0;

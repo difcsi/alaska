@@ -327,46 +327,12 @@ namespace alaska {
         return true;
       });
     }
-    // printf("bytes that are zero: %6.2f%%, z:%12zu t:%12zu objects:%12zu\n",
-    //     100.0 * (zero_bytes / (float)total_bytes), zero_bytes, total_bytes, total_objects);
-    return 0;
-
-    // for (int i = 0; i <= 0xFF; i++) {
-    //   long v = byte_histogram[i];
-    //   float p = 100.0 * (v / (float)total_bytes);
-    //   printf("%d,%f\n", i, p);
-    // }
-
-    long col = 0;
-    long row = 0;
-    printf("   ");
-    for (int i = 0; i < 16; i++) {
-      printf("%12X ", i);
-    }
-    printf("\n");
-    for (int i = 0; i <= 0xff; i++) {
-      if (col == 0) {
-        printf("%X  ", row++);
-      }
-      long v = byte_histogram[i];
-      float p = 100.0 * (v / (float)total_bytes);
-      // printf("%12ld ", v);
-      printf("%12f ", p);
-
-      if (++col >= 16) {
-        printf("\n");
-        col = 0;
-      }
-
-
-      // printf("%02x: %20.14f%% %ld\n", i, p, v);
-    }
-    return c;
+    return bytes_saved;
   }
 
   long Heap::compact_locality_pages(void) {
     long c = 0;
-    printf("Utilizations:\n");
+    // printf("Utilizations:\n");
     long total_wasted = 0;
     long total_time = 0;
     locality_pages.foreach ([&](LocalityPage *lp) {
@@ -384,12 +350,12 @@ namespace alaska {
       size_t wasted = lp->heap_size() * (1 - u);
       total_wasted += wasted;
 
-      printf("%p - %8f   waste: %5lukb   %4d iters in %9luns\n", lp, u, wasted / 1024,
-          compaction_iterations, (end - start));
+      // printf("%p - %8f   waste: %5lukb   %4d iters in %9luns\n", lp, u, wasted / 1024,
+      //     compaction_iterations, (end - start));
       return true;
     });
-    printf("Total wastage: %lukb\n", total_wasted / 1024);
-    printf("Tool %fms\n", total_time / 1000.0 / 1000.0);
+    // printf("Total wastage: %lukb\n", total_wasted / 1024);
+    // printf("Tool %fms\n", total_time / 1000.0 / 1000.0);
     return c;
   }
 

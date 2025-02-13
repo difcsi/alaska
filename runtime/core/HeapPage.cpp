@@ -10,7 +10,8 @@
  */
 
 #include <alaska/HeapPage.hpp>
-
+#include <alaska/AllocationRequest.hpp>
+#include <alaska/ThreadCache.hpp>
 
 namespace alaska {
 
@@ -21,6 +22,24 @@ namespace alaska {
     mag_list = LIST_HEAD_INIT(mag_list);
   }
 
+
+  void *HeapPage::allocate_handle(const AllocationRequest &req) {
+    alaska::Mapping *m = req.requestor.new_mapping();
+    void *ptr = this->alloc(*m, req.size);
+    // If the allocation request failed, make sure to free the handle too!
+    if (ptr == NULL) {
+      req.requestor.free_mapping(m);
+      return NULL;
+    }
+
+    // Now that we have data and a handle, zero it if we need to
+    if (req.zero) memset(ptr, 0, req.size);
+    // And set the mapping to point to the data.
+    m->set_pointer(ptr);
+    return m->to_handle(0);
+  }
+
+  void *HeapPage::alloc(const Mapping &m, AlignedSize size) { return nullptr; }
 
 
   void atomic_block_push(Block **list, Block *block) {

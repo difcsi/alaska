@@ -13,8 +13,10 @@
 
 
 #include <stdlib.h>
+#include <alaska/AllocationRequest.hpp>
 #include <alaska/alaska.hpp>
 #include <alaska/OwnedBy.hpp>
+#include "alaska/AllocationRequest.hpp"
 #include <alaska/list_head.h>
 
 namespace alaska {
@@ -62,9 +64,18 @@ namespace alaska {
     HeapPage(void* backing_memory);
     virtual ~HeapPage();
 
+
+    // Given an allocation request, allocate a handle and the backing data and
+    // return the encoded result which should be returned to the user.
+    // This function has a default implementation which wraps ::alloc() for
+    // subclasses which don't want to worry about allocating a handle from
+    // the threadcache's handle table.
+    // Returns NULL on failure.
+    virtual void* allocate_handle(const AllocationRequest &req);
+
     // The size argument is already aligned and rounded up to a multiple of the rounding size.
     // Returns the data allocated, or NULL if it couldn't be.
-    virtual void* alloc(const Mapping& m, AlignedSize size) = 0;
+    virtual void* alloc(const Mapping& m, AlignedSize size);
     virtual bool release_local(const Mapping& m, void* ptr) = 0;
     virtual bool release_remote(const Mapping& m, void* ptr) { return release_local(m, ptr); }
     // return the size of an object

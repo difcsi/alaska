@@ -146,7 +146,7 @@ void alaska_htlb_sim_track(uintptr_t maybe_handle) {
     htlb.access_non_handle((void *)maybe_handle);
   }
 
-  if (access_count > RATE) {
+  if ((unsigned long)access_count > RATE) {
     access_count = 0;
 
     // dump, and notify the movement thread!

@@ -40,17 +40,23 @@ namespace alaska {
     int get_id(void) const { return this->id; }
     size_t get_size(void *handle);
 
-
     bool localize(alaska::Mapping &m, uint64_t epoch);
     bool localize(void *handle, uint64_t epoch);
+
 
 
    protected:
     friend class LockedThreadCache;
     friend alaska::Runtime;
     friend alaska::Localizer;
+    friend alaska::HeapPage;
 
-    ck::mutex lock;
+    // Allocate a new handle table mapping
+    alaska::Mapping *new_mapping(void);
+    void free_mapping(alaska::Mapping *);
+
+
+   private:
 
     // Allocate backing data for a handle, but don't assign it yet.
     void *allocate_backing_data(const alaska::Mapping &m, size_t size);
@@ -58,13 +64,15 @@ namespace alaska {
     // Free an allocation behind a handle, but not the handle
     void free_allocation(const alaska::Mapping &m);
 
-    // Allocate a new handle table mapping
-    alaska::Mapping *new_mapping(void);
     // Swap to a new sized page owned by this thread cache
     alaska::SizedPage *new_sized_page(int cls);
     // Swap to a new locality page owned by this thread cache
     alaska::LocalityPage *new_locality_page(size_t required_size);
 
+    // A lock which is used to control access to this heap page. Mostly used to control
+    // race conditions around barriers, as the rest of the heap can only be accessed through
+    // a locked thread cache as a mediator
+    ck::mutex lock;
     // Just an id for this thread cache assigned by the runtime upon creation. It's mostly
     // meaningless, meant for debugging.
     int id;
