@@ -19,8 +19,6 @@
 
 namespace alaska::disk {
 
-
-
   StructureImpl::StructureImpl(BufferPool &pool, uint64_t root_page_id)
       : root_page_id(root_page_id)
       , pool(pool) {}

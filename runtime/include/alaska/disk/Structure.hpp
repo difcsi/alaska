@@ -29,9 +29,10 @@ namespace alaska::disk {
   template <typename T>
   class NamedStructure : public T {
    public:
-    NamedStructure(BufferPool& pool, const char* name)
+    template <typename... Args>
+    NamedStructure(BufferPool& pool, const char* name, Args... args)
         : pool(pool)
-        , T(pool, getRootPageID(pool, name)) {
+        , T(pool, getRootPageID(pool, name), args...) {
       //
     }
 
@@ -54,8 +55,6 @@ namespace alaska::disk {
   };
 
 
-
-
   class BPlusTree : public StructureImpl {
    public:
     BPlusTree(BufferPool& pool, uint64_t root_page_id)
@@ -66,7 +65,8 @@ namespace alaska::disk {
   };
 
 
-  using NamedBPlusTree = NamedStructure<BPlusTree>;
+  using NamedBPlusTree = alaska::disk::NamedStructure<BPlusTree>;
+
 
   // template <typename T>
   // class TempStructure {
