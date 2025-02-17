@@ -60,10 +60,18 @@ set(CORE_SOURCES
 
   core/Utils.cpp
 
+  core/DiskHeap.cpp
+
+
+  core/disk/Disk.cpp
+  core/disk/BufferPool.cpp
+  core/disk/Structure.cpp
+
   # liballoc is a simple, small, malloc implementation that we embed
   # so alaska can temporially allocate objects w/o implementing a non-handle
   # allocator as well
   core/liballoc.c
+
 
 	# C++ glue stuff, since we don't link against libc++ in the core library.
 	core/glue.cpp

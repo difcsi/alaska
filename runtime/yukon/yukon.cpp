@@ -107,16 +107,17 @@ static void setup_signal_handlers(void) {
   assert(sigaction(SIGSEGV, &sa, NULL) == 0);
   assert(sigaction(SIGUSR2, &sa, NULL) == 0);
 
-
+#if 0
   int dump_interval_ms = 10;
   useconds_t dump_interval = dump_interval_ms * 1000;
-  signal(SIGALRM, alarm_handler);
+  // signal(SIGALRM, alarm_handler);
   // now that we have sigalarm configured, setup a ualarm for
   // some number of microseconds on an interval for dumping
   if ((long)ualarm(dump_interval, dump_interval) == -1) {
     perror("Failed to setup ualarm for dumping");
     exit(-1);
   }
+#endif
 }
 
 
@@ -145,7 +146,7 @@ namespace yukon {
       value |= (1LU << 63);
     }
     alaska::printf("set htbase to 0x%zx\n", value);
-    write_csr(CSR_HTBASE, value);
+    // write_csr(CSR_HTBASE, value);
   }
 
 
@@ -213,14 +214,14 @@ namespace yukon {
     config.huge_strategy = alaska::HugeAllocationStrategy::CUSTOM_MMAP_BACKED;
 
     the_runtime = new alaska::Runtime(config);
-    void *handle_table_base = the_runtime->handle_table.get_base();
+    // void *handle_table_base = the_runtime->handle_table.get_base();
     // printf("Handle table at %p\n", handle_table_base);
     // Make sure the handle table performs mlocks
     the_runtime->handle_table.enable_mlock();
 
-    asm volatile("fence" ::: "memory");
-    yukon::set_handle_table_base(handle_table_base);
-    asm volatile("fence" ::: "memory");
+    // asm volatile("fence" ::: "memory");
+    // yukon::set_handle_table_base(handle_table_base);
+    // asm volatile("fence" ::: "memory");
   }
 }  // namespace yukon
 

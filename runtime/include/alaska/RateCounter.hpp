@@ -68,6 +68,11 @@ namespace alaska {
     inline void track_atomic(int incr = 0) { atomic_inc(this->value, incr); }
     // Return the total count tracked by the counter
     inline uint64_t read(void) const { return value; }
+
+    auto &operator++(int) {
+      track(1);
+      return *this;
+    }
   };
 
 
