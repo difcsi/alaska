@@ -19,9 +19,11 @@
 
 namespace alaska::disk {
 
-  StructureImpl::StructureImpl(BufferPool &pool, uint64_t root_page_id)
-      : root_page_id(root_page_id)
-      , pool(pool) {}
+  Structure::Structure(BufferPool &pool, const char *name)
+      : pool(pool)
+      , root_page_id(getRootPageID(pool, name)) {
+    strncpy(this->name, name, sizeof(this->name) - 1);
+  }
 
 
 }  // namespace alaska::disk

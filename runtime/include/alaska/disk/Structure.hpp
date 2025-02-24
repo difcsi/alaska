@@ -15,33 +15,19 @@
 namespace alaska::disk {
 
 
-  class StructureImpl {
+  class Structure {
    public:
-    StructureImpl(BufferPool& pool, uint64_t root_page_id);
+    Structure(BufferPool& pool, const char* name);
 
 
-   private:
+   protected:
+    // Politely ask the structure to destroy itself (free all non-root pages)
+    virtual void destroy() {}
     uint64_t root_page_id;
     BufferPool& pool;
-  };
-
-
-  template <typename T>
-  class NamedStructure : public T {
-   public:
-    template <typename... Args>
-    NamedStructure(BufferPool& pool, const char* name, Args... args)
-        : pool(pool)
-        , T(pool, getRootPageID(pool, name), args...) {
-      //
-    }
-
-
-   private:
-    BufferPool& pool;
-    uint64_t root_page_id;
     char name[16];
 
+   private:
     inline uint64_t getRootPageID(BufferPool& pool, const char* name) {
       auto existing = pool.getStructure(name);
       if (existing) {
@@ -55,18 +41,15 @@ namespace alaska::disk {
   };
 
 
-  class BPlusTree : public StructureImpl {
-   public:
-    BPlusTree(BufferPool& pool, uint64_t root_page_id)
-        : StructureImpl(pool, root_page_id) {
-      printf("BPlusTree created with rootid = %zu\n", root_page_id);
-    }
-    //
+
+  // Helper class to help with laying out structures in memory
+  template <typename Header, typename Entry>
+  struct HeaderAndEntries {
+    Header header;
+    static constexpr uint32_t NUM_ENTRIES =
+        (alaska::disk::page_size - sizeof(Header)) / sizeof(Entry);
+    Entry entries[NUM_ENTRIES];
   };
-
-
-  using NamedBPlusTree = alaska::disk::NamedStructure<BPlusTree>;
-
 
   // template <typename T>
   // class TempStructure {

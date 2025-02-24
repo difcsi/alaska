@@ -15,6 +15,7 @@
 #include <alaska/utils.h>
 
 #include <alaska/disk/Disk.hpp>
+#include <alaska/alaska.hpp>
 
 namespace alaska::disk {
 
@@ -25,7 +26,7 @@ namespace alaska::disk {
    * some fancy LRU replacement to keep most recently used paged in memory.
    * They must be used through a "FrameGuard"
    */
-  class Frame final {
+  class Frame final : public alaska::InternalHeapAllocated {
    public:
     // If the frame is referenced since the last time the clock looked.
     bool ref = false;
@@ -35,6 +36,12 @@ namespace alaska::disk {
     void *memory;  // Backing data
     uint64_t page_id = 0;
     int refcount = 0;
+    uint32_t latch = 0;
+
+
+    // Simple LRU chain list. if lru_prev == null, this is the head of the list.
+    // if lru_next == null, this is the tail of the list (newest)
+    Frame *lru_next, *lru_prev;
 
 
     inline void clear(void) {
@@ -50,7 +57,15 @@ namespace alaska::disk {
       this->dirty = false;
       this->page_id = page_id;
       this->refcount = 0;
+      this->latch = 0;  // ASSERT?
     }
+
+    void take_latch(void) {
+      while (__atomic_test_and_set(&latch, __ATOMIC_ACQUIRE)) {
+      }
+    }
+
+    void release_latch(void) { __atomic_clear(&latch, __ATOMIC_RELEASE); }
 
    protected:
     friend class FrameGuard;
@@ -59,6 +74,7 @@ namespace alaska::disk {
     void inc_refcount(void) { atomic_inc(this->refcount, 1); }
     void dec_refcount(void) { atomic_dec(this->refcount, 1); }
   };
+
 
 
 
@@ -75,13 +91,14 @@ namespace alaska::disk {
       if (new_frame) {
         new_frame->inc_refcount();
       }
+      if (old_frame) old_frame->dec_refcount();
       this->frame = new_frame;
-      if (old_frame) {
-        old_frame->dec_refcount();
-      }
     }
 
+    friend class Latch;
+
    public:
+    inline FrameGuard(void) { set(nullptr); }
     inline FrameGuard(Frame *frame) { set(frame); }
     inline FrameGuard(FrameGuard &other) { set(other.frame); }
     inline FrameGuard(FrameGuard &&other) {
@@ -96,21 +113,114 @@ namespace alaska::disk {
     inline ~FrameGuard(void) { set(nullptr); }
 
 
-    inline uint64_t page_id(void) { return frame->page_id; }
+    inline uint64_t page_id(void) {
+      if (!frame) abort();
+      return frame->page_id;
+    }
+
+
+    inline void drop(void) { set(nullptr); }
 
     template <typename T>
     const T *get(off_t byte_offset = 0) {
+      if (!frame) abort();
       frame->ref = true;
       return (const T *)((uint8_t *)frame->memory + byte_offset);
     }
     template <typename T>
     T *getMut(off_t byte_offset = 0) {
+      if (!frame) abort();
       frame->ref = true;
       frame->dirty = true;
       return (T *)((uint8_t *)frame->memory + byte_offset);
     }
 
-    void wipePage(void) { memset(getMut<void>(), 0, page_size); }
+    void wipePage(void) {
+      if (!frame) abort();
+      memset(getMut<void>(), 0, page_size);
+    }
+
+    operator bool(void) { return frame != nullptr; }
   };
+
+
+  class Latch {
+   protected:
+    FrameGuard guard;
+
+   public:
+    Latch() {
+      // Do nothing.
+    }
+
+    Latch(FrameGuard &guard)
+        : guard(guard) {
+      if (guard) guard.frame->take_latch();
+    }
+
+    Latch(Latch &&other)
+        : guard(ck::move(other.guard)) {}
+
+
+    Latch &operator=(Latch &&other) {
+      guard = ck::move(other.guard);
+      return *this;
+    }
+
+    ~Latch() {
+      if (guard) guard.frame->release_latch();
+    }
+  };
+
+
+  template <typename T>
+  class GuardedMut {
+    FrameGuard frame;
+    T *data;
+
+   public:
+    GuardedMut(FrameGuard frame, off_t byte_offset = 0)
+        : frame(frame) {
+      this->data = frame.getMut<T>(byte_offset);
+    }
+    T &operator*() { return *data; }
+    T *operator->() { return data; }
+
+    FrameGuard &guard(void) { return frame; }
+  };
+
+
+  template <typename T>
+  class Guarded {
+    FrameGuard frame;
+    off_t byte_offset;
+    const T *data;
+
+
+   public:
+    Guarded(FrameGuard frame, off_t byte_offset = 0)
+        : frame(frame)
+        , byte_offset(byte_offset) {
+      this->data = frame.get<T>(byte_offset);
+    }
+
+    const T &operator*() { return *data; }
+    const T *operator->() { return data; }
+
+
+    // Get a mutable view of the same data.
+    // Note that you can't go the other way (mut -> immut)
+    GuardedMut<T> mut(void) { return GuardedMut<T>(frame, byte_offset); }
+
+
+    FrameGuard &guard(void) { return frame; }
+  };
+
+  template <typename Fn>
+  void withLatch(FrameGuard &frame, Fn &&fn) {
+    Latch latch(frame);
+    fn();
+  }
+
 
 }  // namespace alaska::disk

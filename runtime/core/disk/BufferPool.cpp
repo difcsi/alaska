@@ -13,14 +13,22 @@
 
 
 namespace alaska::disk {
-  BufferPool::BufferPool(const char *db_path, size_t size)
+  BufferPool::BufferPool(const char *db_path, size_t size_mb)
       : disk(db_path) {
-    pool_memory = mmap_alloc(page_size * size);
+    size_t pages = (size_mb * 1024 * 1024) / page_size;
+    printf("Creating BufferPool wth %zu pages in memory\n", pages);
+    pool_memory = mmap_alloc(page_size * pages);
 
-    for (size_t i = 0; i < size; i++) {
-      Frame f;
-      f.clear();
-      f.memory = (void *)((uint8_t *)pool_memory + (page_size * i));
+    this->lru_head = this->lru_tail = nullptr;
+    for (size_t i = 0; i < pages; i++) {
+      auto f = new Frame();
+      f->clear();
+      f->memory = (void *)((uint8_t *)pool_memory + (page_size * i));
+
+      f->lru_next = this->lru_head;
+      this->lru_head = f;
+
+      if (this->lru_tail == nullptr) this->lru_tail = f;
 
       frames.push(f);
     }
@@ -54,16 +62,17 @@ namespace alaska::disk {
 
   void BufferPool::flush(void) {
     for (auto &f : frames) {
-      if (f.valid && f.dirty) {
+      if (f->valid && f->dirty) {
         // RACE! (someone could be actively writing)
-        f.dirty = false;
-        writePage(f.page_id, f.memory);
+        f->dirty = false;
+        writePage(f->page_id, f->memory);
       }
     }
   }
 
   bool BufferPool::readPage(uint64_t page_id, void *buf) {
     stat_disk_reads.track();
+    // printf("[BufferPool] READ  %zu\n", page_id);
     return disk.readPage(page_id, buf);
   }
 
@@ -71,6 +80,7 @@ namespace alaska::disk {
 
   bool BufferPool::writePage(uint64_t page_id, void *buf) {
     stat_disk_writes.track();
+    // printf("[BufferPool] WRITE %zu\n", page_id);
     return disk.writePage(page_id, buf);
   }
 
@@ -99,8 +109,9 @@ namespace alaska::disk {
 
 
   FrameGuard BufferPool::getPage(uint64_t page_id) {
+    ck::scoped_lock lock(frame_table_lock);
     if (page_id >= disk.pageCount()) {
-      fprintf(stderr, "cannot read page %zu outside bounds of file. call newPage()\n", page_id);
+      printf("cannot read page %zu outside bounds of file. call newPage()\n", page_id);
       abort();
     }
 
@@ -110,46 +121,84 @@ namespace alaska::disk {
     if (it != frame_table.end()) {
       stat_hits++;
       auto *f = it->value;
-      ALASKA_ASSERT(f->page_id == page_id, "frame table invalid");
-      f->ref = true;
+      ALASKA_ASSERT(f->valid, "must be valid to be in the frame table");
+      if (f->valid) {
+        // Bump the LRU for this node.
+        // bump_frame(f);
+
+        ALASKA_ASSERT(f->page_id == page_id, "frame table invalid");
+        lruReference(f);
+        f->ref = true;
+        return f;
+      }
+    }
+
+    uint64_t len = 0;
+    for (Frame *f = lru_head; f != nullptr; f = f->lru_next) {
+      len++;
+    }
+
+    // Walk the lru list from lru_head to end
+    for (Frame *f = lru_head; f != nullptr; f = f->lru_next) {
+      if (f->get_refcount() != 0) continue;
+      // If the frame is valid (has a page), we might need to flush it.
+      if (f->valid) {
+        if (f->dirty) {
+          // evict
+          stat_writebacks++;
+          writePage(f->page_id, f->memory);
+          f->dirty = false;
+        }
+        frame_table.remove(f->page_id);  // Remove old frame mapping
+      }
+
+      f->reset(page_id);                // Reset the frame to the new page
+      frame_table.set(page_id, f);      // Add new frame mapping
+      readPage(f->page_id, f->memory);  // Read the data
+      f->valid = true;
+      frame_to_end(f);  // Move the frame to the end of the LRU list
+
       return f;
     }
+    return nullptr;
 
+    // int retry_loop_count = 3;
+    // // LRU Evict
+    // for (size_t i = 0; i < (size_t)frames.size() * retry_loop_count; i++) {
+    //   // Grab the location to look at using clock algorithm
+    //   off_t loc = clock_hand++;
+    //   if (clock_hand >= (off_t)frames.size()) clock_hand = 0;
+    //   auto &f = frames[loc];
 
-    int retry_loop_count = 3;
-    // LRU Evict
-    for (size_t i = 0; i < (size_t)frames.size() * retry_loop_count; i++) {
-      // Grab the location to look at using clock algorithm
-      off_t loc = clock_hand++;
-      if (clock_hand >= (off_t)frames.size()) clock_hand = 0;
-      auto &f = frames[loc];
+    //   // If someone is using it, we can't use it, skip.
+    //   if (f->get_refcount() != 0) continue;
 
-      // If someone is using it, we can't use it, skip.
-      if (f.get_refcount() != 0) continue;
+    //   // [clock] if the frame has been referenced, clear that fact and continue.
+    //   if (f->ref) {
+    //     f->ref = false;
+    //     continue;
+    //   }
 
-      // [clock] if the frame has been referenced, clear that fact and continue.
-      if (f.ref) {
-        f.ref = false;
-        continue;
-      }
+    //   // If the frame is valid (has a page), we might need to flush it.
+    //   if (f->valid) {
+    //     if (f->dirty) {
+    //       // evict
+    //       stat_writebacks++;
+    //       writePage(f->page_id, f->memory);
+    //       f->dirty = false;
+    //     }
+    //     frame_table.remove(f->page_id);  // Remove old frame mapping
+    //   }
 
-      // If the frame is valid (has a page), we might need to flush it.
-      if (f.valid && f.dirty) {
-        // evict
-        stat_writebacks++;
-        writePage(f.page_id, f.memory);
-        f.dirty = false;
-        frame_table.remove(f.page_id);  // Remove old frame mapping
-      }
+    //   f->reset(page_id);                // Reset the frame to the new page
+    //   frame_table.set(page_id, f);      // Add new frame mapping
+    //   readPage(f->page_id, f->memory);  // Read the data
+    //   f->valid = true;
+    //   frame_to_end(f);  // Move the frame to the end of the LRU list
 
-      f.reset(page_id);              // Reset the frame to the new page
-      frame_table.set(page_id, &f);  // Add new frame mapping
-      f.ref = true;                  // the page was accessed
-
-      readPage(f.page_id, f.memory);
-      return &f;
-    }
-    printf("found nothing.\n");
+    //   return f;
+    // }
+    // printf("found nothing.\n");
 
     return nullptr;
   }
@@ -162,8 +211,7 @@ namespace alaska::disk {
 
     printf("  accesses:    %12zu (%.1f/s)\n", stat_accesses.read(), stat_accesses.digest());
     printf("  hits:        %12zu (%.1f/s)\n", stat_hits.read(), stat_hits.digest());
-    // printf("  writebacks:  %12zu (%.1f/s)\n", stat_writebacks.read(),
-    // stat_writebacks.digest());
+    printf("  writebacks:  %12zu (%.1f/s)\n", stat_writebacks.read(), stat_writebacks.digest());
 
     printf("  disk reads:  %12zu (%.1f/s)\n", stat_disk_reads.read(), stat_disk_reads.digest());
     printf("  disk writes: %12zu (%.1f/s)\n", stat_disk_writes.read(), stat_disk_writes.digest());
@@ -214,18 +262,44 @@ namespace alaska::disk {
   }
 
 
+  void BufferPool::lruReference(Frame *frame) {
+    // printf("LRU: %zu\n", frame->page_id);
+    frame->ref = true;
+  }
+
+
 }  // namespace alaska::disk
 
+
+#include <alaska/disk/ChainedHashTable.hpp>
 #if 0
 static void __attribute__((constructor)) init(void) {
-  {
-    alaska::disk::BufferPool bp("heap.db", 16);
+  uint64_t count = 512 * 512;
 
-    alaska::disk::NamedBPlusTree tree(bp, "test");
+  {
+    alaska::disk::BufferPool bp("heap.db", 8);
+    alaska::disk::ChainedHashTable<uint64_t, uint64_t> ht(bp, "hashtable");
+    for (uint64_t i = 0; i < count; i++) {
+      ht.insert(i, i);
+    }
   }
+
+
+  {
+    alaska::disk::BufferPool bp("heap.db", 4);
+    alaska::disk::ChainedHashTable<uint64_t, uint64_t> ht(bp, "hashtable");
+    for (uint64_t i = 0; i < count; i++) {
+      auto s = ht.get(i);
+      ALASKA_ASSERT(s.has_value(), "must be found");
+      ALASKA_ASSERT(s.take() == i, "must be equal");
+    }
+  }
+
+
+
 
   // alaska::disk::Structure s(bp, "test");
 
-  exit(-1);
+  // exit(-1);
 }
 #endif

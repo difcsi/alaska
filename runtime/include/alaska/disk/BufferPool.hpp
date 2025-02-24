@@ -15,7 +15,9 @@
 #include <alaska/utils.h>
 #include <ck/map.h>
 #include <ck/option.h>
+#include <ck/lock.h>
 #include <ck/vec.h>
+#include <ck/box.h>
 
 #include <alaska/RateCounter.hpp>
 
@@ -25,12 +27,10 @@
 
 namespace alaska::disk {
 
-  static constexpr size_t buffer_pool_size = 16;  // Tweak me!
-
 
   class BufferPool final {
    public:
-    BufferPool(const char *db_path, size_t size = 16);
+    BufferPool(const char *db_path, size_t size = 64);
     ~BufferPool();
 
 
@@ -41,10 +41,9 @@ namespace alaska::disk {
 
 
 
-    // The main interface for a BufferPool
+    // Get a page which was previously allocated - aborts
+    // if it is invalid, be careful!
     FrameGuard getPage(uint64_t page_id);
-
-
     // Allocate a new Page
     FrameGuard newPage(bool useFreeList = true);
     // Free a Page, can be used again later
@@ -68,6 +67,18 @@ namespace alaska::disk {
 
     ck::opt<uint64_t> getStructure(const char *name);
     void addStructure(const char *name, uint64_t root_page_id);
+
+
+    template <typename T>
+    GuardedMut<T> getMutOverlay(uint64_t page_id, off_t byte_offset = 0) {
+      return GuardedMut<T>(getPage(page_id), byte_offset);
+    }
+    template <typename T>
+    Guarded<T> getOverlay(uint64_t page_id, off_t byte_offset = 0) {
+      return Guarded<T>(getPage(page_id), byte_offset);
+    }
+
+    float hitrate(void) { return 100.0 * stat_hits.read() / stat_accesses.read(); }
 
    private:
     struct StructureEntry {
@@ -95,9 +106,15 @@ namespace alaska::disk {
 
     // We implement a trival clock algorithm LRU approx.
     off_t clock_hand = 0;
-    ck::vec<Frame> frames;
+    ck::vec<Frame *> frames;
 
     ck::map<uint64_t, Frame *> frame_table;
+    ck::mutex frame_table_lock;
+
+    // The head is the least recently used, tail is the most recently used.
+    // When a new page is read, it is inserted at the tail.
+    // When a page is re-used, it moves closer to the tail by one.
+    Frame *lru_head, *lru_tail;
 
     void *pool_memory = NULL;
 
@@ -116,5 +133,56 @@ namespace alaska::disk {
     // These exist just to track stats. They just forward to the disk
     bool readPage(uint64_t page_id, void *buf);
     bool writePage(uint64_t page_id, void *buf);
+
+    void lruReference(Frame *frame);
+
+    inline void bump_frame(Frame *frame) {
+      // if (!frame || !frame->lru_next) return;  // Nothing to do
+
+      // Frame *next = frame->lru_next;
+      // Frame *prev = frame->lru_prev;
+
+      // // Update adjacent frames
+      // frame->lru_next = next->lru_next;
+      // frame->lru_prev = next;
+      // next->lru_next = frame;
+      // next->lru_prev = prev;
+
+      // // Detach
+      // if (prev) {
+      //   prev->lru_next = next;
+      // } else {
+      //   this->lru_head = next;  // Frame was head
+      // }
+      // if (next) {
+      //   next->lru_prev = prev;
+      // } else {
+      //   this->lru_tail = prev;  // Frame was tail
+      // }
+    }
+
+
+    inline void frame_to_end(Frame *frame) {
+      if (!frame || frame->lru_next == nullptr) return;  // Already at end or null
+
+      Frame *next = frame->lru_next;
+      Frame *prev = frame->lru_prev;
+
+      // if there was a previous, update it.
+      // if there wasn't we were at the front, so update the head.
+      if (prev) {
+        prev->lru_next = next;
+      } else {
+        this->lru_head = next;  // Frame was head
+      }
+      // there must have been a head. Update it.
+      next->lru_prev = prev;
+
+      // now insert at the end.
+      this->lru_tail->lru_next = frame;
+      frame->lru_prev = this->lru_tail;
+      frame->lru_next = nullptr;
+      this->lru_tail = frame;
+    }
   };
 }  // namespace alaska::disk

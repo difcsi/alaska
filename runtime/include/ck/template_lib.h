@@ -17,12 +17,8 @@ typedef decltype(nullptr) nullptr_t;
 
 template <typename T>
 struct GenericTraits {
-  static constexpr bool is_trivial() {
-    return false;
-  }
-  static bool equals(const T& a, const T& b) {
-    return a == b;
-  }
+  static constexpr bool is_trivial() { return false; }
+  static bool equals(const T& a, const T& b) { return a == b; }
 };
 
 template <typename T>
@@ -30,15 +26,10 @@ struct Traits : public GenericTraits<T> {};
 
 template <typename T>
 struct IntegerTraits : public GenericTraits<T> {
-  static constexpr bool is_trivial() {
-    return true;
-  }
-  static unsigned long hash(T c) {
-    return c;
-  }
-  static int cmp(T a, T b) {
-    return a - b;
-  }
+  static constexpr bool is_trivial() { return true; }
+  static unsigned long hash(T c) { return c; }
+  static int cmp(T a, T b) { return a - b; }
+  static bool equal(T a, T b) { return a == b; }
 };
 
 #define DEF_INT_TRAITS(T) \
@@ -62,15 +53,9 @@ struct Traits<T*> {
   static unsigned hash(const T* p) {
     return (unsigned long long)p;  // int_hash((unsigned)(__PTRDIFF_TYPE__)p);
   }
-  static constexpr bool is_trivial() {
-    return true;
-  }
-  static void dump(const T* p) {
-    printf("%p", p);
-  }
-  static bool equals(const T* a, const T* b) {
-    return a == b;
-  }
+  static constexpr bool is_trivial() { return true; }
+  static void dump(const T* p) { printf("%p", p); }
+  static bool equals(const T* a, const T* b) { return a == b; }
 };
 
 namespace ck {
@@ -140,12 +125,8 @@ struct IntegralConstant {
   static constexpr T value = v;
   typedef T ValueType;
   typedef IntegralConstant Type;
-  constexpr operator ValueType() const {
-    return value;
-  }
-  constexpr ValueType operator()() const {
-    return value;
-  }
+  constexpr operator ValueType() const { return value; }
+  constexpr ValueType operator()() const { return value; }
 };
 
 typedef IntegralConstant<bool, false> FalseType;
