@@ -88,7 +88,7 @@ namespace alaska {
    public:
     static constexpr size_t slab_size = alaska::page_size;
     static constexpr size_t slab_capacity = slab_size / sizeof(alaska::Mapping);
-    static constexpr size_t initial_capacity = 1;
+    static constexpr size_t initial_capacity = 512;
 
 
     HandleTable(const alaska::Configuration &config);
