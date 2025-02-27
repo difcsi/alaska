@@ -107,10 +107,10 @@ static void setup_signal_handlers(void) {
   assert(sigaction(SIGSEGV, &sa, NULL) == 0);
   assert(sigaction(SIGUSR2, &sa, NULL) == 0);
 
-#if 0
+#if 1
   int dump_interval_ms = 10;
   useconds_t dump_interval = dump_interval_ms * 1000;
-  // signal(SIGALRM, alarm_handler);
+  signal(SIGALRM, alarm_handler);
   // now that we have sigalarm configured, setup a ualarm for
   // some number of microseconds on an interval for dumping
   if ((long)ualarm(dump_interval, dump_interval) == -1) {

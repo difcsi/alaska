@@ -136,6 +136,7 @@ void alaska_htlb_sim_invalidate(uintptr_t maybe_handle) {
 void alaska_htlb_sim_track(uintptr_t maybe_handle) {
   if (not alaska::is_initialized()) return;
   ck::scoped_lock l(htlb_lock);
+  // printf("Track %zx\n", maybe_handle);
   auto m = alaska::Mapping::from_handle_safe((void *)maybe_handle);
   auto &htlb = get_htlb();
   access_count++;

@@ -156,7 +156,7 @@ namespace alaska {
     // will first check if the pointer provided is a handle. If it is not, this method will
     // return null.
     static ALASKA_INLINE alaska::Mapping *from_handle_safe(void *ptr) {
-      if (alaska::Mapping::is_handle(ptr)) {
+      if (alaska::Mapping::is_handle_slow(ptr)) {
         return alaska::Mapping::from_handle(ptr);
       }
       // Return null if the pointer is not really a handle
@@ -166,6 +166,11 @@ namespace alaska {
     // Check if a pointer is a handle or not (is the top bit is set?)
     static ALASKA_INLINE bool is_handle(void *ptr) {
       return (int64_t)ptr < 0;  // This is quicker than shifting and masking :)
+    }
+
+
+    static ALASKA_INLINE bool is_handle_slow(void *ptr) {
+      return ((uint64_t)ptr >> 62) == 0b10;
     }
   };
 

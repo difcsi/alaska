@@ -47,7 +47,8 @@ namespace alaska {
 
 
 
-    void get_pinned_handles(ck::set<void *> &out);
+    // walk the stack and mark all pinned handles as `pin` if true. Clear them if not.
+    void get_pinned_handles(bool pin);
 
   }  // namespace barrier
 }  // namespace alaska

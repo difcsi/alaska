@@ -201,7 +201,13 @@ namespace alaska {
 
 
   bool HandleTable::valid_handle(Mapping *m) const {
-    return mapping_slab_idx(m) < (slabidx_t)m_slabs.size();
+    auto idx = mapping_slab_idx(m);
+    if (idx > (slabidx_t)m_slabs.size()) {
+      return false;
+    }
+
+    printf("%p might be valid\n", m);
+    return true;
   }
 
   void HandleTable::put(Mapping *m, alaska::ThreadCache *owner) {

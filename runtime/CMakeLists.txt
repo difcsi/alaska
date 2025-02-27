@@ -4,14 +4,14 @@ set(WARNINGS "-Wall -Werror -Wno-multichar -Wno-unused -Wno-unused-function -Wno
 
 # Compile the runtime with some special flags
 
-if(CMAKE_C_COMPILER_ID STREQUAL "Clang")
-  if(CMAKE_BUILD_TYPE STREQUAL "Release")
-    message(STATUS "Enabling Link-time optimization (LTO)")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -flto")
-  endif()
-endif()
+# if(CMAKE_C_COMPILER_ID STREQUAL "Clang")
+#   if(CMAKE_BUILD_TYPE STREQUAL "Release")
+#     message(STATUS "Enabling Link-time optimization (LTO)")
+#     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -flto")
+#   endif()
+# endif()
 
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -flto -gdwarf-4 ${WARNINGS} ")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -gdwarf-4 ${WARNINGS} ")
 set(CMAKE_CXX_FLAGS "${CMAKE_C_FLAGS} -std=c++2a -Wsign-compare -Wno-deprecated -fno-exceptions -Wno-ctad-maybe-unsupported -Wno-reorder -fno-rtti -Wno-invalid-offsetof ")
 
 
@@ -39,7 +39,7 @@ include_directories(
 	include/
 )
 
-install(FILES include/alaska.h DESTINATION include)
+install(FILES include/alaska.h include/yukon.h DESTINATION include)
 
 
 # The alaska library is broken up into two parts: the core, and the runtime.

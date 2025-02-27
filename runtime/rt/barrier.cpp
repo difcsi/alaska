@@ -224,13 +224,42 @@ static bool in_might_block_function(uintptr_t start_addr) {
   return false;
 }
 
-void alaska::barrier::get_pinned_handles(ck::set<void*>& out) {
+void alaska::barrier::get_pinned_handles(bool pin) {
   unw_cursor_t cursor;
   unw_context_t uc;
   unw_word_t pc, sp, reg;
+  unw_word_t prev_sp;
+  prev_sp = 0;
 
   unw_getcontext(&uc);
   unw_init_local(&cursor, &uc);
+
+
+
+  // printf("Stack frames:\n");
+  while (unw_step(&cursor) > 0) {
+    unw_get_reg(&cursor, UNW_REG_SP, &sp);
+    unw_get_reg(&cursor, UNW_REG_IP, &pc);
+
+    // Compute the end of the previous frame as the current frame's start
+    if (prev_sp != 0) {
+      // printf("Frame: start = %p, end = %p\n", (void*)prev_sp, (void*)sp);
+      uint64_t* frame_start = (uint64_t*)prev_sp;
+      uint64_t* frame_end = (uint64_t*)sp;
+      // Iterate over each uint64_t in the frame
+      printf("%p %p\n", pc, sp);
+      for (uint64_t* loc = frame_start; loc < frame_end; ++loc) {
+        if (might_be_handle((void*)*loc)) {
+          printf("  %p: 0x%lx\n", (void*)loc, *loc);
+          record_handle((void*)*loc, pin);
+        }
+      }
+    }
+    prev_sp = sp;
+  }
+
+  return;
+
   while (1) {
     int res = unw_step(&cursor);
     if (res == 0) {
@@ -242,9 +271,9 @@ void alaska::barrier::get_pinned_handles(ck::set<void*>& out) {
     }
     unw_get_reg(&cursor, UNW_REG_IP, &pc);
     unw_get_reg(&cursor, UNW_REG_SP, &sp);
-    // printf("pc:%016lx sp:%016lx ", pc, sp);
     auto it = pin_map.find(pc);
     if (it != pin_map.end()) {
+      printf("pc:%016lx sp:%016lx ", pc, sp);
       auto& psi = it->value;
       if (psi.count == 0) continue;  // should not happen!
       unw_get_reg(&cursor, psi.regNum, &reg);
@@ -253,20 +282,20 @@ void alaska::barrier::get_pinned_handles(ck::set<void*>& out) {
       void** localSet = (void**)(reg + psi.offset);
 
       for (uint32_t i = 0; i < psi.count; i++) {
+        printf(" (%zx)", localSet[i]);
         if (might_be_handle(localSet[i])) {
-          out.add(localSet[i]);
+          record_handle(localSet[i], pin);
         }
       }
+      printf("\n");
     }
   }
 }
 
 
 
-static void participant_join(bool leader, const ck::set<void*>& ps) {
-  for (auto* p : ps) {
-    record_handle(p, true);
-  }
+static void participant_join(bool leader) {
+  alaska::barrier::get_pinned_handles(true);
   // Wait on the barrier so everyone's state has been commited.
   if (alaska::thread_tracking::threads().num_threads() > 1) {
     pthread_barrier_wait(&the_barrier);
@@ -276,16 +305,14 @@ static void participant_join(bool leader, const ck::set<void*>& ps) {
 
 
 
-static void participant_leave(bool leader, const ck::set<void*>& ps) {
+static void participant_leave(bool leader) {
   // wait for the the leader (and everyone else to catch up)
   if (alaska::thread_tracking::threads().num_threads() > 1) {
     pthread_barrier_wait(&the_barrier);
   }
 
   // go and clean up our commits to the global structure.
-  for (auto* p : ps) {
-    record_handle(p, false);
-  }
+  alaska::barrier::get_pinned_handles(false);
 }
 
 
@@ -397,9 +424,9 @@ bool alaska::barrier::begin(void) {
   }
 
 
-  ck::set<void*> locked;
-  alaska::barrier::get_pinned_handles(locked);  // TODO: slow!
-  participant_join(true, locked);
+  // ck::set<void*> locked;
+  // alaska::barrier::get_pinned_handles(locked);  // TODO: slow!
+  participant_join(true);
 
   (void)retries;
   (void)signals_sent;
@@ -413,10 +440,10 @@ bool alaska::barrier::begin(void) {
 
 void alaska::barrier::end(void) {
   patchNop();
-  ck::set<void*> locked;
-  alaska::barrier::get_pinned_handles(locked);  // TODO: slow!
+  // ck::set<void*> locked;
+  // alaska::barrier::get_pinned_handles(locked);  // TODO: slow!
   // Join the barrier to signal everyone we are done.
-  participant_leave(true, locked);
+  participant_leave(true);
 
   // Unlock all the locks we took.
   alaska::thread_tracking::threads().unlock_thread_creation();
@@ -489,14 +516,11 @@ static void alaska_barrier_signal_handler(int sig, siginfo_t* info, void* ptr) {
 
   invalid_state_abort = false;
 
-  ck::set<void*> ps;
-  alaska::barrier::get_pinned_handles(ps);  // TODO: slow!
-
   // Simply join the barrier, then leave immediately. This
   // will deal with all the synchronization that needs done.
-  participant_join(false, ps);
+  participant_join(false);
 
-  participant_leave(false, ps);
+  participant_leave(false);
 
   clear_pending_signals();
 

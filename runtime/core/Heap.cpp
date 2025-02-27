@@ -215,7 +215,7 @@ namespace alaska {
       if (mag.size() == 0) continue;
       auto size = alaska::class_to_size(i);
 
-      fprintf(stream, "%8zu bytes, %3zu heaps: ", size, mag.size());
+      fprintf(stream, "%8zu,%-3zu: ", size, mag.size());
       i += 1;
 
       long page_index = 0;

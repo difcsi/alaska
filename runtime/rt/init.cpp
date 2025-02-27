@@ -47,7 +47,7 @@ static void *barrier_thread_func(void *) {
 
   while (1) {
     auto &rt = alaska::Runtime::get();
-    usleep(250 * 1000);
+    usleep(75 * 1000);
     // continue;
 
     long already_invalid = 0;
@@ -65,7 +65,8 @@ static void *barrier_thread_func(void *) {
     rt.with_barrier([&]() {
       // printf("\033[2J\033[H");
       // // rt.handle_table.dump(stdout);
-      // rt.heap.dump(stdout);
+      rt.heap.dump(stdout);
+      // rt.heap.compact_sizedpages();
       return;
 
 
