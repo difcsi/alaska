@@ -177,7 +177,7 @@ extern "C" bool localize_structure(void *ptr) {
   auto *tc = get_tc_r();
   auto &rt = alaska::Runtime::get();
 
-  size_t max_depth = 26;
+  size_t max_depth = 4;
 
   auto pages_before = get_page_count_for_structure(ptr, max_depth * 2);
 

@@ -68,6 +68,8 @@ extern void alaska_htlb_sim_track(uintptr_t handle);
 
 extern "C" void do_handle_fault(void) { return; }
 
+#define ENABLE_HANDLE_FAULTS
+
 
 // This function is a marker, and just gets removed
 // after the compiler does some magic to merge them.
@@ -94,11 +96,12 @@ retry_translation:
   void *mapped = m->get_pointer_fast();
 
   mapped_bits = (int64_t)mapped;
+#ifdef ENABLE_HANDLE_FAULTS
   if (unlikely(mapped_bits < 0)) {
     alaska::do_handle_fault(bits);
     goto retry_translation;
   }
-
+#endif
   // load from the address for some reason
   uint8_t v;
   v = *(volatile uint8_t *)mapped;

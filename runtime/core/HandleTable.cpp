@@ -86,10 +86,10 @@ namespace alaska {
 
 
   void HandleTable::grow() {
-#ifdef __riscv
-    fprintf(stderr, "cannot grow handle table yet.\n");
-    abort();
-#endif
+// #ifdef __riscv
+//     fprintf(stderr, "cannot grow handle table yet.\n");
+//     abort();
+// #endif
     auto new_cap = m_capacity * HandleTable::growth_factor;
     // Scale the capacity of the handle table
     log_debug("Growing handle table. New capacity: %lu, old: %lu", new_cap, m_capacity);
@@ -206,7 +206,7 @@ namespace alaska {
       return false;
     }
 
-    printf("%p might be valid\n", m);
+    // printf("%p might be valid\n", m);
     return true;
   }
 

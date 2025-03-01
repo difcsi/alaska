@@ -233,17 +233,17 @@ PreservedAnalyses PinTrackingPass::run(Module &M, ModuleAnalysisManager &AM) {
 
       auto called = call->getCalledOperand();
       int patch_size = 0;
-      int id = 0;
+      int id = 'U';
 
       if (auto func = call->getCalledFunction()) {
         if (func->getName() == "alaska_barrier_poll") {
-          id = 'PATC';
+          id = 'P';
           patch_size = ALASKA_PATCH_SIZE;  // TODO: handle ARM
         } else if (func->hasFnAttribute("alaska_mightblock")) {
-          id = 'BLOK';  // This function might block! Record it in the stackmap
+          id = 'B';  // This function might block! Record it in the stackmap
           patch_size = 0;
         } else if (func->getName() == "alaska_do_handle_fault_check") {
-          id = 'FALT';
+          id = 'H';
           patch_size = ALASKA_PATCH_SIZE;  // TODO: handle ARM
         }
       }
@@ -313,6 +313,7 @@ PreservedAnalyses PinTrackingPass::run(Module &M, ModuleAnalysisManager &AM) {
 
 
 
+      alaska::println((char)id, ": ", *call);
 
       // If the safepoint is a PATCH safepoint, it won't ever be a call. It will always be a "NOP"
       // style instruction and will never corrupt any registers. As such, to reduce the overhead of
@@ -323,7 +324,7 @@ PreservedAnalyses PinTrackingPass::run(Module &M, ModuleAnalysisManager &AM) {
       //
       // For reference, if this line is removed, NAS cg.B running on 64 cores under OpenMP sees
       // overhead increase from 1.02x to 4x!
-      if (id == 'PATC' or id == 'FALT') {
+      if (id == 'P' or id == 'F') {
         token->setCallingConv(CallingConv::PreserveAll);
       }
 
@@ -420,7 +421,7 @@ PreservedAnalyses HandleFaultPass::run(Module &M, ModuleAnalysisManager &AM) {
       int patch_size = 0;
       int id = 0;
 
-      id = 'HFLT';
+      id = 'H';
       patch_size = 4;  // TODO: handle GENERALITY
 
       // auto callTarget = llvm::FunctionCallee(call->getFunctionType(), called);
@@ -428,7 +429,7 @@ PreservedAnalyses HandleFaultPass::run(Module &M, ModuleAnalysisManager &AM) {
 
       auto *CI = dyn_cast<CallInst>(call);
       auto *SPCall =
-        b.CreateGCStatepointCall(id, patch_size, callTarget, callArgs, deoptArgs, gcArgs, "");
+          b.CreateGCStatepointCall(id, patch_size, callTarget, callArgs, deoptArgs, gcArgs, "");
 
       // SPCall->setTailCallKind(CI->getTailCallKind());
       SPCall->setCallingConv(CallingConv::PreserveAll);

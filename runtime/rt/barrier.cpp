@@ -236,29 +236,28 @@ void alaska::barrier::get_pinned_handles(bool pin) {
 
 
 
-  // printf("Stack frames:\n");
-  while (unw_step(&cursor) > 0) {
-    unw_get_reg(&cursor, UNW_REG_SP, &sp);
-    unw_get_reg(&cursor, UNW_REG_IP, &pc);
+  // // printf("Stack frames:\n");
+  // while (unw_step(&cursor) > 0) {
+  //   unw_get_reg(&cursor, UNW_REG_SP, &sp);
+  //   unw_get_reg(&cursor, UNW_REG_IP, &pc);
 
-    // Compute the end of the previous frame as the current frame's start
-    if (prev_sp != 0) {
-      // printf("Frame: start = %p, end = %p\n", (void*)prev_sp, (void*)sp);
-      uint64_t* frame_start = (uint64_t*)prev_sp;
-      uint64_t* frame_end = (uint64_t*)sp;
-      // Iterate over each uint64_t in the frame
-      printf("%p %p\n", pc, sp);
-      for (uint64_t* loc = frame_start; loc < frame_end; ++loc) {
-        if (might_be_handle((void*)*loc)) {
-          printf("  %p: 0x%lx\n", (void*)loc, *loc);
-          record_handle((void*)*loc, pin);
-        }
-      }
-    }
-    prev_sp = sp;
-  }
-
-  return;
+  //   // Compute the end of the previous frame as the current frame's start
+  //   if (prev_sp != 0) {
+  //     // printf("Frame: start = %p, end = %p\n", (void*)prev_sp, (void*)sp);
+  //     uint64_t* frame_start = (uint64_t*)prev_sp;
+  //     uint64_t* frame_end = (uint64_t*)sp;
+  //     // Iterate over each uint64_t in the frame
+  //     printf("%p %p\n", pc, sp);
+  //     for (uint64_t* loc = frame_start; loc < frame_end; ++loc) {
+  //       if (might_be_handle((void*)*loc)) {
+  //         printf("  %p: 0x%lx\n", (void*)loc, *loc);
+  //         record_handle((void*)*loc, pin);
+  //       }
+  //     }
+  //   }
+  //   prev_sp = sp;
+  // }
+  // return;
 
   while (1) {
     int res = unw_step(&cursor);
@@ -593,11 +592,11 @@ void parse_stack_map(uint8_t* t) {
       recordCount = 0;
     }
 
-    if (record.getID() == 'BLOK') {
+    if (record.getID() == 'B') {
       block_rets.add(addr);
     }
 
-    if (record.getID() == 'PATC') {
+    if (record.getID() == 'P') {
       // Apply the instruction patch
       auto* rip = (void*)(addr - ALASKA_PATCH_SIZE);
 
@@ -627,7 +626,7 @@ void parse_stack_map(uint8_t* t) {
 
       patchPoints.push(p);
     }
-    if (record.getID() == 'PATC') {
+    if (record.getID() == 'P') {
       addr -= ALASKA_PATCH_SIZE;
     }
 
@@ -653,7 +652,7 @@ void parse_stack_map(uint8_t* t) {
     }
 
 
-    if (record.getID() == 'HFLT') {
+    if (record.getID() == 'H') {
       printf("handle fault at 0x%lx lo:%d, loc:%d\n", addr, record.getNumLiveOuts(),
           record.getNumLocations());
       for (std::uint16_t i = 0; i < record.getNumLocations(); i++) {
@@ -687,7 +686,9 @@ void parse_stack_map(uint8_t* t) {
       }
     }
 
-    if (record.getID() == 'PATC') {
+
+    printf("%c: %zx\n", (char)record.getID(), addr);
+    if (record.getID() == 'P') {
       pin_map[addr] = psi;
       //       if (record.getID() == 'BLOK') {
       // #ifdef __amd64__

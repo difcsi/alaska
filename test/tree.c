@@ -42,18 +42,11 @@ bool localize_structure(uint64_t ptr);
 int main() {
   long start, end;
   printf("localized,walk_time\n");
-  for (int trial = 0; trial < 400; trial++) {
-    node_t *n = make_tree(18);
-
+  node_t *n = make_tree(18);
+  localize_structure((uint64_t)n);
+  for (int trial = 0; trial < 4000; trial++) {
     bool localized = false;
 
-
-    /* if (trial & 1) { */
-    /*   start = alaska_timestamp(); */
-    /*   localized = localize_structure((uint64_t)n); */
-    /*   end = alaska_timestamp(); */
-    /* } */
-    // uint64_t localize_time = end - start;
 
     int c = 0;
     start = alaska_timestamp();
@@ -62,10 +55,10 @@ int main() {
     }
     end = alaska_timestamp();
     uint64_t walk_time = end - start;
-    printf("%d,%zu\n", localized, walk_time);
+    printf("%d,%f\n", localized, walk_time / 200.0);
     // printf("Node count: %d\n", c);
-    free_tree(n);
   }
+  free_tree(n);
 
   return EXIT_SUCCESS;
 }

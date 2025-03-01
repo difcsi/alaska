@@ -74,8 +74,8 @@ namespace alaska {
       // rt.heap.compact_sizedpages();
     });
 
-    printf("moved:%5lu unmoved:%5lu bytes:%12lu reach:%12lu\n", moved_objects, unmoved_objects,
-        bytes_in_dump, bytes_reach);
+    // printf("moved:%5lu unmoved:%5lu bytes:%12lu reach:%12lu\n", moved_objects, unmoved_objects,
+    //     bytes_in_dump, bytes_reach);
 
     // Push the buffer back to the queue of buffers
     struct buffer *buf = reinterpret_cast<struct buffer *>(handle_ids);

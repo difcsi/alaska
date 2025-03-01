@@ -107,17 +107,18 @@ static void setup_signal_handlers(void) {
   assert(sigaction(SIGSEGV, &sa, NULL) == 0);
   assert(sigaction(SIGUSR2, &sa, NULL) == 0);
 
-#if 1
-  int dump_interval_ms = 10;
-  useconds_t dump_interval = dump_interval_ms * 1000;
-  signal(SIGALRM, alarm_handler);
-  // now that we have sigalarm configured, setup a ualarm for
-  // some number of microseconds on an interval for dumping
-  if ((long)ualarm(dump_interval, dump_interval) == -1) {
-    perror("Failed to setup ualarm for dumping");
-    exit(-1);
+
+  if (getenv("YUKON_NODUMP") == NULL) {
+    int dump_interval_ms = 10;
+    useconds_t dump_interval = dump_interval_ms * 1000;
+    signal(SIGALRM, alarm_handler);
+    // now that we have sigalarm configured, setup a ualarm for
+    // some number of microseconds on an interval for dumping
+    if ((long)ualarm(dump_interval, dump_interval) == -1) {
+      perror("Failed to setup ualarm for dumping");
+      exit(-1);
+    }
   }
-#endif
 }
 
 
@@ -141,11 +142,14 @@ static inline uint64_t read_cycle_counter() {
 
 namespace yukon {
   void set_handle_table_base(void *addr) {
-    uint64_t value = (uint64_t)addr;
-    if (value != 0 and getenv("YUKON_PHYS") != nullptr) {
+    uint64_t value;
+    read_csr(CSR_HTBASE, value);
+    if (getenv("YUKON_PHYS") != nullptr) {
       value |= (1LU << 63);
     }
-    alaska::printf("set htbase to 0x%zx\n", value);
+
+    write_csr(CSR_HTBASE, value);
+    // alaska::printf("set htbase to 0x%zx\n", value);
     // write_csr(CSR_HTBASE, value);
   }
 
@@ -166,7 +170,7 @@ namespace yukon {
     asm volatile("fence" ::: "memory");
     tc->localizer.feed_hotness_buffer(size, space);
     asm volatile("fence" ::: "memory");
-    printf("Dumping htlb took %lu cycles\n", end - start);
+    // printf("Dumping htlb took %lu cycles\n", end - start);
   }
 
 
@@ -264,10 +268,10 @@ static void *_halloc(size_t sz, int zero) {
   result = yukon::get_tc()->halloc(sz, zero);
 
   auto m = alaska::Mapping::from_handle_safe(result);
-  if (m) {
-    auto backing_data = (uintptr_t)m->get_pointer();
-    touch_pages(backing_data, backing_data + sz);
-  }
+  // if (m) {
+  //   auto backing_data = (uintptr_t)m->get_pointer();
+  //   touch_pages(backing_data, backing_data + sz);
+  // }
   if (result == NULL) errno = ENOMEM;
 
   return result;
@@ -327,10 +331,15 @@ extern "C" size_t halloc_usable_size(void *ptr) { return yukon::get_tc()->get_si
 
 
 void *operator new(size_t size) { return halloc(size); }
-
 void *operator new[](size_t size) { return halloc(size); }
-
-
 void operator delete(void *ptr) { hfree(ptr); }
-
 void operator delete[](void *ptr) { hfree(ptr); }
+
+
+// extern "C" {
+// void *malloc(size_t size) { return halloc(size); }
+// void *calloc(size_t size, size_t count) { return hcalloc(size, count); }
+// void *realloc(void *ptr, size_t newsize) { return hrealloc(ptr, newsize); }
+// void free(void *ptr) { hfree(ptr); }
+// size_t malloc_usable_size(void *ptr) { return halloc_usable_size(ptr); }
+// }
