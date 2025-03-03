@@ -60,6 +60,12 @@ namespace alaska {
 
 
   void Runtime::dump(FILE *stream) {
+#define xstr(s) str(s)
+#define str(s) #s
+    fprintf(stream, "Revision: " xstr(ALASKA_REVISION) "\n");
+#undef xstr
+#undef str
+
     for (auto *tc: this->tcs) {
       fprintf(stream, "tc%d allocations:%zu, rate:%.1f/s", tc->id, tc->allocation_rate.read(), tc->allocation_rate.digest());
 

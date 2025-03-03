@@ -43,6 +43,9 @@ alaska_option(ALASKA_SIZE_BITS 32)
 alaska_option(CMAKE_BUILD_TYPE Release)
 alaska_option_nodef(ALASKA_ENABLE_COMPONENTS "compiler;compiler-rts")
 
+
+alaska_option(ALASKA_REVISION unknown)
+
 set(ALASKA_VERSION 2)
 
 

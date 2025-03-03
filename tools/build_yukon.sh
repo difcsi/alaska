@@ -11,9 +11,14 @@ export LD=$ROOT/bin/riscv64-unknown-linux-gnu-ld
 
 make clean
 
-ls $ROOT/sysroot
+REV="$(whoami)-$(git rev-parse --short HEAD)"
+if [[ $(git diff --stat) != '' ]]; then
+  REV="${REV}-dirty"
+fi
+
 
 cmake ../ \
+      -DALASKA_REVISION="${REV}" \
       -DALASKA_ENABLE_COMPILER=OFF \
       -DALASKA_ENABLE_TESTING=OFF \
       -DALASKA_CORE_ONLY=ON \
