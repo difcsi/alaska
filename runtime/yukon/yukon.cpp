@@ -336,10 +336,10 @@ void operator delete(void *ptr) { hfree(ptr); }
 void operator delete[](void *ptr) { hfree(ptr); }
 
 
-// extern "C" {
-// void *malloc(size_t size) { return halloc(size); }
-// void *calloc(size_t size, size_t count) { return hcalloc(size, count); }
-// void *realloc(void *ptr, size_t newsize) { return hrealloc(ptr, newsize); }
-// void free(void *ptr) { hfree(ptr); }
-// size_t malloc_usable_size(void *ptr) { return halloc_usable_size(ptr); }
-// }
+extern "C" {
+void *malloc(size_t size) { return halloc(size); }
+void *calloc(size_t size, size_t count) { return hcalloc(size, count); }
+void *realloc(void *ptr, size_t newsize) { return hrealloc(ptr, newsize); }
+void free(void *ptr) { hfree(ptr); }
+size_t malloc_usable_size(void *ptr) { return halloc_usable_size(ptr); }
+}
