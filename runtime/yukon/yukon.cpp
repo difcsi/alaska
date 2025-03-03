@@ -108,7 +108,7 @@ static void setup_signal_handlers(void) {
   assert(sigaction(SIGUSR2, &sa, NULL) == 0);
 
 
-  if (getenv("YUKON_NODUMP") == NULL) {
+  if (getenv("YUKON_DUMP") == NULL) {
     int dump_interval_ms = 10;
     useconds_t dump_interval = dump_interval_ms * 1000;
     signal(SIGALRM, alarm_handler);
