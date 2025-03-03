@@ -60,10 +60,15 @@ namespace alaska {
 
 
   void Runtime::dump(FILE *stream) {
-    //
-    alaska::printf("Alaska Runtime Information:\n");
-    heap.dump(stream);
-    handle_table.dump(stream);
+    for (auto *tc: this->tcs) {
+      fprintf(stream, "tc%d allocations:%zu, rate:%.1f/s", tc->id, tc->allocation_rate.read(), tc->allocation_rate.digest());
+
+
+      fprintf(stream, " frees:%zu, rate:%.1f/s", tc->free_rate.read(), tc->free_rate.digest());
+
+      fprintf(stream, "\n");
+    }
+    // handle_table.dump(stream);
   }
 
 
@@ -168,4 +173,15 @@ extern "C" uint64_t alaska_timestamp() {
   struct timespec spec;
   clock_gettime(1, &spec);
   return spec.tv_sec * (1000 * 1000 * 1000) + spec.tv_nsec;
+}
+
+
+
+static void __attribute__((destructor)) alaska_runtime_deinit(void) {
+  if (alaska::g_runtime) {
+    if (getenv("ALASKA_INFO") == NULL) return;
+
+    auto &rt = alaska::Runtime::get();
+    rt.dump(stdout);
+  }
 }
