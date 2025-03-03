@@ -51,7 +51,7 @@ namespace alaska {
       for (size_t i = 0; i < count; i++) {
         auto hid = handle_ids[i];
         if (hid == 0) continue;
-        auto handle = reinterpret_cast<void *>((1LU << 63) | (hid << ALASKA_SIZE_BITS));
+        auto handle = reinterpret_cast<void *>((1LU << 63) | ((uint64_t)hid << ALASKA_SIZE_BITS));
         auto *m = alaska::Mapping::from_handle_safe(handle);
         bool moved = false;
         if (m == NULL or m->is_free() or m->is_pinned()) {
