@@ -52,7 +52,11 @@ namespace alaska {
   extern long translation_hits;
   extern long translation_misses;
 
+#if ALASKA_SIZE_BITS < 32
   using handle_id_t = uint64_t;
+#else
+  using handle_id_t = uint32_t;
+#endif
 
 
   class Mapping {
