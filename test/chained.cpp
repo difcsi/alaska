@@ -70,24 +70,25 @@ class ChainedHashTable {
 };
 
 int main() {
-  for (int buckets = 512; buckets >= 8; buckets /= 2) {
-    ChainedHashTable hash_table(buckets);
+  int buckets = 512;
+  ChainedHashTable hash_table(buckets);
 
-    for (int i = 0; i < 10000; i++) {
-      hash_table.insert(i, i);
-    }
-
-    for (int trial = 0; trial < 1; trial++) {
-      auto start = read_cycle_counter();
-      for (int i = 0; i < 30000; i++) {
-        int out;
-        hash_table.lookup(i, out);
-      }
-      auto end = read_cycle_counter();
-      printf("%d, %zu\n", buckets, end - start);
-    }
+  printf("inserting... ");
+  fflush(stdout);
+  for (int i = 0; i < 10000; i++) {
+    hash_table.insert(i, i);
   }
+  printf("DONE\n");
 
+  for (int trial = 0; trial < 10; trial++) {
+    auto start = read_cycle_counter();
+    for (int i = 0; i < 20000; i++) {
+      int out;
+      hash_table.lookup(i, out);
+    }
+    auto end = read_cycle_counter();
+    printf("%d, %zu\n", buckets, end - start);
+  }
   // hash_table.print_table();
   return 0;
 }
