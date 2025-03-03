@@ -56,6 +56,7 @@ namespace alaska {
     // A pointer to the runtime's current barrier manager.
     // This is defaulted to a "nop" manager which simply does nothing.
     alaska::BarrierManager *barrier_manager;
+    alaska::RateCounter stat_barriers;
 
     // Return the singleton instance of the Runtime if it has been allocated. Abort otherwise.
     static Runtime &get();
@@ -96,6 +97,7 @@ namespace alaska {
       lock_all_thread_caches();
       if (barrier_manager->begin()) {
         in_barrier = true;
+        stat_barriers++;
         barrier_manager->barrier_count++;
         cb();
         in_barrier = false;

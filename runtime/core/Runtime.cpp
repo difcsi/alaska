@@ -66,12 +66,12 @@ namespace alaska {
 #undef xstr
 #undef str
 
-    for (auto *tc: this->tcs) {
-      fprintf(stream, "tc%d allocations:%zu, rate:%.1f/s", tc->id, tc->allocation_rate.read(), tc->allocation_rate.digest());
+    fprintf(stream, "barriers: %zu, rate:%.1f/s\n", stat_barriers.read(), stat_barriers.digest());
 
-
+    for (auto *tc : this->tcs) {
+      fprintf(stream, "tc%d allocations:%zu, rate:%.1f/s", tc->id, tc->allocation_rate.read(),
+          tc->allocation_rate.digest());
       fprintf(stream, " frees:%zu, rate:%.1f/s", tc->free_rate.read(), tc->free_rate.digest());
-
       fprintf(stream, "\n");
     }
     // handle_table.dump(stream);
