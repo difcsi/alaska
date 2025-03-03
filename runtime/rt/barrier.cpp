@@ -687,17 +687,8 @@ void parse_stack_map(uint8_t* t) {
     }
 
 
-    printf("%c: %zx\n", (char)record.getID(), addr);
     if (record.getID() == 'P') {
       pin_map[addr] = psi;
-      //       if (record.getID() == 'BLOK') {
-      // #ifdef __amd64__
-      //         pin_map[addr - 5] = psi;  // TODO(HACK)
-      // #endif
-      // #ifdef __aarch64__
-      //         pin_map[addr - 4] = psi;
-      // #endif
-      //       }
     }
   }
 
