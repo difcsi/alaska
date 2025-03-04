@@ -99,6 +99,11 @@ namespace alaska {
     alaska::RateCounter allocation_rate;
     alaska::RateCounter free_rate;
 
+
+    // How often are we getting a new heap or handle table?
+    alaska::RateCounter heap_churn;
+    alaska::RateCounter handle_table_churn;
+
     // Each thread cache has a localizer, which can be fed with
     // "localization data" to improve object locality
     alaska::Localizer localizer;

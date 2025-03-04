@@ -51,24 +51,26 @@ namespace alaska {
       for (size_t i = 0; i < count; i++) {
         auto hid = handle_ids[i];
         if (hid == 0) continue;
-        auto handle = reinterpret_cast<void *>((1LU << 63) | ((uint64_t)hid << ALASKA_SIZE_BITS));
-        auto *m = alaska::Mapping::from_handle_safe(handle);
-        bool moved = false;
-        if (m == NULL or m->is_free() or m->is_pinned()) {
-          moved = false;
-        } else {
-          void *ptr = m->get_pointer();
-          auto *source_page = rt.heap.pt.get_unaligned(m->get_pointer());
-          moved = tc.localize(*m, rt.localization_epoch);
-        }
-        auto size = tc.get_size(handle);
-        bytes_reach += size;
-        if (moved) {
-          moved_objects++;
-          bytes_in_dump += size;
-        } else {
-          unmoved_objects++;
-        }
+        this->seen_handles.add(hid);
+        // printf("%3d: %x\n", i, hid);
+        // auto handle = reinterpret_cast<void *>((1LU << 63) | ((uint64_t)hid << ALASKA_SIZE_BITS));
+        // auto *m = alaska::Mapping::from_handle_safe(handle);
+        // bool moved = false;
+        // if (m == NULL or m->is_free() or m->is_pinned()) {
+        //   moved = false;
+        // } else {
+        //   void *ptr = m->get_pointer();
+        //   auto *source_page = rt.heap.pt.get_unaligned(m->get_pointer());
+        //   moved = tc.localize(*m, rt.localization_epoch);
+        // }
+        // auto size = tc.get_size(handle);
+        // bytes_reach += size;
+        // if (moved) {
+        //   moved_objects++;
+        //   bytes_in_dump += size;
+        // } else {
+        //   unmoved_objects++;
+        // }
       }
       // rt.heap.compact_locality_pages();
       // rt.heap.compact_sizedpages();
@@ -76,6 +78,8 @@ namespace alaska {
 
     // printf("moved:%5lu unmoved:%5lu bytes:%12lu reach:%12lu\n", moved_objects, unmoved_objects,
     //     bytes_in_dump, bytes_reach);
+
+    alaska::printf("seen handles: %zu\n", this->seen_handles.size());
 
     // Push the buffer back to the queue of buffers
     struct buffer *buf = reinterpret_cast<struct buffer *>(handle_ids);

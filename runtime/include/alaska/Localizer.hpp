@@ -13,6 +13,7 @@
 
 #include <alaska/alaska.hpp>
 #include <alaska/Configuration.hpp>
+#include <ck/set.h>
 
 namespace alaska {
 
@@ -31,6 +32,8 @@ namespace alaska {
     };
 
     struct buffer *buffers = nullptr;
+
+    ck::set<handle_id_t> seen_handles;
 
    public:
     Localizer(alaska::Configuration &config, alaska::ThreadCache &tc);

@@ -108,8 +108,9 @@ static void setup_signal_handlers(void) {
   assert(sigaction(SIGUSR2, &sa, NULL) == 0);
 
 
-  if (getenv("YUKON_DUMP") == NULL) {
-    int dump_interval_ms = 10;
+  if (getenv("YUKON_DUMP") != NULL) {
+    int dump_interval_ms = atoi(getenv("YUKON_DUMP"));
+
     useconds_t dump_interval = dump_interval_ms * 1000;
     signal(SIGALRM, alarm_handler);
     // now that we have sigalarm configured, setup a ualarm for
@@ -159,16 +160,22 @@ namespace yukon {
   void dump_htlb(alaska::ThreadCache *tc) {
     auto size = 576;
     auto *space = tc->localizer.get_hotness_buffer(size);
-    memset(space, 0, size * sizeof(alaska::handle_id_t));
-
+    // memset(space, 0, size * sizeof(alaska::handle_id_t));
+    // Fence after we have a valid space for the dump
     asm volatile("fence" ::: "memory");
 
     auto start = read_cycle_counter();
+
+    // Fire off the dump..
     write_csr(CSR_HTDUMP, (uint64_t)space);
+    // ..and wait for it to finish
     wait_for_csr_zero(CSR_HTDUMP);
     auto end = read_cycle_counter();
+    // fence so we have ordering
     asm volatile("fence" ::: "memory");
+    // Feed the buffer to the localizer to do it's work
     tc->localizer.feed_hotness_buffer(size, space);
+    // Fence again... for some reason
     asm volatile("fence" ::: "memory");
     // printf("Dumping htlb took %lu cycles\n", end - start);
   }
@@ -235,11 +242,9 @@ void __attribute__((constructor(102))) alaska_init(void) {
   unsetenv("LD_PRELOAD");  // make it so we don't run alaska in subprocesses!
   yukon::get_tc();
 
-  atexit([]() {
-    printf("Setting ht addr to zero!\n");
-    yukon::set_handle_table_base(NULL);
-    printf("set!\n");
-  });
+  // atexit([]() {
+  //   yukon::set_handle_table_base(NULL);
+  // });
 }
 
 void __attribute__((destructor)) alaska_deinit(void) {}

@@ -14,8 +14,8 @@
 #include <semaphore.h>
 
 
-#define L1_ENTS 96
-#define L1_SETS 24
+#define L1_ENTS 16
+#define L1_SETS 4
 #define L1_WAYS (L1_ENTS / L1_SETS)
 
 #define L2_WAYS 16

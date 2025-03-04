@@ -33,6 +33,8 @@ namespace alaska {
       : id(id)
       , runtime(rt)
       , localizer(rt.config, *this) {
+
+    handle_table_churn++;
     handle_slab = runtime.handle_table.new_slab(this);
   }
 
@@ -45,7 +47,9 @@ namespace alaska {
     ptr = ::malloc(size);
 #else
     SizedPage *page = size_classes[cls];
-    if (unlikely(page == nullptr)) page = new_sized_page(cls);
+    if (unlikely(page == nullptr)) {
+      page = new_sized_page(cls);
+    }
     ptr = page->alloc(m, size);
     if (unlikely(ptr == nullptr)) {
       // OOM?
@@ -90,6 +94,7 @@ namespace alaska {
 
 
   SizedPage *ThreadCache::new_sized_page(int cls) {
+    heap_churn++;
     // Get a new heap
     auto *heap = runtime.heap.get_sizedpage(alaska::class_to_size(cls), this);
 
@@ -106,6 +111,7 @@ namespace alaska {
 
 
   LocalityPage *ThreadCache::new_locality_page(size_t required_size) {
+    heap_churn++;
     // Get a new heap
     auto *lp = runtime.heap.get_localitypage(required_size, this);
 
@@ -208,6 +214,7 @@ namespace alaska {
     auto m = handle_slab->alloc();
 
     if (unlikely(m == NULL)) {
+      handle_table_churn++; // record that we are looking for a new handle table slab.
       auto new_handle_slab = runtime.handle_table.new_slab(this);
       this->handle_slab->set_owner(NULL);
       this->handle_slab = new_handle_slab;
