@@ -38,7 +38,7 @@ namespace alaska {
 
   void* HugeObjectAllocator::allocate(size_t size) {
     if (strat == HugeAllocationStrategy::MALLOC_BACKED) {
-      return ::malloc(size);
+      return ::alaska_internal_malloc(size);
     }
     ALASKA_ASSERT(strat == HugeAllocationStrategy::CUSTOM_MMAP_BACKED, "Invalid huge strat");
 
@@ -67,7 +67,7 @@ namespace alaska {
 
   bool HugeObjectAllocator::free(void* ptr) {
     if (strat == HugeAllocationStrategy::MALLOC_BACKED) {
-      ::free(ptr);
+      ::alaska_internal_free(ptr);
       return true;
     }
     ALASKA_ASSERT(strat == HugeAllocationStrategy::CUSTOM_MMAP_BACKED, "Invalid huge strat");
@@ -87,7 +87,9 @@ namespace alaska {
 
 
   size_t HugeObjectAllocator::size_of(void* ptr) {
-    if (strat == HugeAllocationStrategy::MALLOC_BACKED) return ::malloc_usable_size(ptr);
+    if (strat == HugeAllocationStrategy::MALLOC_BACKED) {
+      return ::alaska_internal_size_of(ptr);
+    }
 
     ck::scoped_lock l(m_lock);
     HugeHeader* header = find_header(ptr);

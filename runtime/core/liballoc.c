@@ -608,6 +608,43 @@ void *PREFIX(malloc)(size_t req_size) {
 
 
 
+long PREFIX(size_of)(void *ptr) {
+  struct liballoc_minor *min;
+
+  UNALIGN(ptr);
+
+  liballoc_lock();  // lockit
+
+
+  min = (struct liballoc_minor *)((uintptr_t)ptr - sizeof(struct liballoc_minor));
+
+
+  if (min->magic != LIBALLOC_MAGIC) {
+    l_errorCount += 1;
+
+    // Check for overrun errors. For all bytes of LIBALLOC_MAGIC
+    if (((min->magic & 0xFFFFFF) == (LIBALLOC_MAGIC & 0xFFFFFF)) ||
+        ((min->magic & 0xFFFF) == (LIBALLOC_MAGIC & 0xFFFF)) ||
+        ((min->magic & 0xFF) == (LIBALLOC_MAGIC & 0xFF))) {
+      l_possibleOverruns += 1;
+    }
+
+
+    if (min->magic == LIBALLOC_DEAD) {
+    } else {
+    }
+
+    // being lied to...
+    liballoc_unlock();  // release the lock
+    abort();
+  }
+
+  long size = min->size;
+
+  liballoc_unlock();  // release the lock
+  return size;
+}
+
 
 void PREFIX(free)(void *ptr) {
   struct liballoc_minor *min;
