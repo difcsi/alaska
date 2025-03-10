@@ -116,7 +116,7 @@ TEST_F(HugeObjectMallocTest, ValidMalloc) {
   EXPECT_EXIT(
       {
         // Code that might crash.
-        ::free(ptr);
+        alaska_internal_free(ptr);
         fprintf(stderr, "Free worked!\n");
         exit(0);  // Prevents the test from failing due to lack of exit
       },
@@ -125,7 +125,7 @@ TEST_F(HugeObjectMallocTest, ValidMalloc) {
 
 TEST_F(HugeObjectMallocTest, FreeWorks) {
   // Allocate a huge object
-  void* ptr = ::malloc(1024);
+  void* ptr = ::alaska_internal_malloc(1024);
 
   // Verify that the allocation was successful
   ASSERT_NE(ptr, nullptr);
@@ -144,6 +144,6 @@ TEST_F(HugeObjectMallocTest, FreeWorks) {
 
 TEST_F(HugeObjectMallocTest, SizeofWorks) {
   // Allocate a huge object
-  void* ptr = ::malloc(1024);
+  void* ptr = alaska_internal_malloc(1024);
   ASSERT_GE(allocator.size_of(ptr), 1024);
 }
