@@ -248,34 +248,51 @@ namespace alaska {
   bool ThreadCache::localize(alaska::Mapping &m, uint64_t epoch) {
     if (m.is_pinned() or m.is_free()) return false;
 
+#define printf(...)
     void *ptr = m.get_pointer();
+    printf("\nLocalize handle %d, %p\n", m.handle_id(), ptr);
     auto *source_page = this->runtime.heap.pt.get_unaligned(ptr);
+    printf("Source page = %p\n", source_page);
 
     // Validate that we can indeed move this object from the page.
     if (source_page == nullptr or not source_page->should_localize_from(epoch)) return false;
 
     // Ask the page for the size of the pointer
     auto size = source_page->size_of(ptr);
+    printf("Size = %zu\n", size);
 
     // Arbitrarially block objects larger than 512 from being moved.
-    if (size > 512) return false;
+    if (size > 512) {
+      printf("It's too big to move. skip\n");
+      return false;
+    }
+
 
     if (locality_page == nullptr or locality_page->available() < size * 2) {
+      printf("Locality page was null (or didn't fit)\n");
       locality_page = new_locality_page(size + 32);
     }
 
     // If we are moving an object within the locality page, don't.
-    if (unlikely(source_page == locality_page)) return false;
+    if (unlikely(source_page == locality_page)) {
+      printf("Pages were the same\n");
+      return false;
+    }
 
+    printf("Allocating new block...\n");
     void *d = locality_page->alloc(m, size);
+    printf("allocated block in locality page: %p\n", d);
     locality_page->last_localization_epoch = epoch;
     memcpy(d, ptr, size);
     memset(ptr, 0xFA, size);
+    printf("Moved!\n");
 
     // TODO: invalidate!
     m.set_pointer(d);
+    printf("updated mapping\n");
     source_page->release_remote(m, ptr);
-
+    printf("released original block\n");
+#undef printf
     return true;
   }
 

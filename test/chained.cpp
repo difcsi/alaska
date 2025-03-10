@@ -75,14 +75,14 @@ int main() {
 
   printf("inserting... ");
   fflush(stdout);
-  for (int i = 0; i < 10000; i++) {
+  for (int i = 0; i < 200000; i++) {
     hash_table.insert(i, i);
   }
   printf("DONE\n");
 
   for (int trial = 0; trial < 10; trial++) {
     auto start = read_cycle_counter();
-    for (int i = 0; i < 20000; i++) {
+    for (int i = 0; i < 200000; i++) {
       int out;
       hash_table.lookup(i, out);
     }
