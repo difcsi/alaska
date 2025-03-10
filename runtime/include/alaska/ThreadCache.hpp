@@ -30,6 +30,46 @@ namespace alaska {
   // something else manages storing a pointer to a ThreadCache in some
   // thread-local variable
   class ThreadCache final : public alaska::InternalHeapAllocated {
+    // Just an id for this thread cache assigned by the runtime upon creation. It's mostly
+    // meaningless, meant for debugging.
+    int id;
+    // A lock which is used to control access to this heap page. Mostly used to control
+    // race conditions around barriers, as the rest of the heap can only be accessed through
+    // a locked thread cache as a mediator
+    ck::mutex lock;
+    // A reference to the global runtime. This is here mainly to gain
+    // access to the HandleTable and the Heap.
+    alaska::Runtime &runtime;
+
+    // A pointer to the current slab of the handle table that this thread
+    // cache is allocating from.
+    alaska::HandleSlab *handle_slab;
+
+    // Each thread cache has a private heap page for each size class
+    // it might allocate from. When a size class fills up, it is
+    // returned to the global heap and another one is allocated.
+    alaska::SizedPage *size_classes[alaska::num_size_classes] = {nullptr};
+    // Each thread cache also has a private "Locality Page", which
+    // objects can be relocated to according to some external
+    // policy. This page is special because it can contain many
+    // objects of many different sizes.
+    alaska::LocalityPage *locality_page = nullptr;
+
+
+   public:
+    // Track allocation and free rates
+    alaska::RateCounter allocation_rate;
+    alaska::RateCounter free_rate;
+
+
+    // How often are we getting a new heap or handle table?
+    alaska::RateCounter heap_churn;
+    alaska::RateCounter handle_table_churn;
+
+    // Each thread cache has a localizer, which can be fed with
+    // "localization data" to improve object locality
+    alaska::Localizer localizer;
+
    public:
     ThreadCache(int id, alaska::Runtime &rt);
 
@@ -57,7 +97,6 @@ namespace alaska {
 
 
    private:
-
     // Allocate backing data for a handle, but don't assign it yet.
     void *allocate_backing_data(const alaska::Mapping &m, size_t size);
 
@@ -68,45 +107,6 @@ namespace alaska {
     alaska::SizedPage *new_sized_page(int cls);
     // Swap to a new locality page owned by this thread cache
     alaska::LocalityPage *new_locality_page(size_t required_size);
-
-    // A lock which is used to control access to this heap page. Mostly used to control
-    // race conditions around barriers, as the rest of the heap can only be accessed through
-    // a locked thread cache as a mediator
-    ck::mutex lock;
-    // Just an id for this thread cache assigned by the runtime upon creation. It's mostly
-    // meaningless, meant for debugging.
-    int id;
-    // A reference to the global runtime. This is here mainly to gain
-    // access to the HandleTable and the Heap.
-    alaska::Runtime &runtime;
-
-    // A pointer to the current slab of the handle table that this thread
-    // cache is allocating from.
-    alaska::HandleSlab *handle_slab;
-
-    // Each thread cache has a private heap page for each size class
-    // it might allocate from. When a size class fills up, it is
-    // returned to the global heap and another one is allocated.
-    alaska::SizedPage *size_classes[alaska::num_size_classes] = {nullptr};
-    // Each thread cache also has a private "Locality Page", which
-    // objects can be relocated to according to some external
-    // policy. This page is special because it can contain many
-    // objects of many different sizes.
-    alaska::LocalityPage *locality_page = nullptr;
-
-   public:
-    // Track allocation and free rates
-    alaska::RateCounter allocation_rate;
-    alaska::RateCounter free_rate;
-
-
-    // How often are we getting a new heap or handle table?
-    alaska::RateCounter heap_churn;
-    alaska::RateCounter handle_table_churn;
-
-    // Each thread cache has a localizer, which can be fed with
-    // "localization data" to improve object locality
-    alaska::Localizer localizer;
   };
 
 
