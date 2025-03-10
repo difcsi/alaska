@@ -16,6 +16,7 @@
 #include <alaska/Runtime.hpp>
 #include <alaska/Configuration.hpp>
 #include "alaska/HugeObjectAllocator.hpp"
+#include "alaska/ThreadCache.hpp"
 #include <alaska/liballoc.h>
 #include <stdlib.h>
 #include <errno.h>
@@ -36,10 +37,24 @@
   __asm__ __volatile__("csrr %0, %1" : "=r"(val) : "n"(csr) : /* clobbers: none */);
 
 
+static inline uint64_t read_instret() {
+  uint64_t instret;
+  asm volatile("rdinstret %0" : "=r"(instret));
+  return instret;
+}
+
+static uint64_t instructions_in_runtime = 0;
 
 struct AutoFencer {
-  ~AutoFencer() { __asm__ volatile("fence" ::: "memory"); }
+  uint64_t start_inst;
+  AutoFencer() { start_inst = read_instret(); }
+  ~AutoFencer() {
+    __asm__ volatile("fence" ::: "memory");
+    instructions_in_runtime += (read_instret() - start_inst);
+  }
 };
+
+
 
 #define wait_for_csr_zero(reg)         \
   do {                                 \
@@ -54,6 +69,11 @@ struct AutoFencer {
 #define CSR_HTDUMP 0xc3
 #define CSR_HTINVAL 0xc4
 
+
+static thread_local alaska::ThreadCache *tc = NULL;
+static alaska::ThreadCache *dump_tc = NULL;
+static alaska::Runtime *the_runtime = NULL;
+static uint64_t yukon_dump_interval = 10000;  // microseconds
 
 
 static void yukon_signal_handler(int sig, siginfo_t *info, void *ucontext) {
@@ -82,15 +102,23 @@ static void yukon_signal_handler(int sig, siginfo_t *info, void *ucontext) {
 
 void alarm_handler(int sig) {
   // Grab the thread cache
-  auto *tc = yukon::get_tc();
+  auto *tc = yukon::get_dump_tc();
   // And trigger an HTLB dump
   yukon::dump_htlb(tc);
+
+  if ((long)ualarm(yukon_dump_interval, 0) == -1) {
+    perror("Failed to setup ualarm for dumping");
+    exit(-1);
+  }
 }
 
 
 static void segv_handler(int sig, siginfo_t *info, void *ucontext) {}
 
+pthread_t dump_thread;
+
 static void setup_signal_handlers(void) {
+  unsetenv("LD_PRELOAD");
   struct sigaction sa;
   memset(&sa, 0, sizeof(sa));
 
@@ -106,20 +134,6 @@ static void setup_signal_handlers(void) {
   // Attach this action on two signals:
   assert(sigaction(SIGSEGV, &sa, NULL) == 0);
   assert(sigaction(SIGUSR2, &sa, NULL) == 0);
-
-
-  if (getenv("YUKON_DUMP") != NULL) {
-    int dump_interval_ms = atoi(getenv("YUKON_DUMP"));
-
-    useconds_t dump_interval = dump_interval_ms * 1000;
-    signal(SIGALRM, alarm_handler);
-    // now that we have sigalarm configured, setup a ualarm for
-    // some number of microseconds on an interval for dumping
-    if ((long)ualarm(dump_interval, dump_interval) == -1) {
-      perror("Failed to setup ualarm for dumping");
-      exit(-1);
-    }
-  }
 }
 
 
@@ -128,8 +142,6 @@ static void setup_signal_handlers(void) {
 #define ALASKA_THREAD_TRACK_INIT setup_signal_handlers();
 #include <alaska/thread_tracking.in.hpp>
 
-static thread_local alaska::ThreadCache *tc = NULL;
-static alaska::Runtime *the_runtime = NULL;
 
 
 static inline uint64_t read_cycle_counter() {
@@ -171,13 +183,14 @@ namespace yukon {
     // ..and wait for it to finish
     wait_for_csr_zero(CSR_HTDUMP);
     auto end = read_cycle_counter();
+
+    printf("Dumping htlb took %lu cycles\n", end - start);
     // fence so we have ordering
     asm volatile("fence" ::: "memory");
     // Feed the buffer to the localizer to do it's work
     tc->localizer.feed_hotness_buffer(size, space);
     // Fence again... for some reason
     asm volatile("fence" ::: "memory");
-    // printf("Dumping htlb took %lu cycles\n", end - start);
   }
 
 
@@ -213,6 +226,12 @@ namespace yukon {
     return tc;
   }
 
+  alaska::ThreadCache *get_dump_tc() {
+    if (the_runtime == NULL) init();
+    if (dump_tc == NULL) dump_tc = the_runtime->new_threadcache();
+    return dump_tc;
+  }
+
 
   static char stdout_buf[BUFSIZ];
   static char stderr_buf[BUFSIZ];
@@ -221,14 +240,53 @@ namespace yukon {
     setvbuf(stderr, stderr_buf, _IOLBF, BUFSIZ);
 
     alaska::Configuration config;
-    // Use the "malloc" backend to operate cleanly w/ libc's malloc
-    config.huge_strategy = alaska::HugeAllocationStrategy::CUSTOM_MMAP_BACKED;
+    config.huge_strategy = alaska::HugeAllocationStrategy::MALLOC_BACKED;
 
     the_runtime = new alaska::Runtime(config);
     // void *handle_table_base = the_runtime->handle_table.get_base();
     // printf("Handle table at %p\n", handle_table_base);
     // Make sure the handle table performs mlocks
     the_runtime->handle_table.enable_mlock();
+
+
+    if (getenv("YUKON_PHYS") != nullptr) {
+      uint64_t value;
+      read_csr(CSR_HTBASE, value);
+      value |= (1LU << 63);
+      write_csr(CSR_HTBASE, value);
+    }
+
+
+
+    if (getenv("YUKON_DUMP") != NULL) {
+      int dump_interval_ms = 10;
+
+      // pthread_create(
+      //     &dump_thread, NULL,
+      //     [](void *) -> void * {
+      //       // Grab the thread cache
+      //       auto *tc = yukon::get_tc();
+
+      //       while (1) {
+      //         usleep(20 * 1000);
+      //         // And trigger an HTLB dump
+      //         yukon::dump_htlb(tc);
+      //       }
+      //       return NULL;
+      //     },
+      //     NULL);
+
+      printf("dumping every %d ms\n", dump_interval_ms);
+      yukon_dump_interval = dump_interval_ms * 1000;
+      signal(SIGALRM, alarm_handler);
+      // now that we have sigalarm configured, setup a ualarm for
+      // some number of microseconds on an interval for dumping
+      if ((long)ualarm(yukon_dump_interval, 0) == -1) {
+        perror("Failed to setup ualarm for dumping");
+        exit(-1);
+      }
+    }
+
 
     // asm volatile("fence" ::: "memory");
     // yukon::set_handle_table_base(handle_table_base);
@@ -247,7 +305,9 @@ void __attribute__((constructor(102))) alaska_init(void) {
   // });
 }
 
-void __attribute__((destructor)) alaska_deinit(void) {}
+void __attribute__((destructor)) alaska_deinit(void) {
+  printf("YUKON_RTINST=%zu\n", instructions_in_runtime);
+}
 
 
 static void touch_pages(uintptr_t start, uintptr_t end) {
@@ -295,7 +355,7 @@ extern "C" void *hcalloc(size_t nmemb, size_t size) {
 extern "C" void *hrealloc(void *handle, size_t new_size) {
   AutoFencer fencer;
 
-  auto *tc = yukon::get_tc();
+  alaska::LockedThreadCache tc = *yukon::get_tc();
 
   // If the handle is null, then this call is equivalent to malloc(size)
   if (handle == NULL) {
@@ -327,11 +387,17 @@ extern "C" void hfree(void *ptr) {
   AutoFencer fencer;
   // no-op if NULL is passed
   if (unlikely(ptr == NULL)) return;
-  yukon::get_tc()->hfree(ptr);
+
+
+  alaska::LockedThreadCache tc = *yukon::get_tc();
+  tc->hfree(ptr);
 }
 
 
-extern "C" size_t halloc_usable_size(void *ptr) { return yukon::get_tc()->get_size(ptr); }
+extern "C" size_t halloc_usable_size(void *ptr) {
+  alaska::LockedThreadCache tc = *yukon::get_tc();
+  return tc->get_size(ptr);
+}
 
 
 
@@ -342,6 +408,10 @@ void operator delete[](void *ptr) { hfree(ptr); }
 
 
 extern "C" {
+
+// void *test_halloc(size_t size) { return halloc(size); }
+// void test_hfree(void *ptr) { hfree(ptr); }
+
 void *malloc(size_t size) { return halloc(size); }
 void *calloc(size_t size, size_t count) { return hcalloc(size, count); }
 void *realloc(void *ptr, size_t newsize) { return hrealloc(ptr, newsize); }
