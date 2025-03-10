@@ -28,7 +28,6 @@ namespace alaska {
     uint64_t last_nanoseconds = 0;
     uint64_t last_value = 0;
     uint64_t value = 0;
-    float last_rate = 0.0;
 
    public:
     inline RateCounter() {
@@ -47,14 +46,10 @@ namespace alaska {
       float seconds_passed = ns_passed / 1000.0 / 1000.0 / 1000.0;
       uint64_t change = value - last_value;
 
-      // Only update the rate every 100ms
-      if (seconds_passed < 0.1) return last_rate;
-
       last_nanoseconds = now;
       last_value = value;
-      last_rate = change / seconds_passed;
-
-      return last_rate;
+      auto rate = change / seconds_passed;
+      return rate;
     }
 
     inline float digest(void) {
@@ -94,9 +89,7 @@ namespace alaska {
       return a / (f + 10e-6);
     }
 
-    float delta(void) {
-      return allocation_bytes_per_second - free_bytes_per_second;
-    }
+    float delta(void) { return allocation_bytes_per_second - free_bytes_per_second; }
   };
   class AllocationRateCounter {
     RateCounter allocations;
