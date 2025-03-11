@@ -256,6 +256,11 @@ if(ALASKA_YUKON)
   target_link_libraries(yukon alaska_core_static dl pthread ${LIBUNWIND_LIBRARIES})
   target_compile_options(yukon PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-nostdlib++ -nostdinc++>)
 
+  if(CMAKE_BUILD_TYPE MATCHES "Release")
+    add_custom_command(TARGET yukon POST_BUILD
+                       COMMAND ${CMAKE_STRIP} $<TARGET_FILE:yukon>)
+  endif()
+
   install(
     TARGETS yukon
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
