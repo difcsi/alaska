@@ -32,7 +32,7 @@ namespace alaska {
     if (buffers == NULL) {
       buf = alaska_internal_malloc(count * sizeof(handle_id_t));
     } else {
-      buf = (void*)buffers;
+      buf = (void *)buffers;
       buffers = buffers->next;
     }
     return reinterpret_cast<handle_id_t *>(buf);
@@ -45,41 +45,56 @@ namespace alaska {
     unsigned long moved_objects = 0;
     unsigned long unmoved_objects = 0;
     unsigned long bytes_in_dump = 0;
-    unsigned long bytes_reach = 0;
 
-    rt.with_barrier([&]() {
-      for (size_t i = 0; i < count; i++) {
-        auto hid = handle_ids[i];
-        if (hid == 0) continue;
-        this->seen_handles.add(hid);
-        // printf("%3d: %x\n", i, hid);
-        // auto handle = reinterpret_cast<void *>((1LU << 63) | ((uint64_t)hid << ALASKA_SIZE_BITS));
-        // auto *m = alaska::Mapping::from_handle_safe(handle);
-        // bool moved = false;
-        // if (m == NULL or m->is_free() or m->is_pinned()) {
-        //   moved = false;
-        // } else {
-        //   void *ptr = m->get_pointer();
-        //   auto *source_page = rt.heap.pt.get_unaligned(m->get_pointer());
-        //   moved = tc.localize(*m, rt.localization_epoch);
-        // }
-        // auto size = tc.get_size(handle);
-        // bytes_reach += size;
-        // if (moved) {
-        //   moved_objects++;
-        //   bytes_in_dump += size;
-        // } else {
-        //   unmoved_objects++;
-        // }
+    size_t htlb_reach = 0;
+    size_t handles_seen = 0;
+
+
+    ck::set<uintptr_t> pages;
+    ck::map<size_t, int> size_hist;
+
+    for (size_t i = 0; i < count; i++) {
+      auto hid = handle_ids[i];
+      if (hid == 0) continue;
+      handles_seen++;
+      auto handle = reinterpret_cast<void *>((1LU << 63) | ((uint64_t)hid << ALASKA_SIZE_BITS));
+      auto *m = alaska::Mapping::from_handle(handle);
+      auto size = tc.get_size(handle);
+      htlb_reach += size;
+
+      size_hist[size] += 1;
+
+      pages.add((uint64_t)m->get_pointer() >> 12);
+      continue;
+
+
+      bool moved = false;
+      if (m == NULL or m->is_free() or m->is_pinned()) {
+        moved = false;
+      } else {
+        void *ptr = m->get_pointer();
+        moved = tc.localize(*m, rt.localization_epoch);
       }
-      // rt.heap.compact_locality_pages();
-      // rt.heap.compact_sizedpages();
-    });
+      if (moved) {
+        moved_objects++;
+        bytes_in_dump += size;
+      } else {
+        unmoved_objects++;
+      }
+    }
 
-    // printf("moved:%5lu unmoved:%5lu bytes:%12lu reach:%12lu\n", moved_objects, unmoved_objects,
-    //     bytes_in_dump, bytes_reach);
 
-    alaska::printf("seen handles: %zu\n", this->seen_handles.size());
+    size_t required_pages = (htlb_reach + 4096 - 1) /  4096;
+    size_t used_pages = pages.size();
+
+    // printf("handles in dump: %zu\n", handles_seen);
+
+    printf("required: %zu, used: %zu, util: %f, %f\n", required_pages, used_pages, used_pages / (float)required_pages, required_pages / (float)used_pages);
+    printf("size hist\n");
+    for (auto &[size, count] : size_hist) {
+      printf("%8zu: %d\n", size, count);
+    }
+
 
     // Push the buffer back to the queue of buffers
     struct buffer *buf = reinterpret_cast<struct buffer *>(handle_ids);
