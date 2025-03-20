@@ -25,6 +25,7 @@
 #include <assert.h>
 #include <execinfo.h>
 #include <unistd.h>
+#include <ucontext.h>
 
 #include <yukon/yukon.hpp>
 
@@ -86,8 +87,23 @@ static void yukon_signal_handler(int sig, siginfo_t *info, void *ucontext) {
     // TODO: if the faulting address has the top bit set  (sv39) then we need to
     //       treat that as a page fault to the *handle table*. Basically, we need
     //       to read/write that handle entry.
-    printf("Caught segfault to address %p. Clearing htlb and trying again!\n", info->si_addr);
-    write_csr(CSR_HTINVAL, ((1LU << (64 - ALASKA_SIZE_BITS)) - 1));
+    // printf("Caught segfault to address %p. Clearing htlb and trying again!\n", info->si_addr);
+#if defined(__riscv)
+    ucontext_t *uc = (ucontext_t *)ucontext;
+    greg_t *regs = uc->uc_mcontext.__gregs;
+
+    printf("Segfault at address: %p\n", info->si_addr);
+    printf("Register state:\n");
+    printf("ra =0x%016lx inst=%08x\n", regs[0], *(uint32_t *)regs[0]);
+    printf("sp =0x%016lx\n", regs[1]);
+    printf("gp =0x%016lx\n", regs[2]);
+    printf("tp =0x%016lx\n", regs[3]);
+    for (int i = 4; i < 32; i++) {
+      printf("x%-2d=0x%016lx\n", i, regs[i]);
+    }
+#endif
+
+    // write_csr(CSR_HTINVAL, ((1LU << (64 - ALASKA_SIZE_BITS)) - 1));
     return;
   }
 
@@ -132,7 +148,7 @@ static void setup_signal_handlers(void) {
   // Go to the `barrier_signal_handler`
   sa.sa_sigaction = yukon_signal_handler;
   // Attach this action on two signals:
-  assert(sigaction(SIGSEGV, &sa, NULL) == 0);
+  // assert(sigaction(SIGSEGV, &sa, NULL) == 0);
   assert(sigaction(SIGUSR2, &sa, NULL) == 0);
 }
 
@@ -151,7 +167,10 @@ static inline uint64_t read_cycle_counter() {
 }
 
 
+static alaska::handle_id_t dump_buffer[1024];
+static int alaska_fd = -1;
 
+static unsigned long last_dump_cycle = 0;
 
 namespace yukon {
   void set_handle_table_base(void *addr) {
@@ -162,33 +181,47 @@ namespace yukon {
     }
 
     write_csr(CSR_HTBASE, value);
-    // alaska::printf("set htbase to 0x%zx\n", value);
-    // write_csr(CSR_HTBASE, value);
   }
 
 
 
 
   void dump_htlb(alaska::ThreadCache *tc) {
-    auto size = 576;
+    if (alaska_fd == -1) {
+      alaska_fd = open("/dev/alaska", O_RDONLY);
+    }
+
+    // The size of the HTLB
+    size_t size = 16 + 512;
+
+    // memset(dump_buffer, 0, sizeof(dump_buffer));
     auto *space = tc->localizer.get_hotness_buffer(size);
+    // auto *space = dump_buffer;
+
     // memset(space, 0, size * sizeof(alaska::handle_id_t));
     // Fence after we have a valid space for the dump
     asm volatile("fence" ::: "memory");
 
     auto start = read_cycle_counter();
-
-    // Fire off the dump..
-    write_csr(CSR_HTDUMP, (uint64_t)space);
-    // ..and wait for it to finish
-    wait_for_csr_zero(CSR_HTDUMP);
+    int r = read(alaska_fd, space, size * sizeof(alaska::handle_id_t));
     auto end = read_cycle_counter();
 
-    printf("Dumping htlb took %lu cycles\n", end - start);
-    // fence so we have ordering
-    asm volatile("fence" ::: "memory");
+
+
+
+    auto localize_start = read_cycle_counter();
     // Feed the buffer to the localizer to do it's work
     tc->localizer.feed_hotness_buffer(size, space);
+    auto localize_end = read_cycle_counter();
+
+
+    // we assume a cycle is 1 nanosecond
+    double total_time_ms = (localize_end - start) / 1000000.0l;
+
+    printf("[localizer cycles] dump:%20lu    between:%20lu   localize:%20lu (total: %.3fms)\n", end - start,
+           start - last_dump_cycle, localize_end - localize_start, total_time_ms);
+    last_dump_cycle = localize_end;
+
     // Fence again... for some reason
     asm volatile("fence" ::: "memory");
   }
@@ -281,7 +314,7 @@ namespace yukon {
       signal(SIGALRM, alarm_handler);
       // now that we have sigalarm configured, setup a ualarm for
       // some number of microseconds on an interval for dumping
-      if ((long)ualarm(yukon_dump_interval, 0) == -1) {
+      if ((long)ualarm(yukon_dump_interval * 10, 0) == -1) {
         perror("Failed to setup ualarm for dumping");
         exit(-1);
       }
@@ -298,11 +331,8 @@ namespace yukon {
 
 void __attribute__((constructor(102))) alaska_init(void) {
   unsetenv("LD_PRELOAD");  // make it so we don't run alaska in subprocesses!
+  // allocate
   yukon::get_tc();
-
-  // atexit([]() {
-  //   yukon::set_handle_table_base(NULL);
-  // });
 }
 
 void __attribute__((destructor)) alaska_deinit(void) {
