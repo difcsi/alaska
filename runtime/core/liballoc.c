@@ -608,17 +608,20 @@ void *PREFIX(malloc)(size_t req_size) {
 
 
 
-long PREFIX(size_of)(void *ptr) {
+long PREFIX(size_of)(void *p) {
+  void *ptr;
   struct liballoc_minor *min;
+  unsigned int real_size;
 
+  // Unalign the pointer if required.
+  ptr = p;
   UNALIGN(ptr);
 
   liballoc_lock();  // lockit
 
-
   min = (struct liballoc_minor *)((uintptr_t)ptr - sizeof(struct liballoc_minor));
 
-
+  // Ensure it is a valid structure.
   if (min->magic != LIBALLOC_MAGIC) {
     l_errorCount += 1;
 
@@ -627,22 +630,39 @@ long PREFIX(size_of)(void *ptr) {
         ((min->magic & 0xFFFF) == (LIBALLOC_MAGIC & 0xFFFF)) ||
         ((min->magic & 0xFF) == (LIBALLOC_MAGIC & 0xFF))) {
       l_possibleOverruns += 1;
+#if defined DEBUG || defined INFO
+      printf("liballoc: ERROR: Possible 1-3 byte overrun for magic %x != %x\n", min->magic,
+          LIBALLOC_MAGIC);
+      FLUSH();
+#endif
     }
 
 
     if (min->magic == LIBALLOC_DEAD) {
+#if defined DEBUG || defined INFO
+      printf("liballoc: ERROR: multiple PREFIX(free)() attempt on %x from %x.\n", ptr,
+          __builtin_return_address(0));
+      FLUSH();
+#endif
     } else {
+#if defined DEBUG || defined INFO
+      printf("liballoc: ERROR: Bad PREFIX(free)( %x ) called from %x\n", ptr,
+          __builtin_return_address(0));
+      FLUSH();
+#endif
     }
 
     // being lied to...
     liballoc_unlock();  // release the lock
-    abort();
+    return 0;
   }
 
-  long size = min->size;
+  // Definitely a memory block.
 
-  liballoc_unlock();  // release the lock
-  return size;
+  real_size = min->req_size;
+  liballoc_unlock();
+
+  return real_size;
 }
 
 
