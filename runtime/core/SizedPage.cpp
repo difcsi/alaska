@@ -78,7 +78,7 @@ namespace alaska {
 
     // Headers live first
     headers = (SizedPage::Header *)memory;
-    memset(headers, 0, sizeof(SizedPage::Header) * capacity);
+    // memset(headers, 0, sizeof(SizedPage::Header) * capacity);
     // Then, objects are placed later.
     objects = (Block *)round_up((uintptr_t)(headers + capacity), alaska::alignment);
 
