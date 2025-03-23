@@ -93,68 +93,57 @@ namespace alaska {
   }
 
 
-  static void *allocate_page_table(void) {
-    return alaska_internal_calloc(1LU << bits_per_pt_level, sizeof(void *));
-  }
+
+
+  ////////////////////////////////////
 
   HeapPageTable::HeapPageTable(void *heap_start)
-      : heap_start(heap_start) {
-    // Allocate the root of the page table. The subsequent mappings will be allocated on demand.
-    root = (alaska::HeapPage ***)allocate_page_table();
-  }
-  HeapPageTable::~HeapPageTable() {
-    // Free all the entries.
-  }
+      : heap_start(heap_start) {}
 
+  HeapPageTable::~HeapPageTable() {}
 
 
   alaska::HeapPage *HeapPageTable::get(void *page) {
-    auto *p = walk(page);
+    auto *p = walk(page, false);
     if (p == nullptr) return nullptr;
     return *p;
   }
+
+
   alaska::HeapPage *HeapPageTable::get_unaligned(void *addr) {
     uintptr_t heap_offset = (uintptr_t)addr - (uintptr_t)heap_start;
     uintptr_t page_ind = heap_offset / alaska::page_size;
     void *page = (void *)((uintptr_t)heap_start + page_ind * alaska::page_size);
 
-    auto *p = walk(page);
+    auto *p = walk(page, false);
     if (p == nullptr) return nullptr;
     return *p;
   }
 
-  void HeapPageTable::set(void *page, alaska::HeapPage *hp) { *walk(page) = hp; }
+  void HeapPageTable::set(void *page, alaska::HeapPage *hp) { *walk(page, true) = hp; }
 
 
-  alaska::HeapPage **HeapPageTable::walk(void *vpage) {
+  alaska::HeapPage **HeapPageTable::walk(void *vpage, bool ensure) {
+    ck::scoped_lock lk(this->lock);  // TODO: reader/writer lock
+
     // `page` here means the offset from the start of the heap.
     uintptr_t page_off = (uintptr_t)vpage - (uintptr_t)heap_start;
     // Extrac the page number (just an index into the page table structure)
     off_t page_number = page_off >> alaska::page_shift_factor;
+    // printf("vpage: %p, heap_start: %p, page_off: %lu, page_number: %lu\n", vpage, heap_start,
+    //     page_off, page_number);
 
-    if (unlikely((uint64_t)page_number > (uint64_t)(1LU << (bits_per_pt_level * 2)))) {
-      return NULL;
+
+    if (page_number >= table.size()) {
+      if (!ensure) {
+        return nullptr;
+      }
+      // If the page number is greater than the size of the table, we need to grow the table.
+      table.resize(page_number + 1);
     }
 
-    // Gross math here. Can't avoid it.
-    // Effectively, we are using the bits in the page number to index into two-level page table
-    // structure in the exact same way that we would on a real x86_64 system's page table.
-    off_t ind1 = page_number & pt_level_mask;
-    off_t ind2 = (page_number >> bits_per_pt_level) & pt_level_mask;
-
-    log_debug(
-        "HeapPageTable: walk(%p) -> pn: %lu, inds: (%zu, %zu)", vpage, page_number, ind1, ind2);
-
-    // Grab the entry from the root page table.
-    HeapPage **pt1 = root[ind1];
-    // It is null, allocate a new entry and set it.
-    if (unlikely(pt1 == nullptr)) {
-      // If the first level page table entry is null, we need to allocate a new page table.
-      pt1 = (HeapPage **)allocate_page_table();
-      root[ind1] = pt1;
-    }
-
-    return &pt1[ind2];
+    ALASKA_ASSERT(page_number < table.size(), "Page number out of bounds.");
+    return &table[page_number];
   }
 
 

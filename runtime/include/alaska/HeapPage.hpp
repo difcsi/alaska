@@ -21,8 +21,12 @@
 
 namespace alaska {
 
-  // This dictates how big a page is. Note: This must be an odd number
-  // due to details about how the page table is implemented.
+  /**
+   * Alaska's heap is broken down into "pages" which are a certain size. Each
+   * page is managed by a single policy, and different pages can have different
+   * policies. For example, one page might only allocate objects of a fixed size,
+   * and another might allocate objects of varying sizes.
+   */
   static constexpr uint64_t page_shift_factor = 21;
   static constexpr size_t page_size = 1LU << page_shift_factor;
   static constexpr size_t huge_object_thresh = 0xFFFF;
@@ -71,7 +75,7 @@ namespace alaska {
     // subclasses which don't want to worry about allocating a handle from
     // the threadcache's handle table.
     // Returns NULL on failure.
-    virtual void* allocate_handle(const AllocationRequest &req);
+    virtual void* allocate_handle(const AllocationRequest& req);
 
     // The size argument is already aligned and rounded up to a multiple of the rounding size.
     // Returns the data allocated, or NULL if it couldn't be.

@@ -86,7 +86,7 @@ namespace alaska {
   // In the actual runtime implementation, there will be a global instance of this class.
   class HandleTable final {
    public:
-    static constexpr size_t slab_size = 1 << 21; // alaska::page_size;
+    static constexpr size_t slab_size = 1 << 21;  // 2MB
     static constexpr size_t slab_capacity = slab_size / sizeof(alaska::Mapping);
     static constexpr size_t initial_capacity = 512;
     static constexpr size_t handle_count = (1UL << (63 - ALASKA_SIZE_BITS)) - 1;

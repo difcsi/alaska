@@ -122,8 +122,10 @@ namespace alaska {
    private:
     // A pointer to the start of the heap. This is used to compute the page number in the heap.
     void *heap_start;
-    alaska::HeapPage **walk(void *page);
-    alaska::HeapPage ***root;
+    alaska::HeapPage **walk(void *page, bool ensure = false);
+
+    ck::mutex lock;  // TODO: reader/writer lock!
+    ck::vec<alaska::HeapPage *> table;
   };
 
 
