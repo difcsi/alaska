@@ -16,6 +16,30 @@
 namespace alaska {
 
 
+  void *LocalitySlab::alloc(size_t size, alaska::Mapping &m) {
+    size = round_up(size, 8);
+    auto required = size + sizeof(Metadata);
+    if (unlikely(required > available())) return nullptr;
+
+    auto md = (Metadata *)(data + bump_size);
+    md->size = size;
+    md->hid = m.handle_id();
+    bump_size += size + sizeof(Metadata);
+    return md->data;
+  }
+
+  void LocalitySlab::free(void *ptr) {
+    auto md = (Metadata *)((off_t)ptr - sizeof(Metadata));
+    md->hid = 0;  // Freeing is trival - just say it has no handle id assigned.
+    freed += md->size + sizeof(Metadata);
+  }
+
+  size_t LocalitySlab::get_size(void *ptr) {
+    auto md = (Metadata *)((off_t)ptr - sizeof(Metadata));
+    return md->size;
+  }
+
+
   LocalityPage::~LocalityPage() {}
 
   void *LocalityPage::alloc(const alaska::Mapping &m, alaska::AlignedSize size) {
