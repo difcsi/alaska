@@ -54,6 +54,7 @@ install(FILES include/alaska.h include/yukon.h DESTINATION include)
 set(CORE_SOURCES
 	core/HandleTable.cpp
 	core/Runtime.cpp
+  core/BarrierWorker.cpp
 	core/Logger.cpp
 	core/Heap.cpp
   core/ThreadCache.cpp
@@ -74,6 +75,7 @@ set(CORE_SOURCES
   core/disk/Disk.cpp
   core/disk/BufferPool.cpp
   core/disk/Structure.cpp
+
 
   # liballoc is a simple, small, malloc implementation that we embed
   # so alaska can temporially allocate objects w/o implementing a non-handle
@@ -313,6 +315,7 @@ if (ALASKA_ENABLE_TESTING)
     test/handle_ptr_test.cpp
     test/htlb_sim_test.cpp
     test/locality_page_test.cpp
+    test/barrier_worker.cpp
 	)
 
 	target_link_libraries(

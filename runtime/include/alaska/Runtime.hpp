@@ -21,7 +21,7 @@
 #include <alaska/Localizer.hpp>
 #include <alaska/Runtime.hpp>
 #include <alaska/RateCounter.hpp>
-
+#include <alaska/BarrierWorker.hpp>
 
 namespace alaska {
   /**
@@ -57,6 +57,8 @@ namespace alaska {
     // This is defaulted to a "nop" manager which simply does nothing.
     alaska::BarrierManager *barrier_manager;
     alaska::RateCounter stat_barriers;
+    struct list_head barrier_workers = LIST_HEAD_INIT(barrier_workers);
+
 
     // Return the singleton instance of the Runtime if it has been allocated. Abort otherwise.
     static Runtime &get();
@@ -85,6 +87,12 @@ namespace alaska {
     RateCounter handle_faults;
     int handle_fault(uint64_t handle);
 
+    long barrier_work_count(void) {
+      long work_count = 0;
+      struct list_head *pos;
+      list_for_each(pos, &barrier_workers) { work_count++; }
+      return work_count;
+    }
 
     template <typename Fn>
     bool with_barrier(Fn &&cb) {
@@ -100,6 +108,20 @@ namespace alaska {
         stat_barriers++;
         barrier_manager->barrier_count++;
         cb();
+
+        // now that the barrier's main function has completed, we need to run the
+        // barrier workers to finish the barrier. We need to do this with a 'safe'
+        // loop because the barrier workers can remove themselves from the list
+
+        long work_count = 0;
+        struct list_head *pos, *n;
+        list_for_each_safe(pos, n, &barrier_workers) {
+          work_count++;
+          auto worker = list_entry(pos, alaska::BarrierWorker, m_list);
+          auto res = worker->barrier_work();
+          if (res == BarrierWorkResult::BARRIER_WORK_DONE) list_del(pos);
+        }
+
         in_barrier = false;
         barrier_manager->end();
       } else {
@@ -115,7 +137,7 @@ namespace alaska {
 
 
     unsigned long last_barrier_time = 0;
-    unsigned long min_barrier_interval = 10 * 1000 * 1000;
+    unsigned long min_barrier_interval = 0;  //  10 * 1000 * 1000;
 
 
     void lock_all_thread_caches(void);
