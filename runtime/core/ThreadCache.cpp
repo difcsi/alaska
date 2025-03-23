@@ -33,7 +33,6 @@ namespace alaska {
       : id(id)
       , runtime(rt)
       , localizer(rt.config, *this) {
-
     handle_table_churn++;
     handle_slab = runtime.handle_table.new_slab(this);
   }
@@ -214,7 +213,7 @@ namespace alaska {
     auto m = handle_slab->alloc();
 
     if (unlikely(m == NULL)) {
-      handle_table_churn++; // record that we are looking for a new handle table slab.
+      handle_table_churn++;  // record that we are looking for a new handle table slab.
       auto new_handle_slab = runtime.handle_table.new_slab(this);
       this->handle_slab->set_owner(NULL);
       this->handle_slab = new_handle_slab;
@@ -235,65 +234,69 @@ namespace alaska {
   void ThreadCache::free_mapping(alaska::Mapping *m) { this->runtime.handle_table.put(m, this); }
 
 
-  bool ThreadCache::localize(void *handle, uint64_t epoch) {
-    alaska::Mapping *m = alaska::Mapping::from_handle_safe(handle);
-    if (unlikely(m == nullptr)) {
-      return false;
-    }
+  // bool ThreadCache::localize(void *handle, uint64_t epoch) {
+  //   alaska::Mapping *m = alaska::Mapping::from_handle_safe(handle);
+  //   if (unlikely(m == nullptr)) {
+  //     return false;
+  //   }
 
-    return localize(*m, epoch);
+  //   return localize(*m, epoch);
+  // }
+
+
+  //   bool ThreadCache::localize(alaska::Mapping &m, uint64_t epoch) {
+  // #define printf(...)
+  //     void *ptr = m.get_pointer();
+  //     printf("\nLocalize handle %d, %p\n", m.handle_id(), ptr);
+  //     auto *source_page = this->runtime.heap.pt.get_unaligned(ptr);
+  //     printf("Source page = %p\n", source_page);
+
+  //     // Validate that we can indeed move this object from the page.
+  //     // if (source_page == nullptr or not source_page->should_localize_from(epoch)) return
+  //     false; if (source_page == nullptr) return false;
+
+  //     // Ask the page for the size of the pointer
+  //     auto size = source_page->size_of(ptr);
+  //     printf("Size = %zu\n", size);
+
+
+  //     if (locality_page == nullptr or locality_page->available() < size * 2) {
+  //       printf("Locality page was null (or didn't fit)\n");
+  //       locality_page = new_locality_page(size + 32);
+  //     }
+
+  //     // If we are moving an object within the locality page, don't.
+  //     if (unlikely(source_page == locality_page)) {
+  //       printf("Pages were the same\n");
+  //       return false;
+  //     }
+
+  //     printf("Allocating new block...\n");
+  //     void *d = locality_page->alloc(m, size);
+  //     printf("allocated block in locality page: %p\n", d);
+  //     locality_page->last_localization_epoch = epoch;
+  //     memcpy(d, ptr, size);
+  //     memset(ptr, 0xFA, size);
+  //     printf("Moved!\n");
+
+  //     // TODO: invalidate!
+  //     m.set_pointer(d);
+  //     printf("updated mapping\n");
+  //     source_page->release_remote(m, ptr);
+  //     printf("released original block\n");
+  // #undef printf
+  //     return true;
+  //   }
+
+
+  ThreadCache::LocalizationResult ThreadCache::localize(alaska::Mapping **mappings, size_t count) {
+    LocalizationResult res;
+    res.count = 0;  // We haven't localized anything yet.
+
+
+    return res;
   }
 
 
-  bool ThreadCache::localize(alaska::Mapping &m, uint64_t epoch) {
-    if (m.is_pinned() or m.is_free()) return false;
-
-#define printf(...)
-    void *ptr = m.get_pointer();
-    printf("\nLocalize handle %d, %p\n", m.handle_id(), ptr);
-    auto *source_page = this->runtime.heap.pt.get_unaligned(ptr);
-    printf("Source page = %p\n", source_page);
-
-    // Validate that we can indeed move this object from the page.
-    if (source_page == nullptr or not source_page->should_localize_from(epoch)) return false;
-
-    // Ask the page for the size of the pointer
-    auto size = source_page->size_of(ptr);
-    printf("Size = %zu\n", size);
-
-    // Arbitrarially block objects larger than 512 from being moved.
-    if (size > 512) {
-      printf("It's too big to move. skip\n");
-      return false;
-    }
-
-
-    if (locality_page == nullptr or locality_page->available() < size * 2) {
-      printf("Locality page was null (or didn't fit)\n");
-      locality_page = new_locality_page(size + 32);
-    }
-
-    // If we are moving an object within the locality page, don't.
-    if (unlikely(source_page == locality_page)) {
-      printf("Pages were the same\n");
-      return false;
-    }
-
-    printf("Allocating new block...\n");
-    void *d = locality_page->alloc(m, size);
-    printf("allocated block in locality page: %p\n", d);
-    locality_page->last_localization_epoch = epoch;
-    memcpy(d, ptr, size);
-    memset(ptr, 0xFA, size);
-    printf("Moved!\n");
-
-    // TODO: invalidate!
-    m.set_pointer(d);
-    printf("updated mapping\n");
-    source_page->release_remote(m, ptr);
-    printf("released original block\n");
-#undef printf
-    return true;
-  }
 
 }  // namespace alaska

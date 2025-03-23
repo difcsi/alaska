@@ -43,11 +43,11 @@ int main() {
   long start, end;
   printf("localized,walk_time\n");
   node_t *n = make_tree(18);
-  localize_structure((uint64_t)n);
   for (int trial = 0; trial < 4000; trial++) {
     bool localized = false;
 
 
+    localize_structure((uint64_t)n);
     int c = 0;
     start = alaska_timestamp();
     for (int i = 0; i < 200; i++) {

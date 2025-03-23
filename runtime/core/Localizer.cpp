@@ -47,53 +47,67 @@ namespace alaska {
     unsigned long bytes_in_dump = 0;
 
     size_t htlb_reach = 0;
-    size_t handles_seen = 0;
-
-
     ck::set<uintptr_t> pages;
-    ck::map<size_t, int> size_hist;
+    ck::vec<alaska::Mapping *> to_move;
+    to_move.ensure_capacity(count);
 
+    auto start = alaska_timestamp();
+
+    // first, compute utilization
     for (size_t i = 0; i < count; i++) {
       auto hid = handle_ids[i];
       if (hid == 0) continue;
-      handles_seen++;
       auto handle = reinterpret_cast<void *>((1LU << 63) | ((uint64_t)hid << ALASKA_SIZE_BITS));
       auto *m = alaska::Mapping::from_handle(handle);
+      if (m->get_pointer() == NULL) continue;
       auto size = tc.get_size(handle);
       htlb_reach += size;
-
-      size_hist[size] += 1;
-
       pages.add((uint64_t)m->get_pointer() >> 12);
-      continue;
 
-
-      bool moved = false;
-      if (m == NULL or m->is_free() or m->is_pinned()) {
-        moved = false;
-      } else {
-        void *ptr = m->get_pointer();
-        moved = tc.localize(*m, rt.localization_epoch);
-      }
-      if (moved) {
-        moved_objects++;
-        bytes_in_dump += size;
-      } else {
-        unmoved_objects++;
+      if (size < 4096 && !m->is_free() && !m->is_pinned()) {
+        to_move.push(m);
       }
     }
 
 
-    size_t required_pages = (htlb_reach + 4096 - 1) /  4096;
+    size_t required_pages = (htlb_reach + 4096 - 1) / 4096;
     size_t used_pages = pages.size();
+    float utilization = required_pages / (float)used_pages;
+    float util_after = utilization;
 
-    // printf("handles in dump: %zu\n", handles_seen);
+    pages.clear();
 
-    printf("required: %zu, used: %zu, util: %f, %f\n", required_pages, used_pages, used_pages / (float)required_pages, required_pages / (float)used_pages);
-    printf("size hist\n");
-    for (auto &[size, count] : size_hist) {
-      printf("%8zu: %d\n", size, count);
+    if (utilization < 0.6) {
+      tc.localize(to_move.data(), to_move.size());
+      // for (auto *m : to_move) {
+      //   bool moved = tc.localize(*m, rt.localization_epoch);
+      //   if (moved) {
+      //     moved_objects++;
+      //   } else {
+      //     unmoved_objects++;
+      //   }
+      //   pages.add((uint64_t)m->get_pointer() >> 12);
+      // }
+      // size_t used_pages = pages.size();
+      // util_after = required_pages / (float)used_pages;
     }
+    auto end = alaska_timestamp();
+
+
+    if (util_after > utilization) {
+      // make the text green
+      printf("\033[0;32m");
+    } else {
+      // make the text red
+      printf("\033[0;31m");
+    }
+
+    printf(
+        "[localization] required: %12zu, used: %12zu,   util: %.4f -> %.4f,   moved: %3d/%3d, "
+        "time: "
+        "%12luus\033[0m\n",
+        required_pages, used_pages, utilization, util_after, moved_objects,
+        moved_objects + unmoved_objects, (end - start) / 1000);
 
 
     // Push the buffer back to the queue of buffers

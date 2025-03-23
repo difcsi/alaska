@@ -159,6 +159,11 @@ namespace alaska {
   }
 
   bool should_be_huge_object(size_t size) {
+    // For yukon, huge objects are anything over 4KiB
+    if (size >= 4096) {
+      return true;
+    }
+
     if (size >= alaska::huge_object_thresh) {
       return true;
     }

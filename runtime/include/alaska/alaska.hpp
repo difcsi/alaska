@@ -133,6 +133,7 @@ namespace alaska {
       return (out & ~(1UL << 63)) >> ALASKA_SIZE_BITS;
     }
 
+
     // Encode a mapping into a handle that can be later translated by
     // compiler-inserted means.
     ALASKA_INLINE void *to_handle(uint32_t offset = 0) const {
@@ -167,15 +168,17 @@ namespace alaska {
       return nullptr;
     }
 
+    static ALASKA_INLINE alaska::Mapping *from_handle_id(handle_id_t id) {
+      return (alaska::Mapping *)((uint64_t)id << (ALASKA_SIZE_BITS - ALASKA_SQUEEZE_BITS));
+    }
+
     // Check if a pointer is a handle or not (is the top bit is set?)
     static ALASKA_INLINE bool is_handle(void *ptr) {
       return (int64_t)ptr < 0;  // This is quicker than shifting and masking :)
     }
 
 
-    static ALASKA_INLINE bool is_handle_slow(void *ptr) {
-      return ((uint64_t)ptr >> 62) == 0b10;
-    }
+    static ALASKA_INLINE bool is_handle_slow(void *ptr) { return ((uint64_t)ptr >> 62) == 0b10; }
   };
 
   // runtime.cpp

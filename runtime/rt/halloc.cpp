@@ -172,28 +172,10 @@ static size_t get_page_count_for_structure(void *ptr, size_t max_depth) {
 
 
 extern "C" bool localize_structure(void *ptr) {
-  auto *m = alaska::Mapping::from_handle_safe(ptr);
-  if (m == nullptr) return false;
-  auto *tc = get_tc_r();
   auto &rt = alaska::Runtime::get();
-
-  size_t max_depth = 4;
-
-  auto pages_before = get_page_count_for_structure(ptr, max_depth * 2);
-
-  // Trigger a barrier so we can move stuff
-  bool localized = rt.with_barrier([&]() {
-    walk_structure(ptr, max_depth, [&](alaska::Mapping *m) {
-      if (not m->is_pinned()) {
-        tc->localize(*m, rt.localization_epoch);
-      }
-    });
+  rt.with_barrier([&]() {
+    printf("yerp\n");
   });
 
-  auto pages_after = get_page_count_for_structure(ptr, max_depth * 2);
-
-  if (localized)
-    printf("pages: %zu, %zu (%f%%)\n", pages_before, pages_after,
-        pages_after / (float)pages_before * 100.0);
-  return localized;
+  return false;
 }

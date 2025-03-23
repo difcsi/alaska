@@ -15,6 +15,7 @@
 #include <alaska/utils.h>
 #include <alaska/Runtime.hpp>
 #include <alaska/Configuration.hpp>
+#include "alaska.h"
 #include "alaska/HugeObjectAllocator.hpp"
 #include "alaska/ThreadCache.hpp"
 #include <alaska/liballoc.h>
@@ -218,9 +219,9 @@ namespace yukon {
     // we assume a cycle is 1 nanosecond
     double total_time_ms = (localize_end - start) / 1000000.0l;
 
-    printf("[localizer cycles] dump:%20lu    between:%20lu   localize:%20lu (total: %.3fms)\n", end - start,
-           start - last_dump_cycle, localize_end - localize_start, total_time_ms);
-    last_dump_cycle = localize_end;
+    // printf("[localizer cycles] dump:%20lu    between:%20lu   localize:%20lu (total: %.3fms)\n",
+    //     end - start, start - last_dump_cycle, localize_end - localize_start, total_time_ms);
+    // last_dump_cycle = localize_end;
 
     // Fence again... for some reason
     asm volatile("fence" ::: "memory");
@@ -293,31 +294,42 @@ namespace yukon {
 
     if (getenv("YUKON_DUMP") != NULL) {
       int dump_interval_ms = 10;
-
-      // pthread_create(
-      //     &dump_thread, NULL,
-      //     [](void *) -> void * {
-      //       // Grab the thread cache
-      //       auto *tc = yukon::get_tc();
-
-      //       while (1) {
-      //         usleep(20 * 1000);
-      //         // And trigger an HTLB dump
-      //         yukon::dump_htlb(tc);
-      //       }
-      //       return NULL;
-      //     },
-      //     NULL);
-
-      printf("dumping every %d ms\n", dump_interval_ms);
       yukon_dump_interval = dump_interval_ms * 1000;
-      signal(SIGALRM, alarm_handler);
-      // now that we have sigalarm configured, setup a ualarm for
-      // some number of microseconds on an interval for dumping
-      if ((long)ualarm(yukon_dump_interval * 10, 0) == -1) {
-        perror("Failed to setup ualarm for dumping");
-        exit(-1);
-      }
+      pthread_create(
+          &dump_thread, NULL,
+          [](void *) -> void * {
+            // Grab the thread cache
+            auto *tc = yukon::get_tc();
+            auto &rt = alaska::Runtime::get();
+
+            usleep(yukon_dump_interval * 10);
+
+            while (1) {
+              // auto barrier_start = alaska_timestamp();
+              rt.with_barrier([&]() {
+                yukon::dump_htlb(tc);
+              });
+              // auto barrier_end = alaska_timestamp();
+
+              // auto sleep_start = alaska_timestamp();
+              usleep(yukon_dump_interval);
+              // auto sleep_end = alaska_timestamp();
+              // printf("wanted to sleep for %luus, slept for %luus. barrier: %luus\n",
+              //     yukon_dump_interval, (sleep_end - sleep_start) / 1000,
+              //     (barrier_end - barrier_start) / 1000);
+            }
+            return NULL;
+          },
+          NULL);
+
+      // printf("dumping every %d ms\n", dump_interval_ms);
+      // signal(SIGALRM, alarm_handler);
+      // // now that we have sigalarm configured, setup a ualarm for
+      // // some number of microseconds on an interval for dumping
+      // if ((long)ualarm(yukon_dump_interval * 10, 0) == -1) {
+      //   perror("Failed to setup ualarm for dumping");
+      //   exit(-1);
+      // }
     }
 
 

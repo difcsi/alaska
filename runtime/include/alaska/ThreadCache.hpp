@@ -30,6 +30,12 @@ namespace alaska {
   // something else manages storing a pointer to a ThreadCache in some
   // thread-local variable
   class ThreadCache final : public alaska::InternalHeapAllocated {
+   protected:
+    friend class LockedThreadCache;
+    friend alaska::Runtime;
+    friend alaska::Localizer;
+    friend alaska::HeapPage;
+
     // Just an id for this thread cache assigned by the runtime upon creation. It's mostly
     // meaningless, meant for debugging.
     int id;
@@ -80,20 +86,22 @@ namespace alaska {
     int get_id(void) const { return this->id; }
     size_t get_size(void *handle);
 
-    bool localize(alaska::Mapping &m, uint64_t epoch);
-    bool localize(void *handle, uint64_t epoch);
 
+    struct LocalizationResult {
+      size_t count;  // how many mappings were localized
+    };
+    // The thread cache is responsible for localizing a set of mappings to improve object
+    // locality. This function takes a list of ordered mappings and lays them out contiguously
+    // in memory and the mappings are updated to point to their new locations.
+    // This function is called from the Localizer class.
+    LocalizationResult localize(alaska::Mapping **mappings, size_t count);
 
-
-   protected:
-    friend class LockedThreadCache;
-    friend alaska::Runtime;
-    friend alaska::Localizer;
-    friend alaska::HeapPage;
 
     // Allocate a new handle table mapping
     alaska::Mapping *new_mapping(void);
     void free_mapping(alaska::Mapping *);
+
+
 
 
    private:
