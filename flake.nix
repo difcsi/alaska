@@ -36,7 +36,7 @@
 
           buildInputs = with pkgs; runInputs ++ [
             cmake
-
+            ccache
 
             gtest
             makeWrapper
