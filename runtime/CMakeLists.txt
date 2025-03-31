@@ -63,7 +63,6 @@ set(CORE_SOURCES
 
   core/HeapPage.cpp
   core/SizedPage.cpp
-  core/ConjoinedPage.cpp
   core/LocalityPage.cpp
   core/Localizer.cpp
 
@@ -270,6 +269,27 @@ if(ALASKA_YUKON)
     PUBLIC_HEADER DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
     PRIVATE_HEADER DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 
+
+  add_library(yukon_stub SHARED
+    yukon/yukon_stub.cpp
+  )
+  target_include_directories(yukon_stub PUBLIC include/)
+  set_target_properties(yukon_stub PROPERTIES LINKER_LANGUAGE C)
+  set_target_properties(yukon_stub PROPERTIES SOVERSION ${ALASKA_VERSION})
+  target_link_libraries(yukon_stub alaska_core_static dl pthread ${LIBUNWIND_LIBRARIES})
+  target_compile_options(yukon_stub PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-nostdlib++ -nostdinc++>)
+
+  if(CMAKE_BUILD_TYPE MATCHES "Release")
+    add_custom_command(TARGET yukon_stub POST_BUILD
+                       COMMAND ${CMAKE_STRIP} $<TARGET_FILE:yukon>)
+  endif()
+
+  install(
+    TARGETS yukon_stub
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    PUBLIC_HEADER DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+    PRIVATE_HEADER DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 
 endif(ALASKA_YUKON)
 
