@@ -11,7 +11,7 @@
 
 #pragma once
 
-
+#include <alaska/ObjectHeader.hpp>
 #include <alaska/HeapPage.hpp>
 #include <alaska/SizedPage.hpp>
 #include <alaska/SizeClass.hpp>
@@ -28,6 +28,7 @@ namespace alaska {
   static constexpr size_t kilobyte = 1024;
   static constexpr size_t megabyte = 1024 * kilobyte;
   static constexpr size_t gigabyte = 1024 * megabyte;
+
 
   // For now, the heap is a fixed size, large contiguious
   // block of memory managed by the PageManager. Eventually,
@@ -70,8 +71,6 @@ namespace alaska {
     }
 
     inline void *get_page(off_t i) { return (void *)((off_t)heap + (i * page_size)); }
-
-
     inline uint64_t get_allocated_page_count(void) const { return alloc_count; }
 
    private:
@@ -202,6 +201,7 @@ namespace alaska {
             best = p;
             return true;
           }
+
 
           if ((long)avail >= (long)best->available()) {
             best = p;

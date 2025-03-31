@@ -17,6 +17,7 @@
 #include "alaska/Heap.hpp"
 #include "alaska/HeapPage.hpp"
 #include <alaska/utils.h>
+#include <alaska/lphash_set.h>
 
 // #define USE_MALLOC
 #ifdef USE_MALLOC
@@ -26,7 +27,6 @@
 
 
 namespace alaska {
-
 
 
   ThreadCache::ThreadCache(int id, alaska::Runtime &rt)
@@ -72,7 +72,6 @@ namespace alaska {
 #else
     // Grab the page from the global heap (walk the page table).
     auto *page = this->runtime.heap.pt.get_unaligned(ptr);
-    size_t size = page->size_of(ptr);
     if (unlikely(page == NULL)) {
       this->runtime.heap.huge_allocator.free(ptr);
       return;
@@ -203,9 +202,9 @@ namespace alaska {
 #ifdef USE_MALLOC
     return ::malloc_usable_size(ptr);
 #else
-    auto *page = this->runtime.heap.pt.get_unaligned(ptr);
-    if (page == nullptr) return this->runtime.heap.huge_allocator.size_of(ptr);
-    return page->size_of(ptr);
+
+    auto header = alaska::ObjectHeader::from(ptr);
+    return header->object_size();
 #endif
   }
 
@@ -234,64 +233,164 @@ namespace alaska {
   void ThreadCache::free_mapping(alaska::Mapping *m) { this->runtime.handle_table.put(m, this); }
 
 
-  // bool ThreadCache::localize(void *handle, uint64_t epoch) {
-  //   alaska::Mapping *m = alaska::Mapping::from_handle_safe(handle);
-  //   if (unlikely(m == nullptr)) {
-  //     return false;
-  //   }
+  long ThreadCache::localize(alaska::Mapping *m, long allowed_depth) {
+    long moved_count = 0;
+    void *ptr = m->get_pointer();
+    if (ptr == nullptr || m->is_free() || m->is_pinned()) return 0;
+    auto *source_page = this->runtime.heap.pt.get_unaligned(ptr);
 
-  //   return localize(*m, epoch);
-  // }
+    // Validate that we can indeed move this object from the page.
+    if (unlikely(source_page == nullptr)) {
+      return 0;
+    }
 
+    auto header = alaska::ObjectHeader::from(ptr);
+    // Ask the page for the size of the pointer
+    auto size = header->object_size();
+    // If the size is too large, don't bother
+    if (size > alaska::locality_slab_size / 2) return 0;
 
-  //   bool ThreadCache::localize(alaska::Mapping &m, uint64_t epoch) {
-  // #define printf(...)
-  //     void *ptr = m.get_pointer();
-  //     printf("\nLocalize handle %d, %p\n", m.handle_id(), ptr);
-  //     auto *source_page = this->runtime.heap.pt.get_unaligned(ptr);
-  //     printf("Source page = %p\n", source_page);
+    // if (header->localized) {
+    //   if (header->counter > 0) {
+    //     header->counter--;
+    //     return 0;
+    //   }
+    // }
 
-  //     // Validate that we can indeed move this object from the page.
-  //     // if (source_page == nullptr or not source_page->should_localize_from(epoch)) return
-  //     false; if (source_page == nullptr) return false;
+    // This size comparison is kinda nonsense
+    if (locality_page == nullptr or
+        locality_page->available() < size + sizeof(alaska::ObjectHeader) + 8) {
+      locality_page = new_locality_page(size + 32);
+    }
 
-  //     // Ask the page for the size of the pointer
-  //     auto size = source_page->size_of(ptr);
-  //     printf("Size = %zu\n", size);
-
-
-  //     if (locality_page == nullptr or locality_page->available() < size * 2) {
-  //       printf("Locality page was null (or didn't fit)\n");
-  //       locality_page = new_locality_page(size + 32);
-  //     }
-
-  //     // If we are moving an object within the locality page, don't.
-  //     if (unlikely(source_page == locality_page)) {
-  //       printf("Pages were the same\n");
-  //       return false;
-  //     }
-
-  //     printf("Allocating new block...\n");
-  //     void *d = locality_page->alloc(m, size);
-  //     printf("allocated block in locality page: %p\n", d);
-  //     locality_page->last_localization_epoch = epoch;
-  //     memcpy(d, ptr, size);
-  //     memset(ptr, 0xFA, size);
-  //     printf("Moved!\n");
-
-  //     // TODO: invalidate!
-  //     m.set_pointer(d);
-  //     printf("updated mapping\n");
-  //     source_page->release_remote(m, ptr);
-  //     printf("released original block\n");
-  // #undef printf
-  //     return true;
-  //   }
+    void *new_location = nullptr;
+    while (true) {
+      new_location = locality_page->alloc(*m, size);
+      if (new_location != nullptr) break;
+      locality_page = new_locality_page(size + 32);
+    }
 
 
-  ThreadCache::LocalizationResult ThreadCache::localize(alaska::Mapping **mappings, size_t count) {
+    // Now for the actual localization
+    memcpy(new_location, ptr, size);       // Copy the data
+    source_page->release_remote(*m, ptr);  // Release the old location
+    m->set_pointer(new_location);          // Write the new location
+    moved_count += 1;
+
+    // TODO: localize one level of pointers?
+    if (allowed_depth > 0) {
+      auto *header = alaska::ObjectHeader::from(new_location);
+      auto *ptr = (void **)new_location;
+      size_t scan_size = 128;
+      if (size < scan_size) scan_size = size;
+      auto *end = (void **)((char *)ptr + scan_size);
+      while (ptr < end) {
+        auto *p = *ptr;
+        if (p != nullptr) {
+          auto *m = alaska::Mapping::from_handle_safe(p);
+          if (m != nullptr) {
+            moved_count += localize(m, allowed_depth - 1);
+          }
+        }
+        ptr++;
+      }
+    }
+
+    return moved_count;
+  }
+
+
+  static inline long record_hotness(Mapping *m, uint64_t *hotness_hist, long allowed_depth = 0) {
+    void *data = m->get_pointer();
+    if (data == nullptr) return 0;
+
+    auto header = ObjectHeader::from(m);
+    if (header->hotness < 0b111'111) {
+      if (header->hotness != 0) {
+        hotness_hist[header->hotness]--;
+      }
+      header->hotness++;
+      hotness_hist[header->hotness]++;
+    }
+
+
+    if (allowed_depth > 0) {
+      auto *ptr = (void **)header->data();
+      size_t size = header->object_size();
+      size_t scan_size = 128;
+      if (size < scan_size) scan_size = size;
+      auto *end = (void **)((char *)ptr + scan_size);
+      while (ptr < end) {
+        auto *p = *ptr;
+        if (p != nullptr) {
+          auto *m = alaska::Mapping::from_handle_safe(p);
+          if (m) {
+            record_hotness(m, hotness_hist, allowed_depth - 1);
+          }
+        }
+      }
+    }
+
+    return 1;
+  }
+
+  ThreadCache::LocalizationResult ThreadCache::localize(alaska::handle_id_t *hids, size_t count) {
     LocalizationResult res;
     res.count = 0;  // We haven't localized anything yet.
+
+    long seen = 0;
+
+
+    // return res;
+
+
+
+
+    uintptr_t pages[count];
+    lphashset_init(pages, count);
+
+
+    long invalid_found = 0;
+    for (size_t i = 0; i < count; i++) {
+      if (hids[i] == 0) continue;
+      auto *m = Mapping::from_handle_id(hids[i]);
+
+      auto *ptr = m->get_pointer();
+      if (ptr != nullptr) {
+        lphashset_insert(pages, count, (uintptr_t)m->get_pointer() >> 12);
+      }
+      record_hotness(m, hotness_hist, 0);
+    }
+
+#if 0
+    if (localization_epoch == 0) {
+      alaska::printf("LCLZ trial,hotness,count\n");
+    }
+    if (localization_epoch != 0 && (localization_epoch % 10) == 0) {
+      size_t buckets = 1;
+      for (size_t i = 0; i < hotness_hist_size; i += buckets) {
+        uint64_t bucket_sum = 0;
+        for (size_t j = 0; j < buckets; j++) {
+          bucket_sum += hotness_hist[i + j];
+        }
+        printf("LCLZ %zu,%zu,%zu\n", localization_epoch, i / buckets, bucket_sum);
+      }
+    }
+
+
+    // if (localization_epoch == 0) {
+    //   alaska::printf("LCLZ trial,page,accessed\n");
+    // }
+    // if (localization_epoch != 0 && (localization_epoch % 10) == 0) {
+    //   for (size_t i = 0; i < count; i++) {
+    //     if (pages[i] == 0xFFFFFFFFFFFFFFFFUL) continue;
+    //     printf("LCLZ %zu,%zu,1\n", localization_epoch, pages[i]);
+    //   }
+    //   //   printf("LCLZ %zu,%zu,%zu\n", localization_epoch, i / buckets, bucket_sum);
+    //   // }
+    // }
+#endif
+    localization_epoch++;
 
 
     return res;

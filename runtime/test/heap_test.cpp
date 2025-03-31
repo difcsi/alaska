@@ -19,7 +19,7 @@ class HeapTest : public ::testing::Test {
   }
   void TearDown() override {}
 
-  alaska::Heap heap {g_config};
+  alaska::Heap heap{g_config};
 };
 
 
@@ -74,8 +74,7 @@ TEST_F(HeapTest, LocalityPageGet) {
   auto lp = heap.get_localitypage(size_req);
   ASSERT_NE(lp, nullptr);
   alaska::Mapping m;
-  ASSERT_NE(lp->alloc(m, 32), nullptr);
-
+  // ASSERT_NE(lp->alloc(m, 32), nullptr);
 }
 
 

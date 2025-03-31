@@ -1,7 +1,6 @@
 #pragma once
 
 
-
 #include <stdlib.h>
 #include <stdint.h>
 #include <alaska/alaska.hpp>
@@ -10,6 +9,7 @@
 
 // No clue if this requires the library be linked.
 #include <ck/new.h>
+// #include <new>
 
 
 namespace ck {
@@ -18,21 +18,11 @@ namespace ck {
   template <typename vecType, typename ElementType>
   class vector_iterator {
    public:
-    bool operator!=(const vector_iterator& other) const {
-      return m_index != other.m_index;
-    }
-    bool operator==(const vector_iterator& other) const {
-      return m_index == other.m_index;
-    }
-    bool operator<(const vector_iterator& other) const {
-      return m_index < other.m_index;
-    }
-    bool operator>(const vector_iterator& other) const {
-      return m_index > other.m_index;
-    }
-    bool operator>=(const vector_iterator& other) const {
-      return m_index >= other.m_index;
-    }
+    bool operator!=(const vector_iterator& other) const { return m_index != other.m_index; }
+    bool operator==(const vector_iterator& other) const { return m_index == other.m_index; }
+    bool operator<(const vector_iterator& other) const { return m_index < other.m_index; }
+    bool operator>(const vector_iterator& other) const { return m_index > other.m_index; }
+    bool operator>=(const vector_iterator& other) const { return m_index >= other.m_index; }
     vector_iterator& operator++() {
       ++m_index;
       return *this;
@@ -41,36 +31,23 @@ namespace ck {
       --m_index;
       return *this;
     }
-    vector_iterator operator-(int value) {
-      return {m_vector, m_index - value};
-    }
-    vector_iterator operator+(int value) {
-      return {m_vector, m_index + value};
-    }
+    vector_iterator operator-(int value) { return {m_vector, m_index - value}; }
+    vector_iterator operator+(int value) { return {m_vector, m_index + value}; }
     vector_iterator& operator=(const vector_iterator& other) {
       m_index = other.m_index;
       return *this;
     }
-    ElementType& operator*() {
-      return m_vector[m_index];
-    }
-    int operator-(const vector_iterator& other) {
-      return m_index - other.m_index;
-    }
+    ElementType& operator*() { return m_vector[m_index]; }
+    int operator-(const vector_iterator& other) { return m_index - other.m_index; }
 
-    bool is_end() const {
-      return m_index == m_vector.size();
-    }
-    int index() const {
-      return m_index;
-    }
+    bool is_end() const { return m_index == m_vector.size(); }
+    int index() const { return m_index; }
 
    private:
     friend vecType;
     vector_iterator(vecType& vector, int index)
         : m_vector(vector)
-        , m_index(index) {
-    }
+        , m_index(index) {}
     vecType& m_vector;
     int m_index{0};
   };
@@ -109,18 +86,13 @@ namespace ck {
   template <typename T, int inline_capacity = 0>
   class vec {
    private:
-    void del(T* buf) {
-      alaska_internal_free(buf);
-    }
+    void del(T* buf) { alaska_internal_free(buf); }
 
    public:
     vec()
-        : m_capacity(inline_capacity) {
-    }
+        : m_capacity(inline_capacity) {}
 
-    ~vec() {
-      clear();
-    }
+    ~vec() { clear(); }
 
     vec(vec&& other)
         : m_size(other.m_size)
@@ -129,7 +101,7 @@ namespace ck {
       if (inline_capacity > 0) {
         if (!m_outline_buffer) {
           for (int i = 0; i < m_size; ++i) {
-            new (&inline_buffer()[i]) T(move(other.inline_buffer()[i]));
+            ::new (&inline_buffer()[i]) T(move(other.inline_buffer()[i]));
             other.inline_buffer()[i].~T();
           }
         }
@@ -155,7 +127,7 @@ namespace ck {
         if (inline_capacity > 0) {
           if (!m_outline_buffer) {
             for (int i = 0; i < m_size; ++i) {
-              new (&inline_buffer()[i]) T(move(other.inline_buffer()[i]));
+              ::new (&inline_buffer()[i]) T(move(other.inline_buffer()[i]));
               other.inline_buffer()[i].~T();
             }
           }
@@ -187,9 +159,7 @@ namespace ck {
       return typed_transfer<T>::compare(data(), other.data(), size());
     }
 
-    bool operator!=(const vec& other) const {
-      return !(*this == other);
-    }
+    bool operator!=(const vec& other) const { return !(*this == other); }
 
     bool contains_slow(const T& value) const {
       for (int i = 0; i < size(); ++i) {
@@ -199,18 +169,10 @@ namespace ck {
     }
 
     // NOTE: vec::is_null() exists for the benefit of String::copy().
-    bool is_null() const {
-      return is_empty();
-    }
-    bool is_empty() const {
-      return size() == 0;
-    }
-    int size() const {
-      return m_size;
-    }
-    int capacity() const {
-      return m_capacity;
-    }
+    bool is_null() const { return is_empty(); }
+    bool is_empty() const { return size() == 0; }
+    int size() const { return m_size; }
+    int capacity() const { return m_capacity; }
 
     T* data() {
       if (inline_capacity > 0) return m_outline_buffer ? m_outline_buffer : inline_buffer();
@@ -230,26 +192,14 @@ namespace ck {
       return data()[i];
     }
 
-    const T& operator[](int i) const {
-      return at(i);
-    }
-    T& operator[](int i) {
-      return at(i);
-    }
+    const T& operator[](int i) const { return at(i); }
+    T& operator[](int i) { return at(i); }
 
-    const T& first() const {
-      return at(0);
-    }
-    T& first() {
-      return at(0);
-    }
+    const T& first() const { return at(0); }
+    T& first() { return at(0); }
 
-    const T& last() const {
-      return at(size() - 1);
-    }
-    T& last() {
-      return at(size() - 1);
-    }
+    const T& last() const { return at(size() - 1); }
+    T& last() { return at(size() - 1); }
 
     T take_last() {
       ALASKA_ASSERT(!is_empty(), "");
@@ -274,7 +224,7 @@ namespace ck {
       } else {
         at(index).~T();
         for (int i = index + 1; i < m_size; ++i) {
-          new (slot(i - 1)) T(move(at(i)));
+          ::new (slot(i - 1)) T(move(at(i)));
           at(i).~T();
         }
       }
@@ -288,15 +238,13 @@ namespace ck {
       grow_capacity(size() + 1);
       ++m_size;
       for (int i = size() - 1; i > index; --i) {
-        new (slot(i)) T(move(at(i - 1)));
+        ::new (slot(i)) T(move(at(i - 1)));
         at(i - 1).~T();
       }
-      new (slot(index)) T(move(value));
+      ::new (slot(index)) T(move(value));
     }
 
-    void insert(int index, const T& value) {
-      insert(index, T(value));
-    }
+    void insert(int index, const T& value) { insert(index, T(value)); }
 
     template <typename C>
     void insert_before_matching(T&& value, C callback) {
@@ -349,38 +297,34 @@ namespace ck {
 
     void unchecked_push(T&& value) {
       ALASKA_ASSERT((size() + 1) <= capacity(), "");
-      new (slot(m_size)) T(move(value));
+      ::new (slot(m_size)) T(move(value));
       ++m_size;
     }
 
-    void unchecked_push(const T& value) {
-      unchecked_push(T(value));
-    }
+    void unchecked_push(const T& value) { unchecked_push(T(value)); }
 
     template <class... Args>
     void empend(Args&&... args) {
       grow_capacity(m_size + 1);
-      new (slot(m_size)) T(forward<Args>(args)...);
+      ::new (slot(m_size)) T(forward<Args>(args)...);
       ++m_size;
     }
 
     void push(T&& value) {
       grow_capacity(size() + 1);
-      new (slot(m_size)) T(move(value));
+      ::new (slot(m_size)) T(move(value));
       ++m_size;
     }
 
-    void push(const T& value) {
-      push(T(value));
-    }
+    void push(const T& value) { push(T(value)); }
 
     void prepend(const T& value) {
       grow_capacity(size() + 1);
       for (int i = size(); i > 0; --i) {
-        new (slot(i)) T(move(at(i - 1)));
+        ::new (slot(i)) T(move(at(i - 1)));
         at(i - 1).~T();
       }
-      new (slot(0)) T(value);
+      ::new (slot(0)) T(value);
       ++m_size;
     }
 
@@ -460,20 +404,12 @@ namespace ck {
     }
 
     using Iterator = vector_iterator<vec, T>;
-    Iterator begin() {
-      return Iterator(*this, 0);
-    }
-    Iterator end() {
-      return Iterator(*this, size());
-    }
+    Iterator begin() { return Iterator(*this, 0); }
+    Iterator end() { return Iterator(*this, size()); }
 
     using ConstIterator = vector_iterator<const vec, const T>;
-    ConstIterator begin() const {
-      return ConstIterator(*this, 0);
-    }
-    ConstIterator end() const {
-      return ConstIterator(*this, size());
-    }
+    ConstIterator begin() const { return ConstIterator(*this, 0); }
+    ConstIterator end() const { return ConstIterator(*this, size()); }
 
     template <typename Finder>
     ConstIterator find(Finder finder) const {
@@ -525,9 +461,7 @@ namespace ck {
 
 
 
-    void sort() {
-      msort(0, size() - 1);
-    }
+    void sort() { msort(0, size() - 1); }
 
    private:
     void merge(int l, int m, int r) {
@@ -583,9 +517,7 @@ namespace ck {
       }
     }
 
-    void reset_capacity() {
-      m_capacity = inline_capacity;
-    }
+    void reset_capacity() { m_capacity = inline_capacity; }
 
     static int padded_capacity(int capacity) {
       int n = capacity + (capacity / 4) + 4;
@@ -593,12 +525,8 @@ namespace ck {
       return 4;
     }
 
-    T* slot(int i) {
-      return &data()[i];
-    }
-    const T* slot(int i) const {
-      return &data()[i];
-    }
+    T* slot(int i) { return &data()[i]; }
+    const T* slot(int i) const { return &data()[i]; }
 
     T* inline_buffer() {
       ALASKA_ASSERT(inline_capacity > 0, "No inline buffer");

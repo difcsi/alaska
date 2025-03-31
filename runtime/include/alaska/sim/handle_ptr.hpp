@@ -57,6 +57,11 @@ namespace alaska::sim {
     operator T*(void) const { return m_handle; }
     T* get(void) const { return m_handle; }
 
+    T* translate_untracked(void) const {
+      auto m = alaska::Mapping::from_handle_safe(m_handle);
+      if (m == nullptr) return m_handle;
+      return (T*)m->get_pointer();
+    }
 
     T* translate(void) const {
       auto m = alaska::Mapping::from_handle_safe(m_handle);

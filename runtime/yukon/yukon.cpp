@@ -39,22 +39,31 @@
   __asm__ __volatile__("csrr %0, %1" : "=r"(val) : "n"(csr) : /* clobbers: none */);
 
 
+
+
 static inline uint64_t read_instret() {
   uint64_t instret;
   asm volatile("rdinstret %0" : "=r"(instret));
   return instret;
 }
 
+
+
+// static inline uint64_t read_csr() {
+//   uint64_t cycles;
+//   asm volatile("rdcycle %0" : "=r"(cycles));
+//   return cycles;
+// }
+
+static inline uint64_t read_cycle_counter() {
+  uint64_t cycles;
+  asm volatile("rdcycle %0" : "=r"(cycles));
+  return cycles;
+}
+
+
 static uint64_t instructions_in_runtime = 0;
 
-struct AutoFencer {
-  uint64_t start_inst;
-  AutoFencer() { start_inst = read_instret(); }
-  ~AutoFencer() {
-    __asm__ volatile("fence" ::: "memory");
-    instructions_in_runtime += (read_instret() - start_inst);
-  }
-};
 
 
 
@@ -79,7 +88,6 @@ static uint64_t yukon_dump_interval = 10000;  // microseconds
 
 
 static void yukon_signal_handler(int sig, siginfo_t *info, void *ucontext) {
-  AutoFencer fencer;
   // If a pagefault occurs while handle table walking, we will throw the
   // exception back up and even if you handle the page fault, the HTLB
   // stores the fact that it will cause an exception until you
@@ -104,6 +112,7 @@ static void yukon_signal_handler(int sig, siginfo_t *info, void *ucontext) {
     }
 #endif
 
+    exit(-11);
     // write_csr(CSR_HTINVAL, ((1LU << (64 - ALASKA_SIZE_BITS)) - 1));
     return;
   }
@@ -117,25 +126,84 @@ static void yukon_signal_handler(int sig, siginfo_t *info, void *ucontext) {
 
 
 
-void alarm_handler(int sig) {
-  // Grab the thread cache
-  auto *tc = yukon::get_dump_tc();
-  // And trigger an HTLB dump
-  yukon::dump_htlb(tc);
 
-  if ((long)ualarm(yukon_dump_interval, 0) == -1) {
+static volatile bool delayed_localization_pending = false;
+static volatile long localization_latch_depth = 0;
+static long localizations = 0;
+static alaska::RateCounter immediate_localizations;
+static alaska::RateCounter delayed_localizations;
+
+static void schedule_localization(uint64_t interval_override = 0) {
+  uint64_t interval = interval_override != 0 ? interval_override : yukon_dump_interval;
+  // schedule the next dump in the future!
+  if ((long)ualarm(interval, 0) == -1) {
     perror("Failed to setup ualarm for dumping");
     exit(-1);
   }
 }
 
+static bool attempt_localization(void) {
+  // auto start = alaska_timestamp();
+  if (localization_latch_depth > 0) {
+    return false;
+  }
+  // Grab the thread cache
+  auto *tc = yukon::get_dump_tc();
+  // And trigger an HTLB dump
+  yukon::dump_htlb(tc);
+  localizations++;
+  // auto end = alaska_timestamp();
+  // alaska::printf("[localized] time: %8.2fus\n", (end - start) / 1000.0);
 
-static void segv_handler(int sig, siginfo_t *info, void *ucontext) {}
+  return true;
+}
+
+void alarm_handler(int sig) {
+  if (!alaska::is_initialized()) {
+    schedule_localization();
+    return;
+  }
+  if (attempt_localization()) {
+    // if localization succeeded, track it
+    immediate_localizations.track();
+    // Then, schedule the next one
+    schedule_localization();
+  } else {
+    delayed_localization_pending = true;
+  }
+}
+
+struct LocalizationLatch {
+  LocalizationLatch() { localization_latch_depth++; }
+
+  ~LocalizationLatch() {
+    localization_latch_depth--;
+    if (delayed_localization_pending) {
+      if (attempt_localization()) {
+        // if it didn't succeed, we scheduled a delayed one
+        // and should track that.
+        delayed_localizations.track();
+        delayed_localization_pending = false;
+        schedule_localization();
+      }
+    }
+  }
+};
+
+struct AutoFencer {
+  uint64_t start_inst;
+  AutoFencer() { start_inst = read_instret(); }
+  ~AutoFencer() {
+    __asm__ volatile("fence" ::: "memory");
+    instructions_in_runtime += (read_instret() - start_inst);
+  }
+};
+
 
 pthread_t dump_thread;
 
 static void setup_signal_handlers(void) {
-  unsetenv("LD_PRELOAD");
+  unsetenv("LD_PRELOADLOAD");
   struct sigaction sa;
   memset(&sa, 0, sizeof(sa));
 
@@ -149,8 +217,8 @@ static void setup_signal_handlers(void) {
   // Go to the `barrier_signal_handler`
   sa.sa_sigaction = yukon_signal_handler;
   // Attach this action on two signals:
-  // assert(sigaction(SIGSEGV, &sa, NULL) == 0);
-  assert(sigaction(SIGUSR2, &sa, NULL) == 0);
+  assert(sigaction(SIGSEGV, &sa, NULL) == 0);
+  // assert(sigaction(SIGUSR2, &sa, NULL) == 0);
 }
 
 
@@ -160,15 +228,6 @@ static void setup_signal_handlers(void) {
 #include <alaska/thread_tracking.in.hpp>
 
 
-
-static inline uint64_t read_cycle_counter() {
-  uint64_t cycles;
-  asm volatile("rdcycle %0" : "=r"(cycles));
-  return cycles;
-}
-
-
-static alaska::handle_id_t dump_buffer[1024];
 static int alaska_fd = -1;
 
 static unsigned long last_dump_cycle = 0;
@@ -188,43 +247,72 @@ namespace yukon {
 
 
   void dump_htlb(alaska::ThreadCache *tc) {
-    if (alaska_fd == -1) {
-      alaska_fd = open("/dev/alaska", O_RDONLY);
-    }
+    if (alaska_fd == -1) alaska_fd = open("/dev/alaska", O_RDONLY);
+    static size_t localization_count = 0;
 
-    // The size of the HTLB
-    size_t size = 16 + 512;
+    auto &rt = alaska::Runtime::get();
 
-    // memset(dump_buffer, 0, sizeof(dump_buffer));
-    auto *space = tc->localizer.get_hotness_buffer(size);
-    // auto *space = dump_buffer;
-
-    // memset(space, 0, size * sizeof(alaska::handle_id_t));
-    // Fence after we have a valid space for the dump
-    asm volatile("fence" ::: "memory");
-
-    auto start = read_cycle_counter();
-    int r = read(alaska_fd, space, size * sizeof(alaska::handle_id_t));
-    auto end = read_cycle_counter();
+    rt.with_barrier([&]() {
+      // The size of the HTLB
+      size_t size = 16 + 512;
+      auto *space = tc->localizer.get_hotness_buffer(size);
+      memset(space, 0, size * sizeof(alaska::handle_id_t));
+      int r = read(alaska_fd, space, size * sizeof(alaska::handle_id_t));
+      tc->localizer.feed_hotness_buffer(size, space);
 
 
+      auto &ht = rt.handle_table;
+      if (localization_count++ % 50 == 0) {
+        int hot_cutoff = 8;
+        size_t hot_bytes = 0;
+        size_t cold_bytes = 0;
+
+        size_t total_heap_sw_pages = rt.heap.pm.get_allocated_page_count();
+        size_t total_heap_hw_pages = total_heap_sw_pages * (alaska::page_size / 4096);
 
 
-    auto localize_start = read_cycle_counter();
-    // Feed the buffer to the localizer to do it's work
-    tc->localizer.feed_hotness_buffer(size, space);
-    auto localize_end = read_cycle_counter();
+        size_t hot_pages = 0;
+        uint8_t hot_page_bitmap[total_heap_hw_pages / 8];
+        memset(hot_page_bitmap, 0, total_heap_hw_pages / 8);
+
+        auto track_hot_page = [&](uintptr_t page) {
+          // page is an absolute page. we need to offset it by the start of the heap
+          uintptr_t heap_start_page = (uintptr_t)rt.heap.pm.get_start() >> 12;
+          page -= heap_start_page;  // here we are hoping the pointer is valid!
 
 
-    // we assume a cycle is 1 nanosecond
-    double total_time_ms = (localize_end - start) / 1000000.0l;
+          // if the page is already set, do nothing. otherwise, incrememt hot_pages and set the bit
+          if (hot_page_bitmap[page / 8] & (1 << (page % 8))) return;
+          hot_pages++;
+          hot_page_bitmap[page / 8] |= (1 << (page % 8));
+        };
 
-    // printf("[localizer cycles] dump:%20lu    between:%20lu   localize:%20lu (total: %.3fms)\n",
-    //     end - start, start - last_dump_cycle, localize_end - localize_start, total_time_ms);
-    // last_dump_cycle = localize_end;
+        auto slabs = ht.get_slabs();
+        for (auto *slab : slabs) {
+          for (auto *allocated : slab->allocator) {
+            auto *m = (alaska::Mapping *)allocated;
+            if (m->get_pointer() == nullptr) continue;
+            uintptr_t page = (uintptr_t)m->get_pointer() >> 12;
+            auto header = alaska::ObjectHeader::from(m->get_pointer());
+            if (header->hotness > hot_cutoff) {
+              track_hot_page(page);
+              hot_bytes += header->object_size();
+            }
+          }
+        }
 
-    // Fence again... for some reason
-    asm volatile("fence" ::: "memory");
+        auto total_bytes = hot_bytes + cold_bytes;
+        auto pages_needed_for_hot_objects = round_up(hot_bytes, 4096) / 4096;
+        float hot_utilization = pages_needed_for_hot_objects / (float)hot_pages;
+        size_t cold_pages = total_heap_hw_pages - hot_pages;
+
+        alaska::printf(
+            "[dump %5zu] hot/cold pages: %5zu(%4zu needed %5f)/%5zu | hot/cold bytes: "
+            "%12zu/%12zu\n",
+            localization_count, hot_pages, pages_needed_for_hot_objects, hot_utilization,
+            cold_pages, hot_bytes, cold_bytes);
+      }
+    });
   }
 
 
@@ -239,19 +327,6 @@ namespace yukon {
     asm volatile("fence" ::: "memory");
 
     printf("========================\n");
-
-    int cols = 0;
-    for (size_t i = 0; i < size; i++) {
-      printf("%16lx ", handle_ids[i]);
-      cols++;
-      if (cols >= 8) {
-        cols = 0;
-        printf("\n");
-      }
-    }
-    if (cols != 0) {
-      printf("\n");
-    }
   }
 
   alaska::ThreadCache *get_tc() {
@@ -291,51 +366,13 @@ namespace yukon {
     }
 
 
+    if (getenv("NODUMP") == nullptr) {
+      signal(SIGALRM, alarm_handler);
 
-    if (getenv("YUKON_DUMP") != NULL) {
-      int dump_interval_ms = 10;
-      yukon_dump_interval = dump_interval_ms * 1000;
-      pthread_create(
-          &dump_thread, NULL,
-          [](void *) -> void * {
-            // Grab the thread cache
-            auto *tc = yukon::get_tc();
-            auto &rt = alaska::Runtime::get();
-
-            usleep(yukon_dump_interval * 10);
-
-            while (1) {
-              // auto barrier_start = alaska_timestamp();
-              rt.with_barrier([&]() {
-                yukon::dump_htlb(tc);
-              });
-              // auto barrier_end = alaska_timestamp();
-
-              // auto sleep_start = alaska_timestamp();
-              usleep(yukon_dump_interval);
-              // auto sleep_end = alaska_timestamp();
-              // printf("wanted to sleep for %luus, slept for %luus. barrier: %luus\n",
-              //     yukon_dump_interval, (sleep_end - sleep_start) / 1000,
-              //     (barrier_end - barrier_start) / 1000);
-            }
-            return NULL;
-          },
-          NULL);
-
-      // printf("dumping every %d ms\n", dump_interval_ms);
-      // signal(SIGALRM, alarm_handler);
-      // // now that we have sigalarm configured, setup a ualarm for
-      // // some number of microseconds on an interval for dumping
-      // if ((long)ualarm(yukon_dump_interval * 10, 0) == -1) {
-      //   perror("Failed to setup ualarm for dumping");
-      //   exit(-1);
-      // }
+      yukon_dump_interval = 5 * 1000;
+      // Schedule the first dump for 50ms from now.
+      schedule_localization(50 * 1000);
     }
-
-
-    // asm volatile("fence" ::: "memory");
-    // yukon::set_handle_table_base(handle_table_base);
-    // asm volatile("fence" ::: "memory");
   }
 }  // namespace yukon
 
@@ -348,7 +385,7 @@ void __attribute__((constructor(102))) alaska_init(void) {
 }
 
 void __attribute__((destructor)) alaska_deinit(void) {
-  printf("YUKON_RTINST=%zu\n", instructions_in_runtime);
+  alaska::printf("YUKON_RTINST=%zu\n", instructions_in_runtime);
 }
 
 
@@ -373,8 +410,6 @@ static void *_halloc(size_t sz, int zero) {
   void *result = NULL;
 
   result = yukon::get_tc()->halloc(sz, zero);
-
-  auto m = alaska::Mapping::from_handle_safe(result);
   // if (m) {
   //   auto backing_data = (uintptr_t)m->get_pointer();
   //   touch_pages(backing_data, backing_data + sz);
@@ -385,16 +420,19 @@ static void *_halloc(size_t sz, int zero) {
 }
 
 extern "C" void *halloc(size_t sz) noexcept {
+  LocalizationLatch loc_latch;
   AutoFencer fencer;
   return _halloc(sz, 0);
 }
 extern "C" void *hcalloc(size_t nmemb, size_t size) {
+  LocalizationLatch loc_latch;
   AutoFencer fencer;
   return _halloc(nmemb * size, 1);
 }
 
 // Reallocate a handle
 extern "C" void *hrealloc(void *handle, size_t new_size) {
+  LocalizationLatch loc_latch;
   AutoFencer fencer;
 
   alaska::LockedThreadCache tc = *yukon::get_tc();
@@ -426,6 +464,7 @@ extern "C" void *hrealloc(void *handle, size_t new_size) {
 
 
 extern "C" void hfree(void *ptr) {
+  LocalizationLatch loc_latch;
   AutoFencer fencer;
   // no-op if NULL is passed
   if (unlikely(ptr == NULL)) return;
@@ -437,6 +476,7 @@ extern "C" void hfree(void *ptr) {
 
 
 extern "C" size_t halloc_usable_size(void *ptr) {
+  LocalizationLatch loc_latch;
   alaska::LockedThreadCache tc = *yukon::get_tc();
   return tc->get_size(ptr);
 }
@@ -450,10 +490,6 @@ void operator delete[](void *ptr) { hfree(ptr); }
 
 
 extern "C" {
-
-// void *test_halloc(size_t size) { return halloc(size); }
-// void test_hfree(void *ptr) { hfree(ptr); }
-
 void *malloc(size_t size) { return halloc(size); }
 void *calloc(size_t size, size_t count) { return hcalloc(size, count); }
 void *realloc(void *ptr, size_t newsize) { return hrealloc(ptr, newsize); }

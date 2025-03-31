@@ -15,10 +15,11 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <sys/types.h>
+#include <alaska/config.h>
+
 #include <alaska/utils.h>
 #include <alaska/list_head.h>
 #include <alaska/liballoc.h>
-#include <alaska/config.h>
 #include <alaska/Logger.hpp>
 
 #include <ck/utility.h>
@@ -169,7 +170,8 @@ namespace alaska {
     }
 
     static ALASKA_INLINE alaska::Mapping *from_handle_id(handle_id_t id) {
-      return (alaska::Mapping *)((uint64_t)id << (ALASKA_SIZE_BITS - ALASKA_SQUEEZE_BITS));
+      uint64_t handle = (1UL << 63) | ((uint64_t)id << ALASKA_SIZE_BITS);
+      return from_handle((void *)handle);
     }
 
     // Check if a pointer is a handle or not (is the top bit is set?)

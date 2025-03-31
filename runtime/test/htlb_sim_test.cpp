@@ -6,20 +6,21 @@
 #include <vector>
 #include <alaska/Heap.hpp>
 #include <alaska/Runtime.hpp>
-#include "alaska/ThreadCache.hpp"
-
+#include <alaska/ThreadCache.hpp>
+#include <unordered_set>
 
 #include <alaska/sim/handle_ptr.hpp>
 #include <alaska/sim/HTLB.hpp>
 
 
-#define L1_ENTS 96
-#define L1_SETS 24
-#define L1_WAYS (L1_ENTS / L1_SETS)
 
-#define L2_WAYS 16
-#define L2_SETS 32
-#define TOTAL_ENTRIES (L1_WAYS * L1_SETS + L2_WAYS * L2_SETS)
+// #define L1_ENTS 4
+// #define L1_SETS 4
+// #define L1_WAYS (L1_ENTS / L1_SETS)
+
+// #define L2_WAYS 1
+// #define L2_SETS 6
+// #define TOTAL_ENTRIES (L1_WAYS * L1_SETS + L2_WAYS * L2_SETS)
 
 
 class HTLBSimTest : public ::testing::Test {
@@ -27,12 +28,13 @@ class HTLBSimTest : public ::testing::Test {
   alaska::ThreadCache *tc;
   alaska::Runtime runtime;
 
-  alaska::sim::HTLB htlb = alaska::sim::HTLB(L1_WAYS, L1_SETS, L2_WAYS, L2_SETS);
-  uint64_t *dump_region = nullptr;
+  alaska::sim::HTLB htlb = alaska::sim::HTLB();
+  alaska::handle_id_t *dump_region = nullptr;
 
   void SetUp() override {
     htlb.thread_cache = tc = runtime.new_threadcache();
-    dump_region = (uint64_t *)calloc(sizeof(uint64_t), TOTAL_ENTRIES);
+    dump_region =
+        (alaska::handle_id_t *)calloc(sizeof(alaska::handle_id_t), htlb.htlb.total_entries());
   }
 
 
@@ -42,10 +44,10 @@ class HTLBSimTest : public ::testing::Test {
     ::free(dump_region);
   }
 
-  uint64_t *dump(void) {
-    htlb.dump_entries(dump_region);
-    return dump_region;
-  }
+  // alaska::handle_id_t *dump(void) {
+  //   htlb.dump_entries(dump_region);
+  //   return dump_region;
+  // }
 };
 
 
@@ -73,18 +75,148 @@ TEST_F(HTLBSimTest, AllocAndSetTwo) {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+
+
+class HashTable {
+ public:
+  struct Entry {
+    uint64_t key;
+    int value;
+    alaska::sim::handle_ptr<Entry> next;
+
+    Entry(uint64_t k, int v)
+        : key(k)
+        , value(v)
+        , next(nullptr) {}
+  };
+
+  explicit HashTable(size_t size)
+      : buckets(size) {}
+
+  void insert(uint64_t key, int value) {
+    size_t index = key % buckets.size();
+    auto new_entry = alaska::sim::alloc<Entry>(key, value);
+
+    if (!buckets[index]) {
+      buckets[index] = new_entry;
+    } else {
+      auto current = buckets[index];
+      while (current->next) {
+        current = current->next;
+      }
+      current->next = new_entry;
+    }
+  }
+
+  std::optional<int> lookup(uint64_t key) const {
+    size_t index = key % buckets.size();
+    auto current = buckets[index];
+
+    while (current) {
+      if (current->key == key) {
+        return current->value;
+      }
+      current = current->next;
+    }
+    return std::nullopt;
+  }
+
+ private:
+  std::vector<alaska::sim::handle_ptr<Entry>> buckets;
+};
+
+
+
 template <typename K, typename V>
 struct Node {
   alaska::sim::handle_ptr<Node> left, right;
-  int key;
-  int value;
-};
+  K key;
+  V value;
+  int height;
 
+  Node(K k, V v)
+      : key(k)
+      , value(v)
+      , height(1)
+      , left(nullptr)
+      , right(nullptr) {}
+};
 
 template <typename K, typename V>
 struct TreeMap {
   using NodePtr = alaska::sim::handle_ptr<Node<K, V>>;
   NodePtr root;
+
+  int height(NodePtr n) { return n ? n->height : 0; }
+
+  int balance_factor(NodePtr n) { return n ? height(n->left) - height(n->right) : 0; }
+
+  NodePtr rotate_right(NodePtr y) {
+    NodePtr x = y->left;
+    NodePtr T2 = x->right;
+
+    x->right = y;
+    y->left = T2;
+
+    y->height = std::max(height(y->left), height(y->right)) + 1;
+    x->height = std::max(height(x->left), height(x->right)) + 1;
+
+    return x;
+  }
+
+  NodePtr rotate_left(NodePtr x) {
+    NodePtr y = x->right;
+    NodePtr T2 = y->left;
+
+    y->left = x;
+    x->right = T2;
+
+    x->height = std::max(height(x->left), height(x->right)) + 1;
+    y->height = std::max(height(y->left), height(y->right)) + 1;
+
+    return y;
+  }
+
+  NodePtr insert(NodePtr node, K key, V value) {
+    if (!node) {
+      return alaska::sim::alloc<Node<K, V>>(key, value);
+    }
+
+    if (key < node->key) {
+      node->left = insert(node->left, key, value);
+    } else if (key > node->key) {
+      node->right = insert(node->right, key, value);
+    } else {
+      node->value = value;
+      return node;
+    }
+
+    node->height = 1 + std::max(height(node->left), height(node->right));
+
+    int balance = balance_factor(node);
+
+    if (balance > 1 && key < node->left->key) {
+      return rotate_right(node);
+    }
+
+    if (balance < -1 && key > node->right->key) {
+      return rotate_left(node);
+    }
+
+    if (balance > 1 && key > node->left->key) {
+      node->left = rotate_left(node->left);
+      return rotate_right(node);
+    }
+
+    if (balance < -1 && key < node->right->key) {
+      node->right = rotate_right(node->right);
+      return rotate_left(node);
+    }
+
+    return node;
+  }
+
+  void insert(K key, V value) { root = insert(root, key, value); }
 
   NodePtr lookup(K key) {
     auto cur = root;
@@ -100,44 +232,57 @@ struct TreeMap {
     return nullptr;
   }
 
-  void insert(K key, V value) {
-    // Allocate a new node, and insert it into the tree without balancing
-    auto new_node = alaska::sim::alloc<Node<K, V>>();
-    new_node->key = key;
-    new_node->value = value;
-    if (!root) {
-      root = new_node;
-      return;
+  void dump_node(NodePtr n, int depth = 0) {
+    if (!n) return;
+
+    if (depth == 0) {
+      printf("%d [label=\"ROOT %d\"];\n", n->key, n->key);
     }
 
-    NodePtr parent = nullptr;
-    NodePtr cur = root;
-    while (cur) {
-      parent = cur;
-      if (key < cur->key) {
-        cur = cur->left;
-      } else if (key > cur->key) {
-        cur = cur->right;
-      } else {
-        // Key already exists, update the value
-        cur->value = value;
-        return;
-      }
+    if (n->left) {
+      printf("%d -> %d;\n", n->key, n->left->key);
+      dump_node(n->left, depth + 1);
     }
+    if (n->right) {
+      printf("%d -> %d;\n", n->key, n->right->key);
+      dump_node(n->right, depth + 1);
+    }
+  }
 
-    if (key < parent->key) {
-      parent->left = new_node;
-    } else {
-      parent->right = new_node;
+  void dump() {
+    printf("digraph G {\n");
+    dump_node(root);
+    printf("}\n");
+  }
+
+  void gather(NodePtr n, std::vector<Node<K, V> *> &nodes) {
+    if (!n) return;
+    auto *r = n.translate_untracked();
+    nodes.push_back(r);
+    gather(r->left, nodes);
+    gather(r->right, nodes);
+  }
+
+  uint64_t total_pages(void) {
+    std::unordered_set<uintptr_t> pages;
+    std::vector<Node<K, V> *> nodes;
+    gather(root, nodes);
+    for (auto n : nodes) {
+      uintptr_t page = (uintptr_t)n >> 12;
+      pages.insert(page);
     }
+    return pages.size();
   }
 };
 
 static TreeMap<int, int> alloc_tree(int node_count) {
   TreeMap<int, int> t;
   for (int i = 0; i < node_count; i++) {
-    t.insert(rand(), rand());
+    t.insert(i, rand());
   }
+  auto pages = t.total_pages();
+  printf("total pages %zu\n", pages);
+  // t.dump();
   return t;
 }
 
@@ -150,117 +295,84 @@ static void walk_tree(alaska::sim::handle_ptr<Node<K, V>> n) {
   walk_tree(n->right);
 }
 
-/*
-TEST_F(HTLBSimTest, AllocAndSetThree) {
+TEST_F(HTLBSimTest, TreeWalk) {
   srand(0);
-  auto tree = alloc_tree(16);
+  int count = 50'000;
+  auto tree = alloc_tree(count);
   (void)tree;
+  uint64_t improved_count = 0;
 
   printf("walking\n");
   htlb.reset();
-  walk_tree(tree.root);
 
 
-  auto r = dump();
-
-  int num_entries = 0;
-
-  auto get_color_comp = [&num_entries](int ind) {
-    return (uint8_t)(255 * ((float)ind / (float)num_entries));
-  };
-
-  auto trace = htlb.get_access_trace();
-  num_entries = trace.size();
-
-  for (int i = 1; i < trace.size(); i++) {
-    auto last = trace[i - 1];
-    auto cur = trace[i];
-    printf("  x%lx -> x%lx[constraint=true, color=gray, label=%d]\n", last, cur, i);
-  }
-
-
-
-  num_entries = 0;
-  for (int i = 0; i < TOTAL_ENTRIES; i++) {
-    if (r[i] != 0) num_entries++;
-  }
-
-  uint64_t last = 0;
-  int ind = 0;
-  for (int i = TOTAL_ENTRIES - 1; i >= 0; i--) {
-    // continue;
-    uint64_t cur = r[i];
-
-    if (cur == 0) {
-      continue;
+  FILE *f = fopen("page_uses_tree.csv", "w");
+  fprintf(f, "page,count,trial\n");
+  for (int i = 0; i < 2000; i++) {
+    int iterations_till_dump = (rand() + 200) % 1000;
+    for (int j = 0; j < iterations_till_dump; j++) {
+      auto ind = rand() % count;
+      auto n = tree.lookup(ind);
     }
-    if (last == 0) {
-      last = cur;
-      continue;
+    // run localization
+    bool improved = htlb.localize();
+    if (improved) {
+      improved_count++;
     }
 
-    int aind = ind++;
-
-    printf("  x%lx [shape=rectangle, label=\"x%lx (%d)\"]\n", last, last, aind);
-
-    // auto r = get_color_comp(aind);
-    // auto b = 255 - r;
-    // auto g = 0;
-    // printf("  x%lx -> x%lx[constraint=false, color=\"#%02x%02x%02x\"]\n", last, cur, r, g, b);
-    // printf("  x%lx [label=\"x%lx (%d)\"]\n", cur, cur, ind++);
-    last = cur;
+    // for (uint64_t h = 1; h < alaska::ThreadCache::hotness_hist_size; h++) {
+    //   fprintf(f, "%lu,%lu,%d\n", h, htlb.thread_cache->hotness_hist[h], i);
+    // }
   }
-  printf("  x%lx [shape=rectangle, label=\"x%lx (%d)\"]\n", last, last, ind);
+  fclose(f);
+  printf("improved: %zu times\n", improved_count);
+
+
+  // auto r = dump();
+  // for (size_t i = 0; i < TOTAL_ENTRIES; i++) {
+  //   printf("%zu ", (size_t)r[i]);
+  // }
 }
-*/
-
-////////////////////////////////////////////////////////////////////////////////
-
-// #include "graph/generator.h"
-// typedef float ScoreT;
-// using NodeID = uint64_t;
-// const float kDamp = 0.85;
-
-// pvector<ScoreT> PageRankPullGS(
-//     Graph<uint64_t> &g, int max_iters, double epsilon = 0, bool logging_enabled = false) {
-//   const ScoreT init_score = 1.0f / g.num_nodes();
-//   const ScoreT base_score = (1.0f - kDamp) / g.num_nodes();
-//   pvector<ScoreT> scores(g.num_nodes(), init_score);
-//   pvector<ScoreT> outgoing_contrib(g.num_nodes());
-//   for (NodeID n = 0; n < g.num_nodes(); n++)
-//     outgoing_contrib[n] = init_score / g.out_degree(n);
-//   for (int iter = 0; iter < max_iters; iter++) {
-//     double error = 0;
-//     for (NodeID u = 0; u < g.num_nodes(); u++) {
-//       ScoreT incoming_total = 0;
-//       for (NodeID v : g.in_neigh(u))
-//         incoming_total += outgoing_contrib[v];
-//       ScoreT old_score = scores[u];
-//       scores[u] = base_score + kDamp * incoming_total;
-//       error += fabs(scores[u] - old_score);
-//       outgoing_contrib[u] = scores[u] / g.out_degree(u);
-//     }
-//     // if (logging_enabled) PrintStep(iter, error);
-//     if (error < epsilon) break;
-//   }
-//   return scores;
-// }
 
 
+TEST_F(HTLBSimTest, TableWalk) {
+  return;
+  srand(0);
+  HashTable table(1000);
+  uint64_t improved_count = 0;
+  int count = 500'000;
+
+  for (int i = 0; i < count; i++) {
+    table.insert(i, rand());
+  }
+
+  printf("walking\n");
+  htlb.reset();
 
 
-// TEST_F(HTLBSimTest, GraphYay) {
-//   Generator<NodeID> gen(4, 4);
-//   auto el = gen.GenerateEL(true);
+  FILE *f = fopen("hist_table.csv", "w");
+  fprintf(f, "hotness,count,trial\n");
+  for (int i = 0; i < 10000; i++) {
+    int iterations_till_dump = (rand() + 200) % 1000;
+    for (int j = 0; j < iterations_till_dump; j++) {
+      auto ind = rand() % count;
+      auto n = table.lookup(ind);
+    }
+    // run localization
+    bool improved = htlb.localize();
+    if (improved) {
+      improved_count++;
+    }
+    for (uint64_t h = 1; h < alaska::ThreadCache::hotness_hist_size; h++) {
+      fprintf(f, "%lu,%lu,%d\n", h, htlb.thread_cache->hotness_hist[h], i);
+    }
+  }
+  fclose(f);
+  printf("improved: %zu times\n", improved_count);
 
-//   Graph<NodeID> g(el);
-//   printf("Edge list: %zu edges\n", el.size());
-//   printf("Graph has %zu nodes and %zu edges\n", g.num_nodes(), g.num_edges());
 
-//   g.dump();
-
-//   auto scores = PageRankPullGS(g, 100, 0.0001, true);
-//   for (NodeID n = 0; n < g.num_nodes(); n++) {
-//     printf("Node %lu: %f\n", n, scores[n]);
-//   }
-// }
+  // auto r = dump();
+  // for (size_t i = 0; i < TOTAL_ENTRIES; i++) {
+  //   printf("%zu ", (size_t)r[i]);
+  // }
+}

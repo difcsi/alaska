@@ -20,7 +20,7 @@ class LocalitySlabTest : public ::testing::Test {
     alaska::set_log_level(LOG_WARN);
     tc = runtime.new_threadcache();
     // construct the slab
-    new (slab) alaska::LocalitySlab();
+    slab->init();
   }
 
   void *checked_alloc(size_t size, alaska::Mapping *mapping) {
@@ -58,7 +58,7 @@ TEST_F(LocalitySlabTest, AllocationBumpsCorrectly) {
   auto *mapping = tc->new_mapping();
   void *ptr = checked_alloc(8, mapping);
   EXPECT_EQ(slab->freed, 0);
-  EXPECT_EQ(slab->bump_size, 8 + sizeof(alaska::LocalitySlab::Metadata));
+  EXPECT_EQ(slab->bump_size, 8 + sizeof(alaska::ObjectHeader));
 
   // availabile should reduce
   EXPECT_LT(slab->available(), avail_start);
@@ -74,7 +74,7 @@ TEST_F(LocalitySlabTest, FreeingTracksCorrectly) {
   auto *mapping = tc->new_mapping();
   void *ptr = checked_alloc(8, mapping);
   slab->free(ptr);
-  EXPECT_EQ(slab->freed, 8 + sizeof(alaska::LocalitySlab::Metadata));
+  EXPECT_EQ(slab->freed, 8 + sizeof(alaska::ObjectHeader));
 }
 
 

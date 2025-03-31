@@ -250,6 +250,29 @@ namespace alaska {
       });
       fprintf(stream, "\n");
     }
+
+    printf("locality pages: %lu\n", locality_pages.size());
+    locality_pages.foreach ([&](LocalityPage *lp) {
+      // iterate over the locality slab list
+      lp->for_each_slab([&](auto *slab) {
+        // fprintf(stream, "%p: ", lp);
+        float u = slab->utilization();
+        if (u == 0) {
+          fprintf(stream, "\e[31m");
+        }
+        fprintf(stream, "%3.0f \e[0m", 100.0 * u);
+
+        // fprintf(stream, "%8.2f/%7.2fkb ", lp->used() / 1024.0, lp->heap_size() / 1024.0);
+        // fprintf(stream, "%8.2fkb ", lp->used() / 1024.0);
+        // fprintf(stream, "%8.2f/%7.2fkb ", lp->used() / 1024.0, lp->heap_size() / 1024.0);
+        // fprintf(stream, "%8.2fkb/%7.2fkb ", lp->used() / 1024.0, lp->heap_size() / 1024.0);
+        // fprintf(stream, "\n");
+      });
+      fprintf(stream, "\n");
+
+
+      return true;
+    });
     // fprintf(stream, "\n");
   }
 
@@ -296,9 +319,6 @@ namespace alaska {
     size_t zero_bytes = 0;
     size_t total_objects = 0;
 
-    // A histogram for each byte value
-    long byte_histogram[256] = {0};
-
 
     size_t bytes_saved = 0;
     long c = 0;
@@ -321,30 +341,30 @@ namespace alaska {
 
   long Heap::compact_locality_pages(void) {
     long c = 0;
-    // printf("Utilizations:\n");
-    long total_wasted = 0;
-    long total_time = 0;
-    locality_pages.foreach ([&](LocalityPage *lp) {
-      int compaction_iterations = 0;
-      auto start = alaska_timestamp();
-      if (lp->utilization() < 0.8) {
-        while (lp->compact() != 0) {
-          compaction_iterations++;
-        }
-      }
-      auto end = alaska_timestamp();
-      total_time += (end - start);
+    // // printf("Utilizations:\n");
+    // long total_wasted = 0;
+    // long total_time = 0;
+    // locality_pages.foreach ([&](LocalityPage *lp) {
+    //   int compaction_iterations = 0;
+    //   auto start = alaska_timestamp();
+    //   if (lp->utilization() < 0.8) {
+    //     while (lp->compact() != 0) {
+    //       compaction_iterations++;
+    //     }
+    //   }
+    //   auto end = alaska_timestamp();
+    //   total_time += (end - start);
 
-      float u = lp->utilization();
-      size_t wasted = lp->heap_size() * (1 - u);
-      total_wasted += wasted;
+    //   float u = lp->utilization();
+    //   size_t wasted = lp->heap_size() * (1 - u);
+    //   total_wasted += wasted;
 
-      // printf("%p - %8f   waste: %5lukb   %4d iters in %9luns\n", lp, u, wasted / 1024,
-      //     compaction_iterations, (end - start));
-      return true;
-    });
-    // printf("Total wastage: %lukb\n", total_wasted / 1024);
-    // printf("Tool %fms\n", total_time / 1000.0 / 1000.0);
+    //   // printf("%p - %8f   waste: %5lukb   %4d iters in %9luns\n", lp, u, wasted / 1024,
+    //   //     compaction_iterations, (end - start));
+    //   return true;
+    // });
+    // // printf("Total wastage: %lukb\n", total_wasted / 1024);
+    // // printf("Tool %fms\n", total_time / 1000.0 / 1000.0);
     return c;
   }
 

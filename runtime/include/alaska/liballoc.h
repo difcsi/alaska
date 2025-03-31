@@ -32,6 +32,8 @@ extern void *PREFIX(realloc)(void *, size_t);  ///< The standard function.
 extern void *PREFIX(calloc)(size_t, size_t);   ///< The standard function.
 extern void PREFIX(free)(void *);              ///< The standard function.
 extern long PREFIX(size_of)(void *);           ///< The standard function.
+extern int PREFIX(is_managed)(void *);         // 1 if it is, 0 if not.
+
 
 
 #ifdef __cplusplus

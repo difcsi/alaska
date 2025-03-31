@@ -23,70 +23,42 @@ namespace alaska {
   SizedPage::~SizedPage() { return; }
 
   void *SizedPage::alloc(const alaska::Mapping &m, alaska::AlignedSize size) {
-    void *o = allocator.alloc();
-    if (unlikely(o == nullptr)) return nullptr;
-
-    // All paths for allocation go through this path.
-    long oid = this->object_to_ind(o);
-    Header *h = this->ind_to_header(oid);
-    h->set_mapping(const_cast<alaska::Mapping *>(&m));
-    h->size_slack = this->object_size - size;
-    return o;
+    auto *header = (ObjectHeader *)allocator.alloc();
+    if (unlikely(header == nullptr)) return nullptr;
+    header->set_mapping(&m);
+    header->set_object_size(size);
+    return header->data();
   }
 
 
   bool SizedPage::release_local(const alaska::Mapping &m, void *ptr) {
-    long oid = object_to_ind(ptr);
-    auto *h = ind_to_header(oid);
-    h->set_mapping(nullptr);
-    h->size_slack = 0;
-    allocator.release_local(ptr);
+    auto header = alaska::ObjectHeader::from(ptr);
+    allocator.release_local((void *)header);
     return true;
   }
 
 
   bool SizedPage::release_remote(const alaska::Mapping &m, void *ptr) {
-    auto oid = object_to_ind(ptr);
-    auto *h = ind_to_header(oid);
-    h->set_mapping(nullptr);
-    h->size_slack = 0;
-    allocator.release_remote(ptr);
+    auto header = alaska::ObjectHeader::from(ptr);
+    allocator.release_remote((void *)header);
     return true;
   }
 
 
 
   void SizedPage::set_size_class(int cls) {
-    size_class = cls;
+    this->size_class = cls;
 
-    size_t object_size = alaska::class_to_size(cls);
-    this->object_size = object_size;
-
-    capacity = (double)alaska::page_size /
-               (double)(round_up(object_size, alaska::alignment) + sizeof(SizedPage::Header));
-    live_objects = 0;
-
-    if (capacity == 0) {
-      log_warn(
-          "SizedPage allocated with an object which was too large (%zu bytes in a %zu byte page. "
-          "max object = %zu). No capacity!",
-          object_size, alaska::page_size, alaska::max_object_size);
-    } else {
-      log_trace("set_size_class(%d). os=%zu, cap=%zu", cls, object_size, capacity);
-    }
-
-
-    // Headers live first
-    headers = (SizedPage::Header *)memory;
-    // memset(headers, 0, sizeof(SizedPage::Header) * capacity);
-    // Then, objects are placed later.
-    objects = (Block *)round_up((uintptr_t)(headers + capacity), alaska::alignment);
-
-
-    log_info("cls = %-2d, memory = %p, headers = %p, objects = %p", cls, memory, headers, objects);
+    // The size of the object.
+    this->object_size = alaska::class_to_size(this->size_class);
+    // The size of the block, which includes the header
+    size_t real_size = this->object_size + sizeof(ObjectHeader);
+    // The number of objects (and headers) that can fit in this page.
+    this->capacity = (double)alaska::page_size / real_size;
+    this->live_objects = 0;
 
     // initialize
-    allocator.configure(objects, object_size, capacity);
+    allocator.configure(this->memory, real_size, capacity);
   }
 
 
@@ -114,6 +86,9 @@ namespace alaska {
   //
   // This function then returns how many objects it moved
   long SizedPage::compact(void) {
+    // The return value - how many objects this function has moved.
+    long moved_objects = 0;
+    /*
     // If there's nothing to do, early return.
     // TODO: threshold this.
     if (live_objects == capacity) return 0;
@@ -123,8 +98,6 @@ namespace alaska {
     // the allocated objects.
     allocator.reset_free_list();
 
-    // The return value - how many objects this function has moved.
-    long moved_objects = 0;
 
     // A pointer which tracks the last object in the heap. We have this
     // in the event of a pinned object, P:
@@ -214,36 +187,13 @@ namespace alaska {
     allocator.reset_bump_allocator(after_heap);
 
 
+    */
     return moved_objects;
   }
 
-
-  void SizedPage::get_byte_statistics(long *count_zero, long *count_total, long *hist) {
-    long left = 0;
-    long right = capacity - 1;
-
-
-    for (long cur = left; cur < capacity - 1; cur++) {
-      auto *header = ind_to_header(left);
-      uint8_t *data = reinterpret_cast<uint8_t *>(ind_to_object(left));
-      if (header->is_free()) continue;
-
-      *count_total += object_size;
-
-      for (size_t i = 0; i < this->object_size - header->size_slack; i++) {
-        hist[data[i]]++;
-        if (data[i] == 0x00) {
-          (*count_zero)++;
-        }
-      }
-    }
-  }
-
-
-
-  void SizedPage::validate(void) {}
-
   long SizedPage::jumble(void) {
+    return 0;
+#if 0
     char buf[this->object_size];  // BAD
 
     // Simple two finger walk to swap every allocation
@@ -301,50 +251,9 @@ namespace alaska {
     }
 
     return swapped;
+#endif
   }
 
 
-  void SizedPage::dump_html(FILE *stream) {
-    fprintf(stream, "<td>SizedPage(%zu)</td>", this->object_size);
-
-    fprintf(stream, "<td class='heapdata'>");
-    enum state {
-      unknown,
-      allocated,
-      freed,
-    };
-    state last_state = unknown;
-    size_t objects = 0;
-    for (long i = 0; true; i++) {
-      auto *h = ind_to_header(i);
-      state curstate = h->is_free() ? freed : allocated;
-      bool print = false;
-
-      if (last_state != unknown and curstate != last_state) print = true;
-      if (i == capacity - 1) print = true;
-
-      if (print) {
-        fprintf(stream, "<div class='el %s' style='width: %lupx'>",
-            last_state == freed ? "fr" : "al", objects);
-        fprintf(stream, "</div>");
-        objects = 0;
-      }
-
-      last_state = curstate;
-      objects++;
-
-      if (i == capacity - 1) {
-        break;
-      }
-    }
-
-    fprintf(stream, "</td>");
-  }
-
-
-  void SizedPage::dump_json(FILE *stream) {
-    fprintf(stream, "{\"name\": \"SizedPage\", \"object_size\": %zu, \"avail\": %zu}", object_size,
-        this->available());
-  }
 
 }  // namespace alaska

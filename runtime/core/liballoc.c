@@ -6,8 +6,8 @@
 
 #define VERSION "1.1"
 #define ALIGNMENT \
-  16ul  // 4ul				///< This is the byte alignment that memory must be allocated on. IMPORTANT for
-        // GTK and other stuff.
+  16ul  // 4ul				///< This is the byte alignment that memory must be allocated on. IMPORTANT
+        // for GTK and other stuff.
 
 #define ALIGN_TYPE char  /// unsigned char[16] /// unsigned short
 #define ALIGN_INFO \
@@ -95,7 +95,8 @@ static int liballoc_unlock() {
  * \return A pointer to the allocated memory.
  */
 static void *liballoc_alloc(size_t page_count) {
-  void *p = mmap(NULL, 4096 * page_count, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+  void *p =
+      mmap(NULL, 4096 * page_count, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
   return p;
 }
 
@@ -606,6 +607,20 @@ void *PREFIX(malloc)(size_t req_size) {
   return NULL;
 }
 
+
+int PREFIX(is_managed)(void *p) {
+  void *ptr;
+  struct liballoc_minor *min;
+
+  // Unalign the pointer if required.
+  ptr = p;
+  UNALIGN(ptr);
+
+  int managed = 1;
+
+  min = (struct liballoc_minor *)((uintptr_t)ptr - sizeof(struct liballoc_minor));
+  return min->magic == LIBALLOC_MAGIC;
+}
 
 
 long PREFIX(size_of)(void *p) {

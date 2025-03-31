@@ -11,6 +11,7 @@
 
 #pragma once
 
+#include <alaska/ObjectHeader.hpp>
 #include <alaska/HeapPage.hpp>
 #include <alaska/SizeClass.hpp>
 #include <alaska/ShardedFreeList.hpp>
@@ -29,18 +30,12 @@ namespace alaska {
     void *alloc(const alaska::Mapping &m, alaska::AlignedSize size) override;
     bool release_local(const alaska::Mapping &m, void *ptr) override;
     bool release_remote(const alaska::Mapping &m, void *ptr) override;
-    size_t size_of(void *ptr) override;
 
     // How many free slots are there? (We return an estimate!)
     inline long available(void) { return this->allocator.num_free(); }
-
-
     void set_size_class(int cls);
     int get_size_class(void) const { return size_class; }
     size_t get_object_size(void) const { return object_size; }
-
-    void dump_html(FILE *stream) override;
-    void dump_json(FILE *stream) override;
 
 
     // Compact the page.
@@ -51,53 +46,29 @@ namespace alaska {
     long jumble(void);
 
     long object_capacity(void) const { return this->capacity; }
-
-    // Count the number of zero bytes in the page (objects only, not headers)
-    void get_byte_statistics(long *count_zero, long *count_total, long *hist);
-
-
     auto get_rates(TimeCache &tc) { return allocator.get_rates(tc); }
 
    private:
-    struct Header {
-      uint64_t _mapping : (64 - ALASKA_SIZE_BITS);
-      uint32_t size_slack : ALASKA_SIZE_BITS;
-
-      inline void set_mapping(alaska::Mapping *m) { _mapping = (uint64_t)m / 8; }
-      inline auto get_mapping(void) const { return (alaska::Mapping *)((uint64_t)(_mapping)*8); }
-      inline bool is_free(void) const { return get_mapping() == NULL; }
-    };
-
-    long header_to_ind(Header *h);
-    Header *ind_to_header(long oid);
-    long object_to_ind(void *ob);
-    void *ind_to_object(long oid);
-
     ////////////////////////////////////////////////
 
     int size_class;      // The size class of this page
     size_t object_size;  // The byte size of the size class of this page (saves a load)
-    Header *headers;     // The start of the headers
-    void *objects;
-    long capacity;
-    long live_objects;
+    long capacity;       // how many objects + headers fit into this page
+    long live_objects;   // how many live objects are allocated
 
     SizedAllocator allocator;
+
+    ObjectHeader *ind_to_header(long ind) {
+      size_t real_size = object_size + sizeof(ObjectHeader);
+      return (ObjectHeader *)((char *)this->memory + (ind * real_size));
+    }
+
+    long header_to_ind(ObjectHeader *h) {
+      size_t real_size = object_size + sizeof(ObjectHeader);
+      return ((char *)h - (char *)this->memory) / real_size;
+    }
   };
 
 
-  inline size_t SizedPage::size_of(void *ptr) {
-    long ind = object_to_ind(ptr);
-    auto h = ind_to_header(ind);
-    return this->object_size - h->size_slack;
-  }
-  inline long SizedPage::header_to_ind(Header *h) { return (h - headers); }
-  inline SizedPage::Header *SizedPage::ind_to_header(long oid) { return headers + oid; }
-  inline long SizedPage::object_to_ind(void *ob) {
-    return ((uintptr_t)ob - (uintptr_t)objects) / this->object_size;
-  }
-  inline void *SizedPage::ind_to_object(long oid) {
-    return (void *)((uintptr_t)objects + oid * this->object_size);
-  }
 
 }  // namespace alaska

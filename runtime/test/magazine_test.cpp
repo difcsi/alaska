@@ -14,12 +14,11 @@
 
 
 class MockHeapPage : public alaska::HeapPage {
-public:
+ public:
   using HeapPage::HeapPage;
   ~MockHeapPage(void) override {}
   MOCK_METHOD(void*, alloc, (const alaska::Mapping& m, alaska::AlignedSize size), (override));
   MOCK_METHOD(bool, release_local, (const alaska::Mapping& m, void* ptr), (override));
-  MOCK_METHOD(size_t, size_of, (void* ptr), (override));
 };
 
 class MagazineTest : public ::testing::Test {
@@ -30,9 +29,7 @@ class MagazineTest : public ::testing::Test {
   }
   void TearDown() override {}
 
-  MockHeapPage* new_page(void) {
-    return new MockHeapPage(nullptr);
-  }
+  MockHeapPage* new_page(void) { return new MockHeapPage(nullptr); }
 
   alaska::Magazine<MockHeapPage> mag;
 };
@@ -67,7 +64,7 @@ TEST_F(MagazineTest, AddRemove) {
   MockHeapPage* page = new_page();
   mag.add(page);
 
-  MockHeapPage *popped = mag.pop();
+  MockHeapPage* popped = mag.pop();
   ASSERT_EQ(page, popped);
 }
 
@@ -81,7 +78,7 @@ TEST_F(MagazineTest, AddTwoRemoveOne) {
 
 
   mag.remove(page2);
-  MockHeapPage *popped = mag.pop();
+  MockHeapPage* popped = mag.pop();
 
   ASSERT_EQ(0, mag.size());
   ASSERT_EQ(page1, popped);
@@ -93,7 +90,7 @@ TEST_F(MagazineTest, AddTwoRemoveOnePop) {
   MockHeapPage* page2 = new_page();
   mag.add(page1);
   mag.add(page2);
-  MockHeapPage *popped = mag.pop();
+  MockHeapPage* popped = mag.pop();
 
   ASSERT_EQ(page1, popped);
 }

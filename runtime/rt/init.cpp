@@ -17,7 +17,6 @@
 #include <alaska/Runtime.hpp>
 #include <alaska/alaska.hpp>
 #include <alaska/rt/barrier.hpp>
-#include "alaska/ObjectReference.hpp"
 #include "alaska/SizeClass.hpp"
 #include <pthread.h>
 #include <stdio.h>
@@ -134,25 +133,6 @@ static void *barrier_thread_func(void *) {
 }
 
 void __attribute__((constructor(102))) alaska_init(void) {
-  // char type_buf[256];
-  // printf("/// %8s, %8s, %32s\n", "class", "size", "page type");
-  // for (int i = 0; i < alaska::num_size_classes; i++) {
-  //   size_t size = alaska::class_to_size(i);
-
-  //   if (size > 80) {
-  //     snprintf(type_buf, sizeof type_buf, "alaska::SizedPage");
-  //   } else {
-  //     size_t per_entry = 256 / size;
-  //     size_t blk_size = size * per_entry;
-
-  //     snprintf(type_buf, sizeof type_buf, "alaska::ConjoinedPage<%zu, %2zu> /* %zu %zu */", size,
-  //     per_entry, blk_size, blk_size / 16);
-  //   }
-
-  //   printf("_SC(%8d, %8zu, %32s)\n", i, size, type_buf);
-  // }
-  // exit(-1);
-
   // Allocate the runtime simply by creating a new instance of it. Everywhere
   // we use it, we will use alaska::Runtime::get() to get the singleton instance.
   the_runtime = new alaska::Runtime();

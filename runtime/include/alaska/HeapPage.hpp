@@ -82,8 +82,6 @@ namespace alaska {
     virtual void* alloc(const Mapping& m, AlignedSize size);
     virtual bool release_local(const Mapping& m, void* ptr) = 0;
     virtual bool release_remote(const Mapping& m, void* ptr) { return release_local(m, ptr); }
-    // return the size of an object
-    virtual size_t size_of(void* ptr) = 0;
     virtual bool should_localize_from(uint64_t current_epoch) const { return true; }
     inline bool contains(void* ptr) const;
 

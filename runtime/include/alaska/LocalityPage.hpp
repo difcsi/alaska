@@ -11,12 +11,13 @@
 
 #pragma once
 
+#include <ck/vec.h>
 #include <stdlib.h>
-#include <math.h>
 #include <stdint.h>
 #include <alaska/alaska.hpp>
 #include <alaska/Logger.hpp>
 #include <alaska/HeapPage.hpp>
+#include <alaska/SizedAllocator.hpp>
 
 namespace alaska {
 
@@ -32,7 +33,7 @@ namespace alaska {
    */
 
   // The power-of-two of a locality slab
-  static constexpr uint64_t locality_slab_shift_factor = 13;  //
+  static constexpr uint64_t locality_slab_shift_factor = 13;
   // How many bytes are in a locality slab
   static constexpr uint64_t locality_slab_size = 1 << locality_slab_shift_factor;
   // How many slabs are in a locality page
@@ -51,27 +52,29 @@ namespace alaska {
    * so it's important to keep it small to maximize the number of objects that can
    * be allocated from the slab.
    */
-  struct LocalitySlab final {
-    size_t bump_size = 0;  // How many bytes have been allocated in this slab
-    size_t freed = 0;      // how many bytes have been freed.
+  struct LocalitySlab final : public alaska::InternalHeapAllocated {
+    size_t bump_size = 0;        // How many bytes have been allocated in this slab
+    size_t freed = 0;            // how many bytes have been freed.
+    struct list_head slab_list;  // TODO: don't track like this.
     uint8_t data[0];
 
 
-    struct Metadata {
-      uint16_t size : 16;  // Size of the object in bytes.
-      uint64_t hid : 48;   // The handle ID
-      char data[0];
-    } __attribute__((packed));
-
-    static_assert(sizeof(Metadata) == 8);
-    void *alloc(size_t size, alaska::Mapping &m);
+    void init(void) {
+      bump_size = 0;
+      freed = 0;
+      slab_list = LIST_HEAD_INIT(slab_list);
+    }
+    void *alloc(size_t size, const alaska::Mapping &m);
     void free(void *ptr);
     inline void *start(void) const { return (void *)((uintptr_t)this); }
     inline void *end(void) const { return (void *)((uintptr_t)this + locality_slab_size); }
     inline size_t available(void) const {
-      return (uintptr_t)end() - (uintptr_t)start() - bump_size;
+      return (uintptr_t)end() - ((uintptr_t)start() + bump_size);
     }
     size_t get_size(void *ptr);  // must be the poitner to the start of the data.
+
+    float fragmentation(void) { return (float)freed / (float)bump_size; }
+    float utilization(void) { return (float)(bump_size - freed) / (float)locality_slab_size; }
   };
 
   // A locality page is meant to strictly bump allocate objects of variable size in order
@@ -80,78 +83,54 @@ namespace alaska {
   // care about freeing or re-using the memory occupied by them when they are gone.
   class LocalityPage final : public alaska::HeapPage {
    public:
-    struct Metadata {
-      union {
-        alaska::Mapping *mapping;
-        void *data_raw;
-      };
-      bool allocated;
-      uint32_t size;
-
-      void *get_data(void) const {
-        if (not allocated) return data_raw;
-        return mapping->get_pointer();
-      }
-    };
-
     LocalityPage(void *backing_memory)
         : alaska::HeapPage(backing_memory) {
-      data = backing_memory;
-      data_bump_next = data;
-      md_bump_next = get_md(0);
+      locality_slab_allocator.configure(backing_memory, locality_slab_size, locality_slabs);
+    }
+
+    size_t available(void) {
+      size_t remaining_in_current_slab = current_slab == NULL ? 0 : current_slab->available();
+      return locality_slab_allocator.num_free() * locality_slab_size + remaining_in_current_slab;
+    }
+
+
+    LocalitySlab *get_slab(void *ptr) {
+      off_t offset = (uintptr_t)ptr - (uintptr_t)this->memory;
+
+      // now we have an offset within the page, we can grab the slab easily
+      return (LocalitySlab *)((uintptr_t)this->memory + (offset & ~(locality_slab_size - 1)));
     }
 
     ~LocalityPage() override;
 
     void *alloc(const alaska::Mapping &m, alaska::AlignedSize size) override;
     bool release_local(const alaska::Mapping &m, void *ptr) override;
-    size_t size_of(void *) override;
-    inline size_t available() const { return get_free_space() - sizeof(Metadata); }
 
 
-    void dump_html(FILE *stream) override;
-    void dump_json(FILE *stream) override;
-
-    bool should_localize_from(uint64_t current_epoch) const override {
-      return false;
-      return current_epoch - last_localization_epoch > localization_epoch_hysteresis;
+    // TODO: TEMPORARY
+    struct list_head slab_list_head = LIST_HEAD_INIT(slab_list_head);
+    template <typename T>
+    void for_each_slab(T &&fn) {
+      struct list_head *pos;
+      list_for_each(pos, &slab_list_head) {
+        auto *slab = list_entry(pos, LocalitySlab, slab_list);
+        fn(slab);
+      }
     }
-
-
-    inline size_t heap_size(void) const { return (uint64_t)data_bump_next - (uint64_t)data; }
-
-    inline float utilization(void) const {
-      auto heap_bytes = heap_size();
-      return (heap_bytes - bytes_freed) / (float)heap_bytes;
-    }
-
-
-    size_t compact(void);
 
    private:
-    Metadata *find_md(void *ptr);
-    inline Metadata *get_md(uint32_t offset) {
-      return (Metadata *)((uintptr_t)data + page_size) - (offset + 1);
+    LocalitySlab *allocate_slab(void) {
+      auto *slab = (LocalitySlab *)locality_slab_allocator.alloc();
+      if (slab == nullptr) {
+        return nullptr;
+      }
+
+      slab->init();
+      // TODO: TEMPORARY
+      list_add(&slab->slab_list, &slab_list_head);
+      return slab;
     }
-
-    inline void *get_ptr(uint32_t index) { return get_md(index)->get_data(); }
-
-    inline int num_allocated(void) { return get_md(0) - (md_bump_next); }
-
-    inline size_t get_free_space() const { return (off_t)md_bump_next - (off_t)data_bump_next; }
-    inline size_t used_space() const { return (off_t)data_bump_next - (off_t)data; }
-
-
-
-    void *data = nullptr;
-    void *data_bump_next = nullptr;
-    Metadata *md_bump_next = nullptr;
-    uint64_t bytes_freed = 0;
-
-   public:
-    uint64_t last_localization_epoch = 0;
-    uint64_t localization_epoch_hysteresis = 10;
-
-    LocalitySlab slabs[locality_slabs];
+    LocalitySlab *current_slab = nullptr;
+    SizedAllocator locality_slab_allocator;
   };
 };  // namespace alaska

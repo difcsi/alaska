@@ -94,20 +94,19 @@ namespace alaska {
     // locality. This function takes a list of ordered mappings and lays them out contiguously
     // in memory and the mappings are updated to point to their new locations.
     // This function is called from the Localizer class.
-    LocalizationResult localize(alaska::Mapping **mappings, size_t count);
-
+    LocalizationResult localize(alaska::handle_id_t *hids, size_t count);
+    static constexpr uint64_t hotness_hist_size = 1 << 6;
+    uint64_t localization_epoch = 0;
+    uint64_t hotness_hist[hotness_hist_size] = {0};
+    long localize(alaska::Mapping *mapping, long allowed_depth = 0);
 
     // Allocate a new handle table mapping
     alaska::Mapping *new_mapping(void);
     void free_mapping(alaska::Mapping *);
 
-
-
-
    private:
     // Allocate backing data for a handle, but don't assign it yet.
     void *allocate_backing_data(const alaska::Mapping &m, size_t size);
-
     // Free an allocation behind a handle, but not the handle
     void free_allocation(const alaska::Mapping &m);
 
