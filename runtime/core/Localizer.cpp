@@ -42,50 +42,58 @@ namespace alaska {
 
   void Localizer::feed_hotness_buffer(size_t count, handle_id_t *handle_ids) {
     ALASKA_ASSERT(expected_count == count, "Localizer count mismatch");
-    // auto start = alaska_timestamp();
 
     auto &rt = alaska::Runtime::get();
 
-    unsigned long moved_objects = 0;
-    unsigned long unmoved_objects = 0;
-    unsigned long bytes_in_dump = 0;
+    dumps_recorded++;
 
-    // size_t htlb_reach = 0;
-    // size_t used_pages = 0;
-    // uintptr_t pageset[count];
-    // lphashset_init(pageset, count);
+    for (size_t i = 0; i < count; i++) {
+      if (handle_ids[i] == 0) continue;
+      auto *m = Mapping::from_handle_id(handle_ids[i]);
+      void *data = m->get_pointer();
+      if (data == nullptr) continue;
+      auto header = ObjectHeader::from(m);
+      // An already localized object should not be double localized (yet)
+      if (header->localized) continue;
+      if (header->hotness < 0b111'111) header->hotness++;
+    }
+
+    if (dumps_recorded > 250) {
+      dumps_recorded = 0;
+      auto &ht = rt.handle_table;
+      constexpr bool enable_scanning = true;
+
+      int hot_cutoff = 2;
+
+      uint64_t total_handles = 0;
+      uint64_t total_hotness = 0;
+      uint64_t scanned_hot = 0;
+      uint64_t handles_seen_in_dump = 0;
+
+      auto slabs = ht.get_slabs();
+      for (auto *slab : slabs) {
+        for (auto *allocated : slab->allocator) {
+          auto *m = (alaska::Mapping *)allocated;
+          if (m->get_pointer() == nullptr) continue;
+          auto header = alaska::ObjectHeader::from(m->get_pointer());
+          total_handles++;
+          total_hotness += header->hotness;
+          if (header->hotness != 0) {
+            handles_seen_in_dump++;
+          }
+
+          if (header->hotness > hot_cutoff) {
+            scanned_hot++;
+          }
+        }
+      }
 
 
-    // // first, compute utilization
-    // for (size_t i = 0; i < count; i++) {
-    //   auto hid = handle_ids[i];
-    //   if (hid == 0) continue;
-    //   auto handle = reinterpret_cast<void *>((1LU << 63) | ((uint64_t)hid << ALASKA_SIZE_BITS));
-    //   auto *m = alaska::Mapping::from_handle(handle);
-    //   if (m->get_pointer() == NULL) continue;
-    //   auto size = tc.get_size(handle);
-    //   htlb_reach += size;
 
-    //   if (lphashset_insert(pageset, count, (uint64_t)m->get_pointer() >> 12)) {
-    //     used_pages++;
-    //   }
-    // }
-
-
-    // size_t required_pages = (htlb_reach + 4096 - 1) / 4096;
-    // if (used_pages == 0) used_pages = 1;
-    // float utilization = required_pages / (float)used_pages;
-    // float util_after = utilization;
-
-    auto res = tc.localize(handle_ids, count);
-    // auto end = alaska_timestamp();
-
-    // printf("[loc] time: %8.3fus\n", (end - start) / 1000.0);
-
-    // printf("[loc] required: %12zu, used: %12zu, util: %.4f -> %.4f, moved: %3d, time: %8.3fus\n",
-    //     required_pages, used_pages, utilization, util_after, moved_objects, (end - start) /
-    //     1000.0);
-
+      alaska::printf("hot handles: %6zu, average:%4.2f, seen:%5.1f%%\n", scanned_hot,
+          total_hotness / (float)total_handles,
+          handles_seen_in_dump > 0 ? 100.0 * (float)scanned_hot / (float)handles_seen_in_dump : 0.0f);
+    }
 
     // Push the buffer back to the queue of buffers
     struct buffer *buf = reinterpret_cast<struct buffer *>(handle_ids);

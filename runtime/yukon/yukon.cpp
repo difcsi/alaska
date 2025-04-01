@@ -9,7 +9,7 @@
  * and modify it as specified in the file "LICENSE".
  */
 
-
+#include <math.h>
 #include <dlfcn.h>
 #include <alaska/alaska.hpp>
 #include <alaska/utils.h>
@@ -47,24 +47,17 @@ static inline uint64_t read_instret() {
   return instret;
 }
 
-
-
-// static inline uint64_t read_csr() {
-//   uint64_t cycles;
-//   asm volatile("rdcycle %0" : "=r"(cycles));
-//   return cycles;
-// }
-
 static inline uint64_t read_cycle_counter() {
   uint64_t cycles;
   asm volatile("rdcycle %0" : "=r"(cycles));
   return cycles;
 }
 
-
-static uint64_t instructions_in_runtime = 0;
-
-
+static inline uint64_t read_l2_tlb_accesses(void) {
+  uint64_t tlb_misses;
+  asm volatile("csrr %0, 0xc6" : "=r"(tlb_misses));
+  return tlb_misses;
+}
 
 
 #define wait_for_csr_zero(reg)         \
@@ -81,10 +74,11 @@ static uint64_t instructions_in_runtime = 0;
 #define CSR_HTINVAL 0xc4
 
 
+static uint64_t instructions_in_runtime = 0;
 static thread_local alaska::ThreadCache *tc = NULL;
 static alaska::ThreadCache *dump_tc = NULL;
 static alaska::Runtime *the_runtime = NULL;
-static uint64_t yukon_dump_interval = 10000;  // microseconds
+static uint64_t yukon_mean_dump_interval = 10000;  // microseconds
 
 
 static void yukon_signal_handler(int sig, siginfo_t *info, void *ucontext) {
@@ -133,8 +127,41 @@ static long localizations = 0;
 static alaska::RateCounter immediate_localizations;
 static alaska::RateCounter delayed_localizations;
 
+
+
+// Generate exponentially distributed random number with the given mean
+// result is in us for use with itimer
+static uint64_t exp_rand(uint64_t mean_us) {
+  return mean_us;
+  double u = drand48();
+
+  // u = [0,1), uniform random, now convert to exponential
+  u = -log(1.0 - u) * ((double)mean_us);
+
+  // now shape u back into a uint64_t and return
+  uint64_t ret = 0;
+  if (u > ((double)(-1ULL))) {
+    ret = -1ULL;
+  } else {
+    ret = (uint64_t)u;
+  }
+
+  // corner case
+  if (ret == 0) {
+    ret = 1;
+  }
+
+  return ret;
+}
+
 static void schedule_localization(uint64_t interval_override = 0) {
-  uint64_t interval = interval_override != 0 ? interval_override : yukon_dump_interval;
+  uint64_t interval =
+      interval_override != 0 ? interval_override : exp_rand(yukon_mean_dump_interval);
+
+  // Apply a minimum interval for safety (or something)
+  constexpr uint64_t min_interval = 20;
+  if (interval < min_interval) interval = min_interval;
+
   // schedule the next dump in the future!
   if ((long)ualarm(interval, 0) == -1) {
     perror("Failed to setup ualarm for dumping");
@@ -229,8 +256,10 @@ static void setup_signal_handlers(void) {
 
 
 static int alaska_fd = -1;
-
 static unsigned long last_dump_cycle = 0;
+
+static uint64_t last_dump_instret = 0;
+static uint64_t last_dump_misses = 0;
 
 namespace yukon {
   void set_handle_table_base(void *addr) {
@@ -260,33 +289,44 @@ namespace yukon {
       int r = read(alaska_fd, space, size * sizeof(alaska::handle_id_t));
       tc->localizer.feed_hotness_buffer(size, space);
 
+      if (false) {
+#if 0
+        uint64_t current_instret = read_instret();
+        uint64_t current_misses = read_l2_tlb_accesses();
 
-      auto &ht = rt.handle_table;
-      if (localization_count++ % 50 == 0) {
-        int hot_cutoff = 8;
+        uint64_t instret_delta = current_instret - last_dump_instret;
+        uint64_t misses_delta = current_misses - last_dump_misses;
+
+
+
         size_t hot_bytes = 0;
         size_t cold_bytes = 0;
+        size_t hot_handles = 0;
+        size_t cold_handles = 0;
 
         size_t total_heap_sw_pages = rt.heap.pm.get_allocated_page_count();
         size_t total_heap_hw_pages = total_heap_sw_pages * (alaska::page_size / 4096);
+
+        // uint64_t misses = read_csr
 
 
         size_t hot_pages = 0;
         uint8_t hot_page_bitmap[total_heap_hw_pages / 8];
         memset(hot_page_bitmap, 0, total_heap_hw_pages / 8);
-
         auto track_hot_page = [&](uintptr_t page) {
           // page is an absolute page. we need to offset it by the start of the heap
           uintptr_t heap_start_page = (uintptr_t)rt.heap.pm.get_start() >> 12;
           page -= heap_start_page;  // here we are hoping the pointer is valid!
-
-
-          // if the page is already set, do nothing. otherwise, incrememt hot_pages and set the bit
+          // if the page is already set, do nothing. otherwise, incrememt hot_pages and set the
+          // bit
           if (hot_page_bitmap[page / 8] & (1 << (page % 8))) return;
           hot_pages++;
           hot_page_bitmap[page / 8] |= (1 << (page % 8));
         };
 
+        size_t total_handles = 0;
+
+        auto start = alaska_timestamp();
         auto slabs = ht.get_slabs();
         for (auto *slab : slabs) {
           for (auto *allocated : slab->allocator) {
@@ -294,39 +334,44 @@ namespace yukon {
             if (m->get_pointer() == nullptr) continue;
             uintptr_t page = (uintptr_t)m->get_pointer() >> 12;
             auto header = alaska::ObjectHeader::from(m->get_pointer());
+            total_handles++;
             if (header->hotness > hot_cutoff) {
               track_hot_page(page);
+              hot_handles++;
               hot_bytes += header->object_size();
+              tc->localize(m, 0);  // localize the hot object!
+            } else {
+              cold_handles++;
+              cold_bytes += header->object_size();
             }
           }
         }
+        auto end = alaska_timestamp();
 
-        auto total_bytes = hot_bytes + cold_bytes;
+        // auto total_bytes = hot_bytes + cold_bytes;
         auto pages_needed_for_hot_objects = round_up(hot_bytes, 4096) / 4096;
         float hot_utilization = pages_needed_for_hot_objects / (float)hot_pages;
-        size_t cold_pages = total_heap_hw_pages - hot_pages;
+        // size_t cold_pages = total_heap_hw_pages - hot_pages;
+        auto mpki = (float)misses_delta / (float)(instret_delta / 1000);
 
         alaska::printf(
-            "[dump %5zu] hot/cold pages: %5zu(%4zu needed %5f)/%5zu | hot/cold bytes: "
-            "%12zu/%12zu\n",
-            localization_count, hot_pages, pages_needed_for_hot_objects, hot_utilization,
-            cold_pages, hot_bytes, cold_bytes);
+            "[dump %5zu] scan time: %8.2fus, handles:%12zu, hot/cold bytes: %12zu/%12zu "
+            "(%zu/%zu) | pages: %4zu util: %6.4f | mpki: %8.2f\n",
+            localization_count, (end - start) / 1000.0, total_handles, hot_bytes, cold_bytes,
+            hot_handles, cold_handles, hot_pages, hot_utilization, mpki);
+
+
+        last_dump_instret = read_instret();
+        last_dump_misses = read_l2_tlb_accesses();
+
+        // alaska::printf(
+        //     "[dump %5zu] hot/cold pages: %5zu(%4zu needed %5f)/%5zu | hot/cold bytes: "
+        //     "%12zu/%12zu\n",
+        //     localization_count, hot_pages, pages_needed_for_hot_objects, hot_utilization,
+        //     cold_pages, hot_bytes, cold_bytes);
+#endif
       }
     });
-  }
-
-
-  void print_htlb(void) {
-    size_t size = 576;
-    uint64_t handle_ids[size];
-    memset(handle_ids, 0, size * sizeof(alaska::handle_id_t));
-
-    asm volatile("fence" ::: "memory");
-    write_csr(CSR_HTDUMP, (uint64_t)handle_ids);
-    wait_for_csr_zero(CSR_HTDUMP);
-    asm volatile("fence" ::: "memory");
-
-    printf("========================\n");
   }
 
   alaska::ThreadCache *get_tc() {
@@ -369,8 +414,17 @@ namespace yukon {
     if (getenv("NODUMP") == nullptr) {
       signal(SIGALRM, alarm_handler);
 
-      yukon_dump_interval = 5 * 1000;
-      // Schedule the first dump for 50ms from now.
+      if (getenv("YUKON_DIMS") != nullptr) {
+        yukon_mean_dump_interval = atol(getenv("YUKON_DIMS")) * 1000;
+      } else if (getenv("YUKON_DIUS") != nullptr) {
+        yukon_mean_dump_interval = atol(getenv("YUKON_DIUS"));
+      } else {
+        yukon_mean_dump_interval = 500;
+      }
+      printf("dump interval %zuus\n", yukon_mean_dump_interval);
+
+      // Schedule the first dump for 50ms from now (just to make sure
+      // initialization is done. This is a Super-Hack)
       schedule_localization(50 * 1000);
     }
   }

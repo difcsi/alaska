@@ -244,11 +244,14 @@ namespace alaska {
       return 0;
     }
 
+
     auto header = alaska::ObjectHeader::from(ptr);
     // Ask the page for the size of the pointer
     auto size = header->object_size();
     // If the size is too large, don't bother
     if (size > alaska::locality_slab_size / 2) return 0;
+
+
 
     // if (header->localized) {
     //   if (header->counter > 0) {
@@ -270,31 +273,12 @@ namespace alaska {
       locality_page = new_locality_page(size + 32);
     }
 
-
+    hotness_hist[header->hotness]--;
     // Now for the actual localization
     memcpy(new_location, ptr, size);       // Copy the data
     source_page->release_remote(*m, ptr);  // Release the old location
     m->set_pointer(new_location);          // Write the new location
     moved_count += 1;
-
-    // TODO: localize one level of pointers?
-    if (allowed_depth > 0) {
-      auto *header = alaska::ObjectHeader::from(new_location);
-      auto *ptr = (void **)new_location;
-      size_t scan_size = 128;
-      if (size < scan_size) scan_size = size;
-      auto *end = (void **)((char *)ptr + scan_size);
-      while (ptr < end) {
-        auto *p = *ptr;
-        if (p != nullptr) {
-          auto *m = alaska::Mapping::from_handle_safe(p);
-          if (m != nullptr) {
-            moved_count += localize(m, allowed_depth - 1);
-          }
-        }
-        ptr++;
-      }
-    }
 
     return moved_count;
   }
@@ -305,6 +289,10 @@ namespace alaska {
     if (data == nullptr) return 0;
 
     auto header = ObjectHeader::from(m);
+
+    // An already localized object should not be double localized (yet)
+    if (header->localized) return 0;
+
     if (header->hotness < 0b111'111) {
       if (header->hotness != 0) {
         hotness_hist[header->hotness]--;
@@ -313,38 +301,13 @@ namespace alaska {
       hotness_hist[header->hotness]++;
     }
 
-
-    if (allowed_depth > 0) {
-      auto *ptr = (void **)header->data();
-      size_t size = header->object_size();
-      size_t scan_size = 128;
-      if (size < scan_size) scan_size = size;
-      auto *end = (void **)((char *)ptr + scan_size);
-      while (ptr < end) {
-        auto *p = *ptr;
-        if (p != nullptr) {
-          auto *m = alaska::Mapping::from_handle_safe(p);
-          if (m) {
-            record_hotness(m, hotness_hist, allowed_depth - 1);
-          }
-        }
-      }
-    }
-
     return 1;
   }
 
   ThreadCache::LocalizationResult ThreadCache::localize(alaska::handle_id_t *hids, size_t count) {
     LocalizationResult res;
     res.count = 0;  // We haven't localized anything yet.
-
     long seen = 0;
-
-
-    // return res;
-
-
-
 
     uintptr_t pages[count];
     lphashset_init(pages, count);
@@ -362,35 +325,9 @@ namespace alaska {
       record_hotness(m, hotness_hist, 0);
     }
 
-#if 0
-    if (localization_epoch == 0) {
-      alaska::printf("LCLZ trial,hotness,count\n");
-    }
-    if (localization_epoch != 0 && (localization_epoch % 10) == 0) {
-      size_t buckets = 1;
-      for (size_t i = 0; i < hotness_hist_size; i += buckets) {
-        uint64_t bucket_sum = 0;
-        for (size_t j = 0; j < buckets; j++) {
-          bucket_sum += hotness_hist[i + j];
-        }
-        printf("LCLZ %zu,%zu,%zu\n", localization_epoch, i / buckets, bucket_sum);
-      }
-    }
-
-
-    // if (localization_epoch == 0) {
-    //   alaska::printf("LCLZ trial,page,accessed\n");
-    // }
-    // if (localization_epoch != 0 && (localization_epoch % 10) == 0) {
-    //   for (size_t i = 0; i < count; i++) {
-    //     if (pages[i] == 0xFFFFFFFFFFFFFFFFUL) continue;
-    //     printf("LCLZ %zu,%zu,1\n", localization_epoch, pages[i]);
-    //   }
-    //   //   printf("LCLZ %zu,%zu,%zu\n", localization_epoch, i / buckets, bucket_sum);
-    //   // }
-    // }
-#endif
     localization_epoch++;
+
+
 
 
     return res;

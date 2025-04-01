@@ -30,10 +30,10 @@ namespace alaska {
     struct buffer {
       struct buffer *next;
     };
-
     struct buffer *buffers = nullptr;
 
-    ck::set<handle_id_t> seen_handles;
+    uint64_t dumps_recorded = 0;
+
 
    public:
     Localizer(alaska::Configuration &config, alaska::ThreadCache &tc);
