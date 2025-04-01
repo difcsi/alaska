@@ -85,12 +85,12 @@ namespace alaska {
    public:
     LocalityPage(void *backing_memory)
         : alaska::HeapPage(backing_memory) {
-      locality_slab_allocator.configure(backing_memory, locality_slab_size, locality_slabs);
+      next_slab = 0;
     }
 
     size_t available(void) {
       size_t remaining_in_current_slab = current_slab == NULL ? 0 : current_slab->available();
-      return locality_slab_allocator.num_free() * locality_slab_size + remaining_in_current_slab;
+      return (locality_slabs - next_slab) * locality_slab_size + remaining_in_current_slab;
     }
 
 
@@ -120,17 +120,19 @@ namespace alaska {
 
    private:
     LocalitySlab *allocate_slab(void) {
-      auto *slab = (LocalitySlab *)locality_slab_allocator.alloc();
-      if (slab == nullptr) {
+      if (next_slab == locality_slabs) {
         return nullptr;
       }
 
+      auto *slab = (LocalitySlab *)((uintptr_t)this->memory + next_slab * locality_slab_size);
+      next_slab++;
       slab->init();
       // TODO: TEMPORARY
       list_add(&slab->slab_list, &slab_list_head);
       return slab;
     }
+
+    long next_slab = 0;
     LocalitySlab *current_slab = nullptr;
-    SizedAllocator locality_slab_allocator;
   };
 };  // namespace alaska
