@@ -16,6 +16,9 @@
 #include <string.h>
 #include <alaska/Runtime.hpp>
 
+
+#include <execinfo.h>
+
 void alaska_dump_backtrace() {
   FILE *stream = fopen("/proc/self/maps", "r");
 
@@ -27,11 +30,27 @@ void alaska_dump_backtrace() {
 
   fclose(stream);
 
+  void *buffer[50];                   // Buffer to store backtrace addresses
+  int nptrs = backtrace(buffer, 50);  // Get backtrace addresses
+
+  // Convert addresses to function names
+  char **symbols = backtrace_symbols(buffer, nptrs);
+  if (symbols == NULL) {
+    perror("backtrace_symbols");
+    exit(EXIT_FAILURE);
+  }
+
+  printf("Backtrace:\n");
+  for (int i = 0; i < nptrs; i++) {
+    printf("%s\n", symbols[i]);
+  }
+
+  free(symbols);  // Free memory allocated by backtrace_symbols
+
 
   auto *rt = alaska::Runtime::get_ptr();
   if (rt) {
     fprintf(stderr, "Heap dump:\n");
     rt->heap.dump_json(stderr);
   }
-
 }
