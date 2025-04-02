@@ -21,7 +21,11 @@ namespace alaska {
 
 
   Localizer::Localizer(alaska::Configuration &config, alaska::ThreadCache &tc)
-      : tc(tc) {}
+      : tc(tc) {
+    if (getenv("HOT_CUTOFF") != NULL) {
+      this->hotness_cutoff = atoi(getenv("HOT_CUTOFF"));
+    }
+  }
 
   handle_id_t *Localizer::get_hotness_buffer(size_t count) {
     if (expected_count == 0) {
@@ -40,7 +44,8 @@ namespace alaska {
     return reinterpret_cast<handle_id_t *>(buf);
   }
 
-  void Localizer::feed_hotness_buffer(size_t count, handle_id_t *handle_ids) {
+  Localizer::ScanResult Localizer::feed_hotness_buffer(size_t count, handle_id_t *handle_ids) {
+    ScanResult res = {0};
     ALASKA_ASSERT(expected_count == count, "Localizer count mismatch");
 
     auto &rt = alaska::Runtime::get();
@@ -56,14 +61,34 @@ namespace alaska {
       // An already localized object should not be double localized (yet)
       if (header->localized) continue;
       if (header->hotness < 0b111'111) header->hotness++;
+      if (header->hotness == hotness_cutoff) res.new_hot++;  // we found a new hot object!
     }
 
-    if (dumps_recorded > 250) {
+
+    // alaska::printf("YUKONDUMP");
+    // for (size_t i = 0; i < count; i++)
+    //   alaska::printf(" %zu", handle_ids[i]);
+    // alaska::printf("\n");
+
+    if (dumps_recorded > 2) {
+      // dump the connectivity as a graphviz graph
+      // alaska::printf("digraph G {\n");
+      // for (auto &pair : dump_connectivity) {
+      //   auto a = pair.key;
+      //   for (auto &pair2 : pair.value) {
+      //     auto b = pair2.key;
+      //     auto count = pair2.value;
+      //     alaska::printf("N%zu -> N%zu [label=\"%zu\"];\n", a, b, count);
+      //   }
+      // }
+      // alaska::printf("}\n");
+      // dumps_recorded = 0;
+
+
+      /*
       dumps_recorded = 0;
       auto &ht = rt.handle_table;
       constexpr bool enable_scanning = true;
-
-      int hot_cutoff = 2;
 
       uint64_t total_handles = 0;
       uint64_t total_hotness = 0;
@@ -82,7 +107,7 @@ namespace alaska {
             handles_seen_in_dump++;
           }
 
-          if (header->hotness > hot_cutoff) {
+          if (header->hotness > hotness_cutoff) {
             scanned_hot++;
           }
         }
@@ -92,12 +117,16 @@ namespace alaska {
 
       alaska::printf("hot handles: %6zu, average:%4.2f, seen:%5.1f%%\n", scanned_hot,
           total_hotness / (float)total_handles,
-          handles_seen_in_dump > 0 ? 100.0 * (float)scanned_hot / (float)handles_seen_in_dump : 0.0f);
+          handles_seen_in_dump > 0 ? 100.0 * (float)scanned_hot / (float)handles_seen_in_dump
+                                   : 0.0f);
+      */
     }
 
     // Push the buffer back to the queue of buffers
     struct buffer *buf = reinterpret_cast<struct buffer *>(handle_ids);
     buf->next = buffers;
     buffers = buf;
+
+    return res;
   }
 }  // namespace alaska

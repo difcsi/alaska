@@ -25,6 +25,7 @@ namespace alaska {
   class Localizer {
     alaska::ThreadCache &tc;
     size_t expected_count = 0;
+    long hotness_cutoff = 8;
 
 
     struct buffer {
@@ -34,6 +35,8 @@ namespace alaska {
 
     uint64_t dumps_recorded = 0;
 
+    ck::map<handle_id_t, ck::map<handle_id_t, uint64_t>> dump_connectivity;
+
 
    public:
     Localizer(alaska::Configuration &config, alaska::ThreadCache &tc);
@@ -41,7 +44,12 @@ namespace alaska {
     // Get a hotness buffer that can fit `count` handle_ids.
     handle_id_t *get_hotness_buffer(size_t count);
 
+
+    struct ScanResult {
+      long new_hot; // how many new handles were considered hot?
+    };
+
     // Give a hotness buffer back to the localizer, filled with `count` handle ids
-    void feed_hotness_buffer(size_t count, handle_id_t *handle_ids);
+    ScanResult feed_hotness_buffer(size_t count, handle_id_t *handle_ids);
   };
 }  // namespace alaska
