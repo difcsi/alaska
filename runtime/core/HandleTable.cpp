@@ -101,10 +101,6 @@ namespace alaska {
 
 
   void HandleTable::grow() {
-// #ifdef __riscv
-//     fprintf(stderr, "cannot grow handle table yet.\n");
-//     abort();
-// #endif
     auto new_cap = m_capacity * HandleTable::growth_factor;
     // Scale the capacity of the handle table
     log_debug("Growing handle table. New capacity: %lu, old: %lu", new_cap, m_capacity);
@@ -142,11 +138,6 @@ namespace alaska {
 
     // Add the slab to the list of slabs and return it
     m_slabs.push(sl);
-
-// #ifdef __riscv
-//     auto max_handle = (uint64_t)m_slabs.size() * HandleTable::slab_capacity;
-//     __asm__ volatile("csrw 0xc5, %0" ::"rK"(max_handle) : "memory");
-// #endif
 
     return sl;
   }
