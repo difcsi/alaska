@@ -336,6 +336,7 @@ if (ALASKA_ENABLE_TESTING)
     test/htlb_sim_test.cpp
     test/locality_page_test.cpp
     test/barrier_worker.cpp
+    test/arena_test.cpp
 	)
 
 	target_link_libraries(
