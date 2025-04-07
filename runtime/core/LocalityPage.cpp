@@ -13,13 +13,18 @@
 #include <alaska/Heap.hpp>
 
 
+__attribute__((noinline))
+extern "C" void me_abort_yay(void) {
+  //
+}
+
 namespace alaska {
 
 
   void *LocalitySlab::alloc(size_t size, const alaska::Mapping &m) {
     size = round_up(size, 8);
     auto required = size + sizeof(alaska::ObjectHeader);
-    if (unlikely(required > available())) return nullptr;
+    if ((char*)data + bump_size + required > (char*)end()) return nullptr;
 
     auto header = (alaska::ObjectHeader *)(data + bump_size);
     bump_size += required;

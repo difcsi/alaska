@@ -49,6 +49,8 @@ namespace alaska {
       track_freed(ptr);
     }
 
+    float fragmentation(void) { return (float)num_free_in_free_list() / (float)object_extent(); }
+
 
     void configure(void *objects, size_t object_size, long object_count);
 
@@ -152,12 +154,13 @@ namespace alaska {
     AllocatedObjectIterator end() const { return AllocatedObjectIterator(); }
 
 
-   private:
+
     inline bool is_allocated(void *p) {
       auto i = object_index(p);
       uint8_t byte_value = __atomic_load_n(&bitmap[i / 8], __ATOMIC_RELAXED);
       return (byte_value & (1 << (i % 8))) != 0;
     }
+    inline bool is_free(void *p) { return not is_allocated(p); }
     inline void track_allocated(void *p) {
       rates.alloc(object_size);
       auto i = object_index(p);
@@ -170,6 +173,7 @@ namespace alaska {
       __atomic_fetch_and(&bitmap[i / 8], ~(1 << (i % 8)), __ATOMIC_RELAXED);
     }
 
+   private:
     void *alloc_slow(void);
 
     size_t object_count;                // How many objects there are in this heap
@@ -200,7 +204,7 @@ namespace alaska {
 
 
   __attribute__((noinline)) inline void *SizedAllocator::alloc_slow(void) {
-    long extended_count = extend(128);
+    long extended_count = extend(64);
 
     // 1. If we managed to extend the list, return one of the blocks from it.
     if (extended_count > 0) {

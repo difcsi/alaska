@@ -66,7 +66,7 @@ namespace alaska {
     }
     void *alloc(size_t size, const alaska::Mapping &m);
     void free(void *ptr);
-    inline void *start(void) const { return (void *)((uintptr_t)this); }
+    inline void *start(void) const { return (void *)((uintptr_t)data); }
     inline void *end(void) const { return (void *)((uintptr_t)this + locality_slab_size); }
     inline size_t available(void) const {
       return (uintptr_t)end() - ((uintptr_t)start() + bump_size);
@@ -85,6 +85,7 @@ namespace alaska {
    public:
     LocalityPage(void *backing_memory)
         : alaska::HeapPage(backing_memory) {
+      snprintf(this->name, sizeof(this->name), "Locality");
       next_slab = 0;
     }
 
@@ -106,6 +107,18 @@ namespace alaska {
     void *alloc(const alaska::Mapping &m, alaska::AlignedSize size) override;
     bool release_local(const alaska::Mapping &m, void *ptr) override;
 
+
+    float fragmentation(void) override {
+      size_t freed_bytes = 0;
+      size_t total_bytes = 0;
+
+      for_each_slab([&](LocalitySlab *slab) {
+        freed_bytes += slab->freed;
+        total_bytes += slab->bump_size;
+      });
+
+      return freed_bytes / (float)total_bytes;
+    }
 
     // TODO: TEMPORARY
     struct list_head slab_list_head = LIST_HEAD_INIT(slab_list_head);

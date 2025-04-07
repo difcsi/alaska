@@ -30,6 +30,7 @@ namespace alaska {
     void *alloc(const alaska::Mapping &m, alaska::AlignedSize size) override;
     bool release_local(const alaska::Mapping &m, void *ptr) override;
     bool release_remote(const alaska::Mapping &m, void *ptr) override;
+    float fragmentation(void) override { return allocator.fragmentation(); }
 
     // How many free slots are there? (We return an estimate!)
     inline long available(void) { return this->allocator.num_free(); }

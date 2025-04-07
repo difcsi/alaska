@@ -57,6 +57,8 @@ namespace alaska {
     this->capacity = (double)alaska::page_size / real_size;
     this->live_objects = 0;
 
+    snprintf(name, sizeof(name), "Sized(%zu)", this->object_size);
+
     // initialize
     allocator.configure(this->memory, real_size, capacity);
   }
@@ -88,10 +90,6 @@ namespace alaska {
   long SizedPage::compact(void) {
     // The return value - how many objects this function has moved.
     long moved_objects = 0;
-    /*
-    // If there's nothing to do, early return.
-    // TODO: threshold this.
-    if (live_objects == capacity) return 0;
 
     // The first step is to clear the free list so that we don't have any
     // corruption problems. Later we will update it to point at the end of
@@ -99,97 +97,193 @@ namespace alaska {
     allocator.reset_free_list();
 
 
-    // A pointer which tracks the last object in the heap. We have this
-    // in the event of a pinned object, P:
-    //  [###########_____P___]
-    //                   ^ last_object points here.
-    // If this is not null, whenever we swap an object such that the right
-    // pointer points to a free slot, we add that location to the local free
-    // list of the allocator.
-    // NOTE: this actually is a pointer to the header, not the object.
-    Header *last_object = nullptr;
-
-    Header *left = headers;  // the first object
-    Header *right = headers + capacity - 1;
 
 
+    // This algorithm is a two-finger walk. We have two pointers, one
+    // pointing to the left (destination) and one pointing to the right
+    // (source). We walk the left pointer forward until we find a free slot.
+    // We then walk the right pointer forward starting at the left (or where
+    // the right used to be, whichever is greater). If the right pointer
+    // points to a used slot slot, we move that object to the location of the
+    // left pointer and add the right pointer to the free list.
+    //
+    // One complication here is with object pinning, so the right pointer
+    // considers pinned objects to be free, so it skips over them. If the
+    // right pointer reaches the end location, we walk the left pointer
+    // over the remainder of the heap, and any free slots are added to the
+    // free list.
+
+    off_t left = 0;
+    off_t right = 0;
+    off_t end = allocator.object_extent();
+    off_t last_object_seen = -1;
+
+    // A helper function to get the object header at a given index.
+    // This just cleans up the code.
+    auto get_object = [&](off_t index) -> ObjectHeader * {
+      return (ObjectHeader *)((off_t)this->memory + index * (object_size + sizeof(ObjectHeader)));
+    };
+
+    // This is a helper function I used while debugging. Not gonna remove it
+    // incase something else pops up.
+    /*
+    auto dump = [&](const char *msg) {
+      printf("%15s: ", msg);
+      for (off_t i = 0; i < end; i++) {
+        auto *header = get_object(i);
+
+        if (i == left) {
+          printf("\e[32m[");
+        } else {
+          printf(" ");
+        }
+
+        if (allocator.is_free(header)) {
+          printf(". . . . .");
+        } else {
+          if (i == last_object_seen) {
+            printf("!");
+          } else {
+            printf(" ");
+          }
+          printf("%08lx", (unsigned long)header->get_mapping()->handle_id());
+        }
+
+        if (i == right) {
+          printf("]\e[0m");
+        } else {
+          printf(" ");
+        }
+      }
+      if (right == end) {
+        printf("  >\e[0m");
+      }
+      printf("\n");
+    };
+    */
 
 
-    while (right > left) {
-      // if left points to an allocated object, we can't do anything so
-      // walk it forward (towards the right)
-      if (not left->is_free()) {
+    // first, run the end back until we find an allocated object. This sets the
+    // bounds for the right pointer. (It optimizes for SizedAllcoator::extend()
+    // being called with a large value)
+    while (end > 0) {
+      auto obj = get_object(end - 1);
+      if (allocator.is_allocated(obj)) {
+        break;
+      }
+      end--;
+      // dump("end wb");
+    }
+
+    while (left < end) {
+      // if the right pointer is less than the left, we need to set it to
+      // the left + 1, so we can move the object. This maintains that invariant
+      if (right <= left) {
+        right = left + 1;
+      }
+      // dump("top of loop");
+
+      auto left_obj = get_object(left);
+      if (allocator.is_allocated(left_obj)) {
         left++;
         continue;
       }
 
-      // if the right points to a free slot, we can't do anything so
-      // similarly walk it forward (toward the left)
-      if (right->is_free()) {
-        // but, if the last object is set, we need to add this to the
-        // free list because it constitutes a gap in the heap which
-        // would not be allocated in the future by the
-        if (last_object != nullptr) {
-          void *free_slot = ind_to_object(header_to_ind(right));
-          allocator.release_local(free_slot);
+
+      if (right == end) {
+        // If the right pointer sees the end of the heap, we need to walk it back until
+        // it finds an allocated object. That spot + 1 is the new end.
+        // We then walk the left to that end and add any free slots found to the
+        // free list.
+
+        while (right > left) {
+          // dump("ec backup");
+          if (allocator.is_allocated(get_object(right))) {
+            break;
+          }
+          right--;
         }
 
-        right--;
-        continue;
+        end = right;
+
+        while (left < end) {
+          // dump("ec top");
+          auto left_obj = get_object(left);
+          if (allocator.is_free(left_obj)) {
+            allocator.release_local(left_obj);
+          }
+          // if the left pointer points to an allocated object, we can't do anything so
+          // walk it forward (towards the right)
+          left++;
+        }
+        break;
       }
 
-      auto handle_mapping = right->get_mapping();
-      // At this point, we have the setup we want: the left pointer
-      // points to a free slot where the object pointed to by the
-      // right pointer can be moved. The one situation that could
-      // block us from doing this is if the object we want to move is
-      // pinned. If it is we maybe update `last_object` and tick
-      // the right pointer.
-      if (handle_mapping->is_pinned()) {
-        if (last_object == nullptr) last_object = right;
-        right--;
-        continue;
+
+
+      // we found a free slot. we need to the object to the right to move here.
+      bool found_right = false;  // Did we find a valid object to move?
+      while (right < end) {
+        // dump("right loop");
+        // if the right pointer points to a free slot, we can't do anything so
+        // move it forward
+        auto right_obj = get_object(right);
+        if (allocator.is_free(right_obj)) {
+          // TODO: make this the spot we "skip" to next time we need to pick a left value.
+          right++;
+          continue;
+        }
+        // if the right pointer points to a pinned object, we can't do anything
+        // so move it forward
+        auto handle_mapping = right_obj->get_mapping();
+        if (handle_mapping->is_pinned()) {
+          right++;
+          continue;
+        }
+
+        // break from the loop if we have a valid object to move.
+        found_right = true;
+        break;
       }
 
 
-      // Now, we are free to apply the compaction!
-      void *object_to_move = ind_to_object(header_to_ind(right));
-      void *free_slot = ind_to_object(header_to_ind(left));
+      if (found_right) {
+        // dump("found right");
 
-      // Move the memory of the object to the free slot
-      memmove(free_slot, object_to_move, object_size);
-      // And poison the old location.
-      memset(object_to_move, 0xF0, object_size);
+        auto obj_r = get_object(right);
+        auto map_r = obj_r->get_mapping();
 
-      // Update the mapping so the handle points to the right location.
-      handle_mapping->set_pointer(free_slot);
-      // make sure the headers make sense
-      *left = *right;
+        auto obj_l = get_object(left);
+        auto map_l = obj_l->get_mapping();
 
-      ALASKA_ASSERT(left->get_mapping() == right->get_mapping(), ".");
-      right->set_mapping(0);
-      right->size_slack = 0;
-      moved_objects++;
 
-      // Note that we don't ight along here. We deal with that on the
-      // next iteration of the loop to handle edge cases.
-      // left++;
+        // copy the object's data.
+        memcpy(obj_l->data(), obj_r->data(), object_size);
+
+        obj_r->set_mapping(0);  // clear the right mapping
+        map_r->set_pointer(obj_l->data());
+        obj_l->set_mapping(map_r);
+
+        allocator.track_freed(obj_r);
+        allocator.track_allocated(obj_l);
+        moved_objects++;
+
+
+
+        // now. move!
+      }
     }
 
-    // If we were lucky, and no pinned object were found, we need to
-    // point last_object to the end of the heap, which at this point
-    // is `right`
-    if (last_object == nullptr) last_object = right;
 
-    // Reset the bump pointer of the free list to right after the
-    // last object in the heap.
-    void *after_heap = ind_to_object(header_to_ind(last_object + 1));
-    allocator.reset_bump_allocator(after_heap);
+    // end = last_object_seen + 1;
+    // dump("end of loop");
+    allocator.reset_bump_allocator(get_object(end));
 
-
-    */
     return moved_objects;
   }
+
+
+
 
   long SizedPage::jumble(void) {
     return 0;
