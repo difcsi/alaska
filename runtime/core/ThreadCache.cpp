@@ -280,6 +280,25 @@ namespace alaska {
     m->set_pointer(new_location);          // Write the new location
     moved_count += 1;
 
+    // TODO: localize one level of pointers?
+    if (allowed_depth > 0) {
+      auto *header = alaska::ObjectHeader::from(new_location);
+      auto *ptr = (void **)new_location;
+      size_t scan_size = 128;
+      if (size < scan_size) scan_size = size;
+      auto *end = (void **)((char *)ptr + scan_size);
+      while (ptr < end) {
+        auto *p = *ptr;
+        if (p != nullptr) {
+          auto *m = alaska::Mapping::from_handle_safe(p);
+          if (m != nullptr) {
+            moved_count += localize(m, allowed_depth - 1);
+          }
+        }
+        ptr++;
+      }
+    }
+
     return moved_count;
   }
 

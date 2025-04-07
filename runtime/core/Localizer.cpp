@@ -46,7 +46,7 @@ namespace alaska {
 
   Localizer::ScanResult Localizer::feed_hotness_buffer(size_t count, handle_id_t *handle_ids) {
     ScanResult res = {0};
-    ALASKA_ASSERT(expected_count == count, "Localizer count mismatch");
+    // ALASKA_ASSERT(expected_count == count, "Localizer count mismatch");
 
     auto &rt = alaska::Runtime::get();
 
@@ -58,34 +58,28 @@ namespace alaska {
       void *data = m->get_pointer();
       if (data == nullptr) continue;
       auto header = ObjectHeader::from(m);
+
       // An already localized object should not be double localized (yet)
       if (header->localized) continue;
+
+      // Increment the saturating hotness counter
       if (header->hotness < 0b111'111) header->hotness++;
-      if (header->hotness == hotness_cutoff) res.new_hot++;  // we found a new hot object!
+
+      // auto effective_hotness = header->hotness;
+      // if (header->localized) effective_hotness /= 2;
+      // if (effective_hotness > hotness_cutoff) {
+      //   tc.localize(m);
+      // }
+
+      // if an object becomes hot in this scan, track that.
+      if (header->hotness == hotness_cutoff) {
+        res.new_hot++;  // we found a new hot object!
+      }
     }
 
 
-    // alaska::printf("YUKONDUMP");
-    // for (size_t i = 0; i < count; i++)
-    //   alaska::printf(" %zu", handle_ids[i]);
-    // alaska::printf("\n");
 
-    if (dumps_recorded > 2) {
-      // dump the connectivity as a graphviz graph
-      // alaska::printf("digraph G {\n");
-      // for (auto &pair : dump_connectivity) {
-      //   auto a = pair.key;
-      //   for (auto &pair2 : pair.value) {
-      //     auto b = pair2.key;
-      //     auto count = pair2.value;
-      //     alaska::printf("N%zu -> N%zu [label=\"%zu\"];\n", a, b, count);
-      //   }
-      // }
-      // alaska::printf("}\n");
-      // dumps_recorded = 0;
-
-
-      /*
+    if (dumps_recorded > 64) {
       dumps_recorded = 0;
       auto &ht = rt.handle_table;
       constexpr bool enable_scanning = true;
@@ -93,6 +87,7 @@ namespace alaska {
       uint64_t total_handles = 0;
       uint64_t total_hotness = 0;
       uint64_t scanned_hot = 0;
+      uint64_t relocated = 0;
       uint64_t handles_seen_in_dump = 0;
 
       auto slabs = ht.get_slabs();
@@ -101,13 +96,17 @@ namespace alaska {
           auto *m = (alaska::Mapping *)allocated;
           if (m->get_pointer() == nullptr) continue;
           auto header = alaska::ObjectHeader::from(m->get_pointer());
+          auto effective_hotness = header->hotness;
+          if (header->localized) effective_hotness /= 2;
           total_handles++;
           total_hotness += header->hotness;
           if (header->hotness != 0) {
             handles_seen_in_dump++;
           }
 
-          if (header->hotness > hotness_cutoff) {
+          if (effective_hotness > hotness_cutoff) {
+            if (header->localized) relocated++;
+            tc.localize(m, 8);
             scanned_hot++;
           }
         }
@@ -115,11 +114,7 @@ namespace alaska {
 
 
 
-      alaska::printf("hot handles: %6zu, average:%4.2f, seen:%5.1f%%\n", scanned_hot,
-          total_hotness / (float)total_handles,
-          handles_seen_in_dump > 0 ? 100.0 * (float)scanned_hot / (float)handles_seen_in_dump
-                                   : 0.0f);
-      */
+      alaska::printf("hot handles: %6zu, relocated: %6zu\n", scanned_hot, relocated);
     }
 
     // Push the buffer back to the queue of buffers

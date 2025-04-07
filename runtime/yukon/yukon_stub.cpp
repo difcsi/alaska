@@ -92,6 +92,10 @@ alaska::ThreadCache *get_tc() {
 }
 
 
+void __attribute__((destructor)) alaska_deinit(void) {
+  alaska::printf("YUKON_RTINST=%zu\n", instructions_in_runtime);
+}
+
 
 static void *from_handle(void *ptr) {
   auto *m = alaska::Mapping::from_handle_safe(ptr);

@@ -33,7 +33,8 @@ static HTLB *the_htlb = nullptr;
 
 HTLB::HTLB()
     : htlb(L1_SETS, L1_WAYS, L2_SETS, L2_WAYS)
-    , tlb(4, 4, 8, 8) {
+    , tlb(4, 4, 8, 8)
+    , dcache(32, 8, 256, 16) {
   the_htlb = this;
 }
 

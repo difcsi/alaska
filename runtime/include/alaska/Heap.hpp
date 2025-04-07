@@ -118,6 +118,8 @@ namespace alaska {
     void set(void *page, alaska::HeapPage *heap_page);
 
 
+    const ck::vec<alaska::HeapPage *> &get_table(void) const { return table; }
+
    private:
     // A pointer to the start of the heap. This is used to compute the page number in the heap.
     void *heap_start;

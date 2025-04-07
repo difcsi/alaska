@@ -25,7 +25,7 @@ namespace alaska {
   class Localizer {
     alaska::ThreadCache &tc;
     size_t expected_count = 0;
-    long hotness_cutoff = 8;
+    long hotness_cutoff = 24;
 
 
     struct buffer {
@@ -46,7 +46,7 @@ namespace alaska {
 
 
     struct ScanResult {
-      long new_hot; // how many new handles were considered hot?
+      long new_hot;  // how many new handles were considered hot?
     };
 
     // Give a hotness buffer back to the localizer, filled with `count` handle ids

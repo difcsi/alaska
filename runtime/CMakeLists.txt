@@ -294,6 +294,19 @@ if(ALASKA_YUKON)
 endif(ALASKA_YUKON)
 
 
+add_executable(alaska_sim_trace sim/main.cpp)
+target_link_libraries(alaska_sim_trace alaska_core alaska_sim)
+install(
+    TARGETS alaska_sim_trace
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    PUBLIC_HEADER DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+    PRIVATE_HEADER DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+
+
+
+
+
 if (ALASKA_ENABLE_TESTING)
 
 	find_package(GTest)
