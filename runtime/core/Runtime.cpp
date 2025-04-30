@@ -57,6 +57,11 @@ namespace alaska {
   }
   Runtime *Runtime::get_ptr() { return g_runtime; }
 
+  bool Runtime::is_valid_handle(void *p) {
+    alaska::Mapping *m = alaska::Mapping::from_handle_safe(p);
+    if (m == nullptr) return false;
+    return this->handle_table.valid_handle(m);
+  }
 
 
   void Runtime::dump(FILE *stream) {

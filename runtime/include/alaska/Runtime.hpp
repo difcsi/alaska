@@ -81,6 +81,9 @@ namespace alaska {
     void del_threadcache(ThreadCache *);
     void dump(FILE *stream);
 
+    bool is_valid_handle(void *p);
+
+
 
     void dump_html(FILE *stream);
 
