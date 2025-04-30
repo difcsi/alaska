@@ -48,6 +48,7 @@ enum class StackState {
 
 
 struct PinSetInfo {
+  char type = '?';
   uint32_t count = 0;   // How many entries?
   uint32_t regNum = 0;  // Which libunwind register?
   int32_t offset = 0;   // offset from that register?
@@ -163,11 +164,6 @@ static StackState get_stack_state(uintptr_t return_address) {
 
 static void record_handle(void* possible_handle, bool marked) {
   alaska::Mapping* m = alaska::Mapping::from_handle_safe(possible_handle);
-
-  // It wasn't a handle, don't consider it.
-  if (m == NULL) return;
-  if (not alaska::Runtime::get().handle_table.valid_handle(m)) return;
-  if (m->is_free()) return;
   m->set_pinned(marked);
 }
 
@@ -235,30 +231,9 @@ void alaska::barrier::get_pinned_handles(bool pin) {
   unw_init_local(&cursor, &uc);
 
 
+  auto& rt = alaska::Runtime::get();
 
-  // // printf("Stack frames:\n");
-  // while (unw_step(&cursor) > 0) {
-  //   unw_get_reg(&cursor, UNW_REG_SP, &sp);
-  //   unw_get_reg(&cursor, UNW_REG_IP, &pc);
-
-  //   // Compute the end of the previous frame as the current frame's start
-  //   if (prev_sp != 0) {
-  //     // printf("Frame: start = %p, end = %p\n", (void*)prev_sp, (void*)sp);
-  //     uint64_t* frame_start = (uint64_t*)prev_sp;
-  //     uint64_t* frame_end = (uint64_t*)sp;
-  //     // Iterate over each uint64_t in the frame
-  //     printf("%p %p\n", pc, sp);
-  //     for (uint64_t* loc = frame_start; loc < frame_end; ++loc) {
-  //       if (might_be_handle((void*)*loc)) {
-  //         printf("  %p: 0x%lx\n", (void*)loc, *loc);
-  //         record_handle((void*)*loc, pin);
-  //       }
-  //     }
-  //   }
-  //   prev_sp = sp;
-  // }
-  // return;
-
+  dump_lock.lock();
   while (1) {
     int res = unw_step(&cursor);
     if (res == 0) {
@@ -270,25 +245,54 @@ void alaska::barrier::get_pinned_handles(bool pin) {
     }
     unw_get_reg(&cursor, UNW_REG_IP, &pc);
     unw_get_reg(&cursor, UNW_REG_SP, &sp);
+    char** bt = backtrace_symbols((void**)&pc, 1);
+    printf("pc:%12lx sp:%lx ", pc, sp);
+
+    ::free(bt);
     auto it = pin_map.find(pc);
     if (it != pin_map.end()) {
-      printf("pc:%016lx sp:%016lx ", pc, sp);
       auto& psi = it->value;
       if (psi.count == 0) continue;  // should not happen!
       unw_get_reg(&cursor, psi.regNum, &reg);
 
 
-      void** localSet = (void**)(reg + psi.offset);
+      printf(" %c ", psi.type);
 
+      void** localSet = (void**)(reg + psi.offset);
       for (uint32_t i = 0; i < psi.count; i++) {
-        printf(" (%zx)", localSet[i]);
-        if (might_be_handle(localSet[i])) {
-          record_handle(localSet[i], pin);
+        void *p = localSet[i];
+        if (rt.is_valid_handle(p)) {
+          auto *m = alaska::Mapping::from_handle(p);
+          printf(" (%zx)", m->handle_id());
+          m->set_pinned(pin);
+        } else {
+          printf(" !!!");
         }
       }
-      printf("\n");
+    } else {
+      long closest = 0;
+      long closest_dist = INT64_MAX;
+
+      for (auto& [addr, _] : pin_map) {
+        long dist = (long)addr - (long)pc;
+        if (dist < 0) dist = -dist;
+
+        if (dist < closest_dist) {
+          closest = addr;
+          closest_dist = dist;
+        }
+      }
+
+      if (closest_dist < 0xffff) {
+        printf(" closest = %zx (+-%zu)", closest, closest_dist);
+      } else {
+        printf(" tfa");
+      }
     }
+    printf("\n");
   }
+  printf("\n");
+  dump_lock.unlock();
 }
 
 
@@ -687,10 +691,10 @@ void parse_stack_map(uint8_t* t) {
     }
 
 
-    if (record.getID() == 'P') {
-      pin_map[addr] = psi;
-    }
+    psi.type = record.getID();
+    pin_map[addr] = psi;
   }
+  // exit(-1);
 
 
   patchNop();
@@ -707,6 +711,10 @@ void alaska_blob_init(struct alaska_blob_config* cfg) {
   mprotect(patch_page, size + 4096, PROT_EXEC | PROT_READ | PROT_WRITE);
 
   if (cfg->stackmap) parse_stack_map((uint8_t*)cfg->stackmap);
+  // for (auto& [addr, psi] : pin_map) {
+  //   printf("Pin at %16zx: %u\n", addr, psi.count);
+  // }
+  // exit(-1);
 }
 
 // This function doesn't really need to exist,
