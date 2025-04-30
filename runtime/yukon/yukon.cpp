@@ -75,6 +75,7 @@ static inline uint64_t read_l2_tlb_accesses(void) {
 
 
 static uint64_t instructions_in_runtime = 0;
+static uint64_t cycles_in_runtime = 0;
 static thread_local alaska::ThreadCache *tc = NULL;
 static alaska::ThreadCache *dump_tc = NULL;
 static alaska::Runtime *the_runtime = NULL;
@@ -217,12 +218,17 @@ struct LocalizationLatch {
   }
 };
 
-struct AutoFencer {
+struct RuntimeTracker {
   uint64_t start_inst;
-  AutoFencer() { start_inst = read_instret(); }
-  ~AutoFencer() {
+  uint64_t start_cycle;
+  RuntimeTracker() {
+    start_inst = read_instret();
+    start_cycle = read_cycle_counter();
+  }
+  ~RuntimeTracker() {
     __asm__ volatile("fence" ::: "memory");
     instructions_in_runtime += (read_instret() - start_inst);
+    cycles_in_runtime += (read_cycle_counter() - start_cycle);
   }
 };
 
@@ -475,19 +481,19 @@ static void *_halloc(size_t sz, int zero) {
 
 extern "C" void *halloc(size_t sz) noexcept {
   LocalizationLatch loc_latch;
-  AutoFencer fencer;
+  RuntimeTracker fencer;
   return _halloc(sz, 0);
 }
 extern "C" void *hcalloc(size_t nmemb, size_t size) {
   LocalizationLatch loc_latch;
-  AutoFencer fencer;
+  RuntimeTracker fencer;
   return _halloc(nmemb * size, 1);
 }
 
 // Reallocate a handle
 extern "C" void *hrealloc(void *handle, size_t new_size) {
   LocalizationLatch loc_latch;
-  AutoFencer fencer;
+  RuntimeTracker fencer;
 
   alaska::LockedThreadCache tc = *yukon::get_tc();
 
@@ -519,7 +525,7 @@ extern "C" void *hrealloc(void *handle, size_t new_size) {
 
 extern "C" void hfree(void *ptr) {
   LocalizationLatch loc_latch;
-  AutoFencer fencer;
+  RuntimeTracker fencer;
   // no-op if NULL is passed
   if (unlikely(ptr == NULL)) return;
 
