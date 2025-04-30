@@ -35,13 +35,19 @@ namespace alaska {
       digest();
     }
 
+    float seconds_passed(const TimeCache &tc) {
+      auto now = tc.now();
+      auto ns_passed = now - last_nanoseconds;
+      return ns_passed / 1000.0 / 1000.0 / 1000.0;
+    }
+
 
     // Read the value, and return the rate (per second) since the last digest.
     // This function can take a time cache, which can be used to
     // record the exact same time for many RateCounter readings. This
     // is useful because reading time from the kernel could be expensive
     inline float digest(const TimeCache &tc) {
-      auto now = alaska_timestamp();
+      auto now = tc.now();
       auto ns_passed = now - last_nanoseconds;
       float seconds_passed = ns_passed / 1000.0 / 1000.0 / 1000.0;
       uint64_t change = value - last_value;
