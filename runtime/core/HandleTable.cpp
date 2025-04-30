@@ -212,8 +212,8 @@ namespace alaska {
       return false;
     }
 
-    // printf("%p might be valid\n", m);
-    return true;
+    auto *slab = m_slabs[idx];
+    return slab->allocator.is_allocated(m);
   }
 
   void HandleTable::put(Mapping *m, alaska::ThreadCache *owner) {
