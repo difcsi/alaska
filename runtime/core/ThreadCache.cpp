@@ -19,15 +19,7 @@
 #include <alaska/utils.h>
 #include <alaska/lphash_set.h>
 
-// #define USE_MALLOC
-#ifdef USE_MALLOC
-#include <malloc.h>
-#endif
-
-
-
 namespace alaska {
-
 
   ThreadCache::ThreadCache(int id, alaska::Runtime &rt)
       : id(id)
@@ -42,9 +34,7 @@ namespace alaska {
     int cls = alaska::size_to_class(size);
     this->allocation_rate.track(1);
     void *ptr;
-#ifdef USE_MALLOC
-    ptr = ::malloc(size);
-#else
+
     SizedPage *page = size_classes[cls];
     if (unlikely(page == nullptr)) {
       page = new_sized_page(cls);
@@ -56,7 +46,7 @@ namespace alaska {
       ptr = page->alloc(m, size);
       ALASKA_ASSERT(ptr != nullptr, "OOM!");
     }
-#endif
+
     return ptr;
   }
 
@@ -67,9 +57,6 @@ namespace alaska {
     this->free_rate.track(1);
     void *ptr = m.get_pointer();
 
-#ifdef USE_MALLOC
-    ::free(ptr);
-#else
     // Grab the page from the global heap (walk the page table).
     auto *page = this->runtime.heap.pt.get_unaligned(ptr);
     if (unlikely(page == NULL)) {
@@ -85,7 +72,6 @@ namespace alaska {
       log_trace("Free handle %p remotely (ptr = %p)", &m, ptr);
       page->release_remote(m, ptr);
     }
-#endif
   }
 
 
@@ -150,6 +136,7 @@ namespace alaska {
       ALASKA_ASSERT(ptr != nullptr, "OOM!");
     }
 
+
     return ptr;
   }
 
@@ -199,13 +186,8 @@ namespace alaska {
 
     if (m->is_free()) return 0;
     void *ptr = m->get_pointer();
-#ifdef USE_MALLOC
-    return ::malloc_usable_size(ptr);
-#else
-
     auto header = alaska::ObjectHeader::from(ptr);
     return header->object_size();
-#endif
   }
 
   Mapping *ThreadCache::new_mapping(void) {
@@ -244,21 +226,13 @@ namespace alaska {
       return 0;
     }
 
-
     auto header = alaska::ObjectHeader::from(ptr);
+
     // Ask the page for the size of the pointer
     auto size = header->object_size();
     // If the size is too large, don't bother
     if (size > alaska::locality_slab_size / 2) return 0;
 
-
-
-    // if (header->localized) {
-    //   if (header->counter > 0) {
-    //     header->counter--;
-    //     return 0;
-    //   }
-    // }
 
     // This size comparison is kinda nonsense
     if (locality_page == nullptr or
