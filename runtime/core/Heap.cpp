@@ -200,6 +200,13 @@ namespace alaska {
     long i = 0;
 
     alaska::TimeCache timecache;
+
+    long terminal_width;
+    // get the width of the terminal
+
+
+    size_t wasted_bytes = 0;
+
     for (auto &mag : size_classes) {
       if (mag.size() == 0) continue;
       auto size = alaska::class_to_size(i);
@@ -216,6 +223,14 @@ namespace alaska {
         float used = sp->object_capacity() - avail;
         float used_frac = 1.0 - avail_frac;
 
+
+        float frag = sp->fragmentation();
+        wasted_bytes += frag * alaska::page_size;
+
+        int c = (1.0 - frag) * 255;
+        fprintf(stream, "\033[48;2;255;%d;%dm \033[0m", c, c);
+        return true;
+
         // if (sp->get_owner() != nullptr) {
         //   fprintf(stream, "\033[48;2;0;0;%dm", (int)(255 * used_frac));
         // } else {
@@ -231,7 +246,6 @@ namespace alaska {
         int red = 255 - blue;
 
         fprintf(stream, "\033[48;2;%d;0;%dm", red, blue);
-
         fprintf(stream, "%7.2f%% ", 100.0 * used_frac);
         // fprintf(stream, "%8.2f/%7.2fkb ", avail * size / 1024.0, alaska::page_size / 1024.0);
         // fprintf(stream, "%8.2fkb ", avail * size / 1024.0);
@@ -252,15 +266,30 @@ namespace alaska {
     }
 
     printf("locality pages: %lu\n", locality_pages.size());
+    long ind = 0;
     locality_pages.foreach ([&](LocalityPage *lp) {
+      float frag = lp->fragmentation();
+
+      int c = (1.0 - frag) * 255;
+      fprintf(stream, "\033[48;2;255;%d;%dm \033[0m", c, c);
+      return true;
       // iterate over the locality slab list
       lp->for_each_slab([&](auto *slab) {
-        // fprintf(stream, "%p: ", lp);
+        ind++;
         float u = slab->utilization();
-        if (u == 0) {
-          fprintf(stream, "\e[31m");
-        }
-        fprintf(stream, "%3.0f \e[0m", 100.0 * u);
+
+        int c = (1.0 - u) * 255;
+        fprintf(stream, "\033[48;2;255;%d;%dm \033[0m", c, c);
+
+
+        // if (ind > 200) {
+        //   ind = 0;
+        //   fprintf(stream, "\n");
+        // }
+        // if (u == 0) {
+        //   fprintf(stream, "\e[31m");
+        // }
+        // fprintf(stream, "%3.0f ", 100.0 * u);
 
         // fprintf(stream, "%8.2f/%7.2fkb ", lp->used() / 1024.0, lp->heap_size() / 1024.0);
         // fprintf(stream, "%8.2fkb ", lp->used() / 1024.0);
@@ -268,11 +297,11 @@ namespace alaska {
         // fprintf(stream, "%8.2fkb/%7.2fkb ", lp->used() / 1024.0, lp->heap_size() / 1024.0);
         // fprintf(stream, "\n");
       });
-      fprintf(stream, "\n");
 
 
       return true;
     });
+    fprintf(stream, "\n");
     // fprintf(stream, "\n");
   }
 
@@ -325,14 +354,15 @@ namespace alaska {
     for (auto &mag : size_classes) {
       mag.foreach ([&](SizedPage *sp) {
         long z = 0, t = 0;
+        if (sp->fragmentation() > 0.4) {
+          zero_bytes += z;
+          total_bytes += t;
+          total_objects += t / sp->get_object_size();
 
-        zero_bytes += z;
-        total_bytes += t;
-        total_objects += t / sp->get_object_size();
-
-        long moved = sp->compact();
-        c += moved;
-        bytes_saved += moved * sp->get_object_size();
+          long moved = sp->compact();
+          c += moved;
+          bytes_saved += moved * sp->get_object_size();
+        }
         return true;
       });
     }
