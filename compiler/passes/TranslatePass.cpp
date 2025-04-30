@@ -57,10 +57,11 @@ PreservedAnalyses AlaskaTranslatePass::run(Module &M, ModuleAnalysisManager &AM)
       continue;
     }
 
+
     if (hoist) {
       alaska::insertHoistedTranslations(F);
     } else {
-      alaska::println("Not hoisting in ", F.getName());
+      // alaska::println("Not hoisting in ", F.getName());
       alaska::insertConservativeTranslations(F);
     }
 

@@ -25,6 +25,13 @@ class AlaskaTranslatePass : public llvm::PassInfoMixin<AlaskaTranslatePass> {
   llvm::PreservedAnalyses run(llvm::Module &M, llvm::ModuleAnalysisManager &AM);
 };
 
+class AlaskaIntentPass : public llvm::PassInfoMixin<AlaskaIntentPass> {
+ public:
+   AlaskaIntentPass() {}
+
+  llvm::PreservedAnalyses run(llvm::Module &M, llvm::ModuleAnalysisManager &AM);
+};
+
 
 /**
  * PinTrackingPass - Insert pin roots on the stack so the runtime knows where

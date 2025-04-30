@@ -233,7 +233,7 @@ PreservedAnalyses PinTrackingPass::run(Module &M, ModuleAnalysisManager &AM) {
 
       auto called = call->getCalledOperand();
       int patch_size = 0;
-      int id = 'U';
+      char id = 'U';
 
       if (auto func = call->getCalledFunction()) {
         if (func->getName() == "alaska_barrier_poll") {
@@ -245,8 +245,11 @@ PreservedAnalyses PinTrackingPass::run(Module &M, ModuleAnalysisManager &AM) {
         } else if (func->getName() == "alaska_do_handle_fault_check") {
           id = 'H';
           patch_size = ALASKA_PATCH_SIZE;  // TODO: handle ARM
+        } else {
+          id = 'C';
         }
       }
+      alaska::println(id, "  ", *call, "  | ", patch_size);
 
 
 
@@ -313,7 +316,7 @@ PreservedAnalyses PinTrackingPass::run(Module &M, ModuleAnalysisManager &AM) {
 
 
 
-      alaska::println((char)id, ": ", *call);
+      // alaska::println((char)id, ": ", *call);
 
       // If the safepoint is a PATCH safepoint, it won't ever be a call. It will always be a "NOP"
       // style instruction and will never corrupt any registers. As such, to reduce the overhead of

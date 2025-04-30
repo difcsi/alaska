@@ -193,6 +193,7 @@ extern "C" LLVM_ATTRIBUTE_WEAK ::llvm::PassPluginLibraryInfo llvmGetPassPluginIn
           REGISTER("alaska-replace", AlaskaReplacementPass);
           if (name == "alaska-translate") {
             MPM.addPass(AlaskaTranslatePass(true));
+            MPM.addPass(AlaskaIntentPass());
             return true;
           }
 

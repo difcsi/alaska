@@ -36,7 +36,6 @@ std::vector<llvm::CallBase *> collectCalls(llvm::Module &M, const char *name) {
 
 bool collectOffsets(GetElementPtrInst *gep, const DataLayout &DL, unsigned BitWidth,
     std::unordered_map<Value *, APInt> &VariableOffsets, APInt &ConstantOffset) {
-
   auto CollectConstantOffset = [&](APInt Index, uint64_t Size) {
     Index = Index.sextOrTrunc(BitWidth);
     APInt IndexedSize = APInt(BitWidth, Size);
@@ -128,7 +127,7 @@ llvm::PreservedAnalyses AlaskaLowerPass::run(llvm::Module &M, llvm::ModuleAnalys
 
     for (auto *call : collectCalls(M, "alaska.translate")) {
       IRBuilder<> b(call);  // insert after the call
-
+      
       // If the return value is only used in calls, run the more expensive "escape" variant
       bool onlyCalls = true;
       for (auto *user : call->users()) {
@@ -156,10 +155,10 @@ llvm::PreservedAnalyses AlaskaLowerPass::run(llvm::Module &M, llvm::ModuleAnalys
 
   // Lower alaska.derive
   for (auto call : collectCalls(M, "alaska.derive")) {
-    // Release is just a marker for liveness. We don't need (or want) it to be in the
-    // application at the end
+    // Derive is just a marker to indicate that a GEP happened on a translated value.
+    // In the end, we just replace it's uses with the GEP.
+    
     IRBuilder<> b(call);  // insert after the call
-                          //
     auto base = call->getArgOperand(0);
     auto offset = dyn_cast<llvm::GetElementPtrInst>(call->getArgOperand(1));
 

@@ -41,7 +41,9 @@ struct TranslationVisitor : public llvm::InstVisitor<TranslationVisitor> {
   void visitGetElementPtrInst(llvm::GetElementPtrInst &I) {
     // Simply insert an `alaska.derive` function right after `I`
     auto t = get_incoming_translated_value(node);
-    node.translated = alaska::insertDerivedBefore(I.getNextNode(), t, &I);
+    I.setOperand(0, t);
+    node.translated = &I;
+    // node.translated = alaska::insertDerivedBefore(I.getNextNode(), t, &I);
   }
 
   void visitLoadInst(llvm::LoadInst &I) {

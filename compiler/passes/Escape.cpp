@@ -360,13 +360,13 @@ llvm::PreservedAnalyses AlaskaEscapePass::run(llvm::Module &M, llvm::ModuleAnaly
 
 
           if (auto func = dyn_cast<llvm::Function>(call->getCalledOperand())) {
-            llvm::errs() << "escape to argument " << i << " at call to \e[31m\"" << func->getName() << "\e[0m";
-            if (llvm::DILocation *Loc = I.getDebugLoc()) {
-              unsigned Line = Loc->getLine();
-              unsigned Column = Loc->getColumn();  // Optional: Get column number
-              llvm::errs() << " Line: " << Line << ", Column: " << Column << "\n";
-            }
-            llvm::errs() << "\n";
+            // llvm::errs() << "escape to argument " << i << " at call to \e[31m\"" <<
+            // func->getName() << "\e[0m"; if (llvm::DILocation *Loc = I.getDebugLoc()) {
+            //   unsigned Line = Loc->getLine();
+            //   unsigned Column = Loc->getColumn();  // Optional: Get column number
+            //   llvm::errs() << " Line: " << Line << ", Column: " << Column << "\n";
+            // }
+            // llvm::errs() << "\n";
           }
 
 
