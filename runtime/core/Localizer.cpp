@@ -23,7 +23,7 @@ namespace alaska {
   Localizer::Localizer(alaska::Configuration &config, alaska::ThreadCache &tc)
       : tc(tc) {
     if (getenv("HOT_CUTOFF") != NULL) {
-      this->hotness_cutoff = atoi(getenv("HOT_CUTOFF"));
+      knobs.hotness_cutoff = atoi(getenv("HOT_CUTOFF"));
     }
   }
 
@@ -60,29 +60,24 @@ namespace alaska {
       auto header = ObjectHeader::from(m);
 
       // An already localized object should not be double localized (yet)
-      if (header->localized) continue;
+      if (header->localized and not knobs.relocalize) continue;
 
       // Increment the saturating hotness counter
       if (header->hotness < 0b111'111) header->hotness++;
 
       // auto effective_hotness = header->hotness;
       // if (header->localized) effective_hotness /= 2;
-      // if (effective_hotness > hotness_cutoff) {
+      // if (effective_hotness > knobs.hotness_cutoff) {
       //   tc.localize(m);
       // }
-
-      // if an object becomes hot in this scan, track that.
-      if (header->hotness == hotness_cutoff) {
-        res.new_hot++;  // we found a new hot object!
-      }
     }
 
 
-
-    if (dumps_recorded > 64) {
+    if (dumps_recorded > knobs.localization_interval) {
       dumps_recorded = 0;
       auto &ht = rt.handle_table;
       constexpr bool enable_scanning = true;
+
 
       uint64_t total_handles = 0;
       uint64_t total_hotness = 0;
@@ -104,9 +99,9 @@ namespace alaska {
             handles_seen_in_dump++;
           }
 
-          if (effective_hotness > hotness_cutoff) {
+          if (effective_hotness > knobs.hotness_cutoff) {
             if (header->localized) relocated++;
-            tc.localize(m, 8);
+            tc.localize(m, knobs.localization_depth);
             scanned_hot++;
           }
         }
@@ -114,7 +109,10 @@ namespace alaska {
 
 
 
-      alaska::printf("hot handles: %6zu, relocated: %6zu\n", scanned_hot, relocated);
+      // alaska::printf("hot handles: %6zu, relocated: %6zu\n", scanned_hot, relocated);
+      if (scanned_hot > 0) {
+        rt.heap.compact_sizedpages();
+      }
     }
 
     // Push the buffer back to the queue of buffers
