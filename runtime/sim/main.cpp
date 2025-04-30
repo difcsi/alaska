@@ -12,7 +12,9 @@
 #include "alaska/RateCounter.hpp"
 #include "alaska/alaska.hpp"
 #include "alaska/utils.h"
-
+#include <sys/wait.h>
+#include <alaska/HugeObjectAllocator.hpp>
+#include <getopt.h>
 
 enum class Event : uint8_t {
   ALLOC,
@@ -61,14 +63,14 @@ static void ensure_traceb(std::string path) {
 
 
   auto file_size = std::filesystem::file_size(path);
-  int line_num = 0;
+  uint64_t line_num = 0;
   while (fgets(line, sizeof(line), f)) {
     line_num++;
     if (line[0] == '#') continue;  // skip comments
 
     if (line_num % 100000 == 0) {
       float byte_progress = (float)ftell(f) / (float)file_size;
-      printf("processed %d lines (%f%%)\n", line_num, byte_progress * 100.0f);
+      printf("processed %zu lines (%f%%)\n", line_num, byte_progress * 100.0f);
     }
 
 
@@ -189,10 +191,26 @@ class TraceRunner {
   int64_t timeout_cycles = 0;
 
   float time_seconds = 0;
+  FILE *event_stream;
+  size_t num_events = 0;
+
+  uint64_t start_cycle = 0;
+
+
 
  public:
-  TraceRunner() { tc = rt.new_threadcache(); }
-  virtual ~TraceRunner() = default;
+  std::string run_name = "sim";
+
+  TraceRunner(std::string tracefile_path) {
+    if (!tracefile_path.ends_with(".binary")) {
+      ensure_traceb(tracefile_path);
+      tracefile_path = tracefile_path + ".binary";
+    }
+    event_stream = fopen(tracefile_path.c_str(), "r");
+    num_events = std::filesystem::file_size(tracefile_path) / sizeof(TraceEvent);
+    tc = rt.new_threadcache();
+  }
+  virtual ~TraceRunner() { fclose(event_stream); }
 
   // called after allocation/free
   virtual void on_alloc(uint64_t cycle, alaska::Mapping *m) {}
@@ -241,153 +259,322 @@ class TraceRunner {
   }
 
 
-  void run(std::string path) {
-    if (!path.ends_with(".binary")) {
-      ensure_traceb(path);
-      path = path + ".binary";
-    }
-
-    FILE *stream = fopen(path.c_str(), "r");
-    size_t num_events = std::filesystem::file_size(path) / sizeof(TraceEvent);
-
-
-    size_t batch_size = 4096 * 512;
-    auto *events = new TraceEvent[batch_size];
+  // step the simulation forward by one batch of events.
+  long step(size_t batch_size, TraceEvent *events) {
     size_t batch_count = num_events / batch_size;
     uint64_t last_cycles = 0;
-    uint64_t start_cycle = 0;
+    // printf("[%s] reading...\n", run_name.c_str());
+    size_t count = fread(events, sizeof(TraceEvent), batch_size, event_stream);
+    // printf("[%s] read %zu\n", run_name.c_str(), count);
 
-    for (size_t batch = 0; batch < batch_count; batch++) {
-      size_t count = fread(events, sizeof(TraceEvent), batch_size, stream);
-      if (unlikely(batch == 0)) {
-        start_cycle = events[0].cycles;
-      }
-      uint64_t sim_time_ns = events[count - 1].cycles - start_cycle;
-      float sim_time_seconds = (float)sim_time_ns / 1e9f;
-      time_seconds = sim_time_seconds;
+    // If we didn't read any events, we are done. Return 0.
+    if (count == 0) return 0;
+    // If we don't know the start_cycle of the
+    if (unlikely(start_cycle == 0)) start_cycle = events[0].cycles;
 
-      for (size_t i = 0; i < count; i++) {
-        event_counter++;
+    uint64_t sim_time_ns = events[count - 1].cycles - start_cycle;
+    float sim_time_seconds = (float)sim_time_ns / 1e9f;
+    time_seconds = sim_time_seconds;
 
-        uint64_t current_cycle = events[i].cycles - start_cycle;
-        if (last_cycles == 0) last_cycles = current_cycle;
+    for (size_t i = 0; i < count; i++) {
+      event_counter++;
 
-        auto cycles_passed = current_cycle - last_cycles;
-        cycles_handled.track(cycles_passed);
+      uint64_t current_cycle = events[i].cycles - start_cycle;
+      if (last_cycles == 0) last_cycles = current_cycle;
 
-        process_event(events[i]);
-        last_cycles = current_cycle;
+      auto cycles_passed = current_cycle - last_cycles;
+      cycles_handled.track(cycles_passed);
 
-        if (has_timeout) {
-          timeout_cycles -= cycles_passed;
-          if (timeout_cycles <= 0) {
-            has_timeout = false;
-            on_timer(current_cycle);
-          }
+      process_event(events[i]);
+      last_cycles = current_cycle;
+
+      if (has_timeout) {
+        timeout_cycles -= cycles_passed;
+        if (timeout_cycles <= 0) {
+          has_timeout = false;
+          on_timer(current_cycle);
         }
       }
+    }
+    setlocale(LC_ALL, "");
 
-      if (true or batch % 8 == 0) {
-        float progress = (float)batch / (float)batch_count;
-        printf(
-            "[%16.8fs %3.0f%%] processed %15zu events %15.0f/s, %12.0fcyc/s, alloc:%8.0f/s, "
-            "acc:%8.0f/s\n",
-            sim_time_seconds, progress * 100.0f, (batch + 1) * batch_size, event_counter.digest(),
-            cycles_handled.digest(), allocations.digest(), accesses.digest());
-      }
+
+    // how far are we along in the trace file?
+    double progress = (double)(ftell(event_stream) / sizeof(TraceEvent)) / (double)num_events;
+    double events_per_second = event_counter.digest();
+
+    double percent_per_second = events_per_second / num_events;
+    double remaining_percent = 1.0 - progress;
+    double time_remaining_seconds = remaining_percent / percent_per_second;
+
+    printf("[%s %12fs %6.2f%%] %'10ld ev/s  | ~%6lds remaining\n", run_name.c_str(), time_seconds, progress * 100.0,
+           (long)events_per_second, (long)time_remaining_seconds);
+
+    // float progress = printf(
+    //     "[%16.8fs %3.0f%%] processed %15zu events %15.0f/s, %12.0fcyc/s, alloc:%8.0f/s, "
+    //     "acc:%8.0f/s\n",
+    //     sim_time_seconds, progress * 100.0f, (batch + 1) * batch_size, event_counter.digest(),
+    //     cycles_handled.digest(), allocations.digest(), accesses.digest());
+    return count;
+  }
+
+
+  void run(void) {
+    size_t batch_size = 1'000'000;
+    auto *events = new TraceEvent[batch_size];
+    while (step(batch_size, events) != 0) {
     }
     delete[] events;
-    fclose(stream);
   }
 };
 
 
-float start_time = 8;
+
+
+/////////////////////////////////
+
+
+
+
+constexpr float cpi = 2.89;
 
 class HTLBTraceRunner : public TraceRunner {
  public:
   alaska::sim::HTLB htlb;
-  FILE *hitrate_file;
+  bool simulating = false;
+  uint64_t last_dump_cycle = 0;
+  uint64_t us_since_last_dump = 0;
 
-  FILE *frag_file;
-  HTLBTraceRunner()
-      : TraceRunner() {
+  bool do_localization = true;
+
+  FILE *hitrate_file;  // file where csv hitrate output goes
+  FILE *frag_file;     // file where csv fragmentation goes
+
+
+  HTLBTraceRunner(std::string path)
+      : TraceRunner(path) {
     htlb.thread_cache = tc;
-    set_timer(50 * 1000);  // we start off w/ a 50ms timer
-    hitrate_file = fopen("hitrate.csv", "w");
-    fprintf(hitrate_file, "cycle,htlb1,htlb2,tlb1,tlb2,dcache1,dcache2\n");
-
-    frag_file = fopen("frag.csv", "w");
-    fprintf(frag_file, "cycle,id,frag\n");
   }
 
   virtual ~HTLBTraceRunner() { fclose(hitrate_file); }
 
   void on_access(uint64_t cycle, alaska::Mapping *m, uint32_t offset) override {
-    // auto header = alaska::ObjectHeader::from(m);
-    // if (time_seconds > start_time and !header->localized && header->object_size() != 0) {
-    //   this->tc->localize(m, 12);
-    // }
-    htlb.access(*m, offset);
+    if (simulating) htlb.access(*m, offset);
   }
   void on_free(uint64_t cycle, alaska::Mapping *m) override {
-    // printf("invalidate %x\n", m->handle_id());
-    htlb.invalidate(m->handle_id());
+    if (simulating) htlb.invalidate(m->handle_id());
   }
 
+  void maybe_output_state(uint64_t cycle) {
+    if (last_dump_cycle == 0) last_dump_cycle = cycle;
 
-  uint64_t us_since_reset = 0;
-  void on_timer(uint64_t cycle) override {
-    // htlb.print_state();
-    if (time_seconds > start_time) htlb.localize();
+    // Compute the number of cycles since the last dump - we want this for MPKI approx.
+    uint64_t cycles_passed = cycle - last_dump_cycle;
+    last_dump_cycle = cycle;
 
-    uint64_t dump_interval = 100;
-    us_since_reset += dump_interval;
-    if (us_since_reset > 10 * 1000) {
+    if (hitrate_file != NULL) {
       fprintf(hitrate_file, "%zu,", cycle);
-      fprintf(hitrate_file, "%5.1f,", htlb.htlb.l1.hitrate());
-      fprintf(hitrate_file, "%5.1f,", htlb.htlb.l2.hitrate());
-      fprintf(hitrate_file, "%5.1f,", htlb.tlb.l1.hitrate());
-      fprintf(hitrate_file, "%5.1f,", htlb.tlb.l2.hitrate());
-      fprintf(hitrate_file, "%5.1f,", htlb.dcache.l1.hitrate());
-      fprintf(hitrate_file, "%5.1f", htlb.dcache.l2.hitrate());
+      fprintf(hitrate_file, "%zu,", htlb.tlb.l1.hits);
+      fprintf(hitrate_file, "%zu,", htlb.tlb.l1.misses);
+      fprintf(hitrate_file, "%zu,", htlb.tlb.l1.hits);
+      fprintf(hitrate_file, "%zu", htlb.tlb.l2.misses);
       fprintf(hitrate_file, "\n");
       fflush(hitrate_file);
       htlb.reset();
-
-      // dump fragmentation info!
-      auto &table = rt.heap.pt.get_table();
-      int id = 0;
-      for (auto *heap : table) {
-        fprintf(frag_file, "%zu,%s-%d,%f\n", cycle, heap->name, id, heap->fragmentation());
-        id++;
-      }
-      fflush(frag_file);
-
-      us_since_reset = 0;
     }
 
-    set_timer(dump_interval);  // 100us
+
+    // if (frag_file != NULL) {
+    //   // dump fragmentation info!
+    //   auto &table = rt.heap.pt.get_table();
+    //   int id = 0;
+    //   for (auto *heap : table) {
+    //     fprintf(frag_file, "%zu,%s-%d,%f\n", cycle, heap->name, id, heap->fragmentation());
+    //     id++;
+    //   }
+    //   fflush(frag_file);
+    // }
+  }
+
+  void on_timer(uint64_t cycle) override {
+    if (simulating and do_localization) {
+      htlb.localize();
+    }
+    auto &knobs = tc->localizer.knobs;
+
+    us_since_last_dump += knobs.dump_interval_us;
+    if (us_since_last_dump > 10 * 1000) {
+      us_since_last_dump = 0;
+
+      maybe_output_state(cycle);
+      htlb.reset();
+    }
+
+    set_timer(tc->localizer.knobs.dump_interval_us);
+  }
+
+  void run_sim(std::string output_dir) {
+    // make sure that dir exists (mkdir -p behavior)
+    std::filesystem::create_directories(output_dir);
+    std::string hitrate_path = output_dir + "/hitrate.csv";
+    hitrate_file = fopen(hitrate_path.c_str(), "w");
+    fprintf(hitrate_file, "cycle,l1hit,l1miss,l2hit,l2miss\n");
+
+    std::string frag_path = output_dir + "/frag.csv";
+    frag_file = fopen(frag_path.c_str(), "w");
+    fprintf(frag_file, "cycle,id,frag\n");
+
+
+    printf("running simulation in %s\n", output_dir.c_str());
+    simulating = true;
+
+    // schedule the first dump timer.
+    set_timer(tc->localizer.knobs.dump_interval_us);
+
+    size_t batch_size = 1'000'000;
+    auto *events = new TraceEvent[batch_size];
+
+    // run the simulation until we hit the end of the trace.
+    while (step(batch_size, events) != 0) {
+    }
+
+    delete[] events;
+  }
+
+
+  void run_sweep(float branch_time, int num_children = 16) {
+    // This function sweeps the configuration space of the Localizer knobs,
+    // starting from a given branch time in seconds.  It will call fork() on the
+    // simulation for num_children times, and each child will run the simulation
+    // with a different set of knobs.
+
+    bool done = false;
+    size_t batch_size = 1'000'000;
+    auto *events = new TraceEvent[batch_size];
+    do {
+      if (step(batch_size, events) == 0) {
+        done = true;
+        break;
+      }
+    } while (time_seconds < branch_time);
+    delete[] events;
+
+    if (done) {
+      printf("done before branch time!\n");
+      return;
+    }
+
+    run_sim("htlb_sim/results/" + run_name);
   }
 };
 
-int main(int argc, char **argv) {
-  alaska::sim::HTLB htlb;
 
-  if (argc != 2) {
-    printf("Usage: %s <tracefile>\n", argv[0]);
+void usage(void) {
+  fprintf(stderr, "Usage: HTLBTraceRunner [-r run_name] [-t tracefile] [-s sweep_start]\n");
+  fprintf(stderr, "  -r run_name: name of the run. This is used to name the output files.\n");
+  fprintf(stderr, "  -t tracefile: path to the trace file. This is a text file with the trace.\n");
+  fprintf(stderr, "  -s sweep_start: start time for the sweep in seconds.\n");
+  fprintf(stderr, "  -b: baseline (disable localization)\n");
+  fprintf(stderr, "  -b knob=value: adjust knobs (value must be int or float)\n");
+}
+
+
+void adjust_knobs(alaska::LocalizerKnobs &knobs, std::string knob_name, std::string value) {
+  printf("adjust knob %s to %s\n", knob_name.c_str(), value.c_str());
+
+  std::vector<const char *> allowed;
+
+  long int_value = strtol(value.c_str(), NULL, 10);
+  float float_value = strtof(value.c_str(), NULL);
+
+#define KNOB(name, value)                   \
+  if (knob_name == #name) {                 \
+    knobs.name = value;                     \
+    return;                                 \
+  } else {                                  \
+    allowed.push_back(#name " :: " #value); \
+  }
+
+  KNOB(dump_interval_us, int_value);
+  KNOB(localization_interval, int_value);
+  KNOB(localization_depth, int_value);
+  KNOB(hotness_cutoff, int_value);
+  KNOB(relocalize, int_value);
+  KNOB(relocalize_ratio, float_value);
+
+#undef KNOB
+
+
+  fprintf(stderr, "Unknown knob %s\n", knob_name.c_str());
+  fprintf(stderr, "Allowed knobs are:\n");
+  for (auto *knob : allowed) {
+    fprintf(stderr, "  %s\n", knob);
+  }
+  exit(-1);
+}
+
+int main(int argc, char **argv) {
+  char *run_name = NULL;
+  char *tracefile = NULL;
+  bool sweep_agressiveness = false;
+  float sweep_start = 0;
+  bool do_localize = true;
+
+  alaska::LocalizerKnobs knobs;
+
+  // Getopt for those values above
+  int opt;
+
+
+  while ((opt = getopt(argc, argv, "br:t:s:k:")) != -1) {
+    switch (opt) {
+      case 'k': {
+        // the optarg is a key=value
+        // split it on the =
+        std::string arg = optarg;
+        size_t pos = arg.find('=');
+        if (pos == std::string::npos) {
+          fprintf(stderr, "Invalid knob format: %s\n", optarg);
+          exit(EXIT_FAILURE);
+        }
+        std::string key = arg.substr(0, pos);
+        std::string value = arg.substr(pos + 1);
+        adjust_knobs(knobs, key, value);
+        break;
+      }
+
+      case 'b':
+        do_localize = false;
+        break;
+      case 'r':
+        run_name = optarg;
+        break;
+      case 't':
+        tracefile = optarg;
+        break;
+      case 's':
+        sweep_agressiveness = true;
+        sweep_start = atof(optarg);
+        break;
+      default:
+        fprintf(stderr, "Usage: %s [-r run_name] [-t tracefile] [-s sweep_start]\n", argv[0]);
+        exit(EXIT_FAILURE);
+    }
+  }
+  if (tracefile == NULL || run_name == NULL) {
+    usage();
     exit(EXIT_FAILURE);
   }
 
   unsigned long start, end;
 
+  std::string output_dir = std::string("htlb_sim/results/") + run_name;
 
-  HTLBTraceRunner runner;
-  runner.run(argv[1]);
-  runner.htlb.print_state();
-
-
-
+  HTLBTraceRunner runner(tracefile);
+  runner.run_name = run_name;
+  runner.htlb.thread_cache->localizer.knobs = knobs;
+  runner.do_localization = do_localize;
+  runner.run_sweep(sweep_start, 1);
 
   return 0;
 }
