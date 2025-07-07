@@ -77,6 +77,10 @@
 
             inherit buildInputs;
 
+            preBuild = ''
+              export CCACHE_DISABLE=1
+            '';
+
             postFixup = ''
               for b in $out/bin/*; do
                 wrapProgram $b --set PATH ${lib.makeBinPath runInputs } \
