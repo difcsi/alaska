@@ -184,11 +184,11 @@ namespace ck {
     }
 
     const T& at(int i) const {
-      ALASKA_ASSERT(i >= 0 && i < m_size, "");
+      ALASKA_SANITY(i >= 0 && i < m_size, "");
       return data()[i];
     }
     T& at(int i) {
-      ALASKA_ASSERT(i >= 0 && i < m_size, "");
+      ALASKA_SANITY(i >= 0 && i < m_size, "");
       return data()[i];
     }
 
@@ -202,7 +202,7 @@ namespace ck {
     T& last() { return at(size() - 1); }
 
     T take_last() {
-      ALASKA_ASSERT(!is_empty(), "");
+      ALASKA_SANITY(!is_empty(), "");
       T value = move(last());
       last().~T();
       --m_size;
@@ -210,14 +210,14 @@ namespace ck {
     }
 
     T take_first() {
-      ALASKA_ASSERT(!is_empty(), "");
+      ALASKA_SANITY(!is_empty(), "");
       T value = move(first());
       remove(0);
       return value;
     }
 
     void remove(int index) {
-      ALASKA_ASSERT(index < m_size, "");
+      ALASKA_SANITY(index < m_size, "");
 
       if (Traits<T>::is_trivial()) {
         typed_transfer<T>::copy(slot(index), slot(index + 1), m_size - index - 1);
@@ -233,7 +233,7 @@ namespace ck {
     }
 
     void insert(int index, T&& value) {
-      ALASKA_ASSERT(index <= size(), "");
+      ALASKA_SANITY(index <= size(), "");
       if (index == size()) return push(move(value));
       grow_capacity(size() + 1);
       ++m_size;
@@ -296,7 +296,7 @@ namespace ck {
     }
 
     void unchecked_push(T&& value) {
-      ALASKA_ASSERT((size() + 1) <= capacity(), "");
+      ALASKA_SANITY((size() + 1) <= capacity(), "");
       ::new (slot(m_size)) T(move(value));
       ++m_size;
     }
@@ -381,7 +381,7 @@ namespace ck {
     }
 
     void shrink(int new_size) {
-      ALASKA_ASSERT(new_size <= size(), "");
+      ALASKA_SANITY(new_size <= size(), "");
       if (new_size == size()) return;
 
       if (!new_size) {
@@ -529,11 +529,11 @@ namespace ck {
     const T* slot(int i) const { return &data()[i]; }
 
     T* inline_buffer() {
-      ALASKA_ASSERT(inline_capacity > 0, "No inline buffer");
+      ALASKA_SANITY(inline_capacity > 0, "No inline buffer");
       return reinterpret_cast<T*>(m_inline_buffer_storage);
     }
     const T* inline_buffer() const {
-      ALASKA_ASSERT(inline_capacity > 0, "No inline buffer");
+      ALASKA_SANITY(inline_capacity > 0, "No inline buffer");
       return reinterpret_cast<const T*>(m_inline_buffer_storage);
     }
 
