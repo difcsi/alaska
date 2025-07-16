@@ -31,11 +31,13 @@
 
 #define CSR_TRACE 0xc7
 static inline void mark_alloc(uint64_t handle_id) {
+  return;
   write_csr(CSR_TRACE, handle_id);
   write_csr(CSR_TRACE, 0);
 }
 
 static inline void mark_free(uint64_t handle_id) {
+  return;
   write_csr(CSR_TRACE, handle_id | (1ULL << 63));
   write_csr(CSR_TRACE, 0);
 }
@@ -48,6 +50,13 @@ static int dev_alaska_fd = -1;
 
 namespace alaska {
 
+
+  int HandleTable::get_ht_fd(void) {
+#ifdef ALASKA_YUKON
+    return dev_alaska_fd;
+#endif
+    return -1;
+  }
 
   //////////////////////
   // Handle Table
@@ -139,6 +148,13 @@ namespace alaska {
     // Add the slab to the list of slabs and return it
     m_slabs.push(sl);
 
+    // // Skip slab 0 for various reasons. We really need to figure out a better
+    // // way to handle "invalid" handle IDs such as handle 0.
+    // if (idx == 0) {
+    //   printf("Skipping slab 0\n");
+    //   return fresh_slab(new_owner);
+    // }
+
     return sl;
   }
 
@@ -147,10 +163,16 @@ namespace alaska {
     {
       ck::scoped_lock lk(this->lock);
 
+
+      // printf("new slab %p\n", new_owner);
+      // dump(stderr);
+
       // TODO: PERFORMANCE BAD HERE. POP FROM A LIST!
       for (auto *slab : m_slabs) {
         log_trace("Attempting to allocate from slab %p (idx %lu)", slab, slab->idx);
-        if (slab->get_owner() == nullptr && slab->allocator.num_free() > 0) {
+        // if (slab->idx == 0) continue;
+        if ((slab->get_owner() == nullptr || slab->get_owner() == new_owner) &&
+            slab->allocator.num_free() > 0) {
           slab->set_owner(new_owner);
           return slab;
         }
@@ -158,23 +180,6 @@ namespace alaska {
     }
 
     return fresh_slab(new_owner);
-  }
-
-
-  HandleSlab *HandleTable::get_slab(slabidx_t idx) {
-    ck::scoped_lock lk(this->lock);
-
-    log_trace("Getting slab %d", idx);
-    if (idx >= (slabidx_t)m_slabs.size()) {
-      log_trace("Invalid slab requeset!");
-      return nullptr;
-    }
-    return m_slabs[idx];
-  }
-
-  slabidx_t HandleTable::mapping_slab_idx(Mapping *m) const {
-    auto byte_distance = (uintptr_t)m - (uintptr_t)m_table;
-    return byte_distance / HandleTable::slab_size;
   }
 
 
@@ -192,14 +197,14 @@ namespace alaska {
       float used_frac = 1.0 - avail_frac;
 
       if (has_owner) {
-        fprintf(stream, "\033[48;2;0;0;%dm", (int)(255 * used_frac));
+        fprintf(stream, "\033[48;2;0;0;%dm owned", (int)(255 * used_frac));
       } else {
-        fprintf(stream, "\033[48;2;%d;0;0m", (int)(255 * used_frac));
+        fprintf(stream, "\033[48;2;%d;0;0m unowned", (int)(255 * used_frac));
       }
 
       // printf("%7.2f ", 100.0 * used_frac);
-      fprintf(stream, "%7lu ", avail);
-      fprintf(stream, "\e[0m");
+      fprintf(stream, "%7lu (%5.1f%%)", avail, avail_frac * 100.0f);
+      fprintf(stream, "\e[0m ");
       // slab->dump(stream);
     }
     fprintf(stream, "\n");
@@ -215,22 +220,6 @@ namespace alaska {
     auto *slab = m_slabs[idx];
     return slab->allocator.is_allocated(m);
   }
-
-  void HandleTable::put(Mapping *m, alaska::ThreadCache *owner) {
-    log_trace("Putting handle %p", m);
-    // Validate that the handle is in this table
-    ALASKA_ASSERT(mapping_slab_idx(m) < (slabidx_t)m_slabs.size(),
-        "attempted to put a handle into the wrong table")
-
-    // Get the slab that the handle is in
-    auto *slab = m_slabs[mapping_slab_idx(m)];
-    if (slab->is_owned_by(owner)) {
-      slab->release_local(m);
-    } else {
-      slab->release_remote(m);
-    }
-  }
-
 
 
   //////////////////////
@@ -293,8 +282,27 @@ namespace alaska {
   HandleSlab::HandleSlab(HandleTable &table, slabidx_t idx)
       : table(table)
       , idx(idx) {
+
+
     auto start = table.get_slab_start(idx);
-    allocator.configure(start, sizeof(alaska::Mapping), HandleTable::slab_capacity);
+    auto capacity = HandleTable::slab_capacity;
+
+    allocator.configure(start, sizeof(alaska::Mapping), capacity);
+
+
+    // If we are the first slab, we need to ask the allocator to
+    // allocate one handle, so that handle id 0 is "leaked" and will
+    // not be used by any application. This is to maintain the invariant
+    // that handle id 0 is a "invalid" or "null" handle in the runtime.
+    if (idx == 0) {
+      auto *p = allocator.alloc();
+      if (p != start) {
+        fprintf(stderr,
+            "Failed to allocate first handle in slab 0. Allocator returned %p, expected %p\n", p,
+            start);
+        abort();
+      }
+    }
   }
 
 
@@ -303,27 +311,7 @@ namespace alaska {
     auto *m = (Mapping *)allocator.alloc();
 
     if (unlikely(m == nullptr)) return nullptr;
-    update_state();
-#ifdef ALASKA_YUKON
-    mark_alloc(m->handle_id());
-#endif
     return m;
-  }
-
-  void HandleSlab::release_remote(Mapping *m) {
-    allocator.release_remote(m);
-    update_state();
-#ifdef ALASKA_YUKON
-    mark_free(m->handle_id());
-#endif
-  }
-
-  void HandleSlab::release_local(Mapping *m) {
-    allocator.release_local(m);
-    update_state();
-#ifdef ALASKA_YUKON
-    mark_free(m->handle_id());
-#endif
   }
 
 
@@ -332,7 +320,6 @@ namespace alaska {
     ::mlock((void *)start, sizeof(alaska::Mapping) * HandleTable::slab_capacity);
   }
 
-  void HandleSlab::update_state() {}
 
 
   void HandleSlab::dump(FILE *stream) {

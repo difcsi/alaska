@@ -50,9 +50,9 @@ namespace alaska {
     HandleSlabQueue *current_queue = nullptr;  // What queue is this slab in?
 
 
+
     // -- Methods --
     HandleSlab(HandleTable &table, slabidx_t idx);
-    void update_state(void);  // Update the state of this slab
     void dump(FILE *stream);  // Dump this slab's debug info to a file
 
     alaska::Mapping *alloc(void);             // Allocate a mapping from this slab
@@ -60,8 +60,15 @@ namespace alaska {
     void release_local(alaska::Mapping *m);   // Return a mapping back to this slab (local)
     void mlock(void);                         // `mlock` the memory behind this slab
 
+    size_t num_free(void) const { return allocator.num_free(); }
     SizedAllocator allocator;
   };
+
+
+
+  inline void HandleSlab::release_remote(Mapping *m) { allocator.release_remote(m); }
+
+  inline void HandleSlab::release_local(Mapping *m) { allocator.release_local(m); }
 
 
 
@@ -113,7 +120,15 @@ namespace alaska {
 
 
     // Free/release *some* mapping
-    void put(alaska::Mapping *m, alaska::ThreadCache *owner = (alaska::ThreadCache *)0x1000UL);
+    inline void put(
+        alaska::Mapping *m, alaska::ThreadCache *owner = (alaska::ThreadCache *)0x1000UL) {
+      auto *slab = m_slabs[mapping_slab_idx(m)];
+      if (slab->is_owned_by(owner)) {
+        slab->release_local(m);
+      } else {
+        slab->release_remote(m);
+      }
+    }
 
     void *get_base(void) const { return (void *)m_table; }
 
@@ -121,6 +136,8 @@ namespace alaska {
     void enable_mlock() { do_mlock = true; }
 
     const ck::vec<alaska::HandleSlab *> &get_slabs(void) const { return m_slabs; }
+
+    static int get_ht_fd(void);  // only valid on riscv under yukon
 
    protected:
     friend HandleSlab;
@@ -151,4 +168,22 @@ namespace alaska {
 
     ck::vec<alaska::HandleSlab *> m_slabs;
   };
+
+
+
+  inline HandleSlab *HandleTable::get_slab(slabidx_t idx) {
+    // ck::scoped_lock lk(this->lock);
+
+    log_trace("Getting slab %d", idx);
+    if (idx >= (slabidx_t)m_slabs.size()) {
+      log_trace("Invalid slab requeset!");
+      return nullptr;
+    }
+    return m_slabs[idx];
+  }
+
+  inline slabidx_t HandleTable::mapping_slab_idx(Mapping *m) const {
+    auto byte_distance = (uintptr_t)m - (uintptr_t)m_table;
+    return byte_distance / HandleTable::slab_size;
+  }
 }  // namespace alaska

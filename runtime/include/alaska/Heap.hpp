@@ -37,7 +37,7 @@ namespace alaska {
 
 
 #ifndef HEAP_SIZE_SHIFT_FACTOR
-#define HEAP_SIZE_SHIFT_FACTOR 33
+#define HEAP_SIZE_SHIFT_FACTOR 35
 #endif
 #ifdef ALASKA_TRACK_VALGRIND
   static constexpr uint64_t heap_size_shift_factor = 33;
@@ -128,6 +128,50 @@ namespace alaska {
     ck::mutex lock;  // TODO: reader/writer lock!
     ck::vec<alaska::HeapPage *> table;
   };
+  
+
+
+  inline alaska::HeapPage *HeapPageTable::get(void *page) {
+    auto *p = walk(page, false);
+    if (p == nullptr) return nullptr;
+    return *p;
+  }
+
+
+  inline alaska::HeapPage *HeapPageTable::get_unaligned(void *addr) {
+    uintptr_t heap_offset = (uintptr_t)addr - (uintptr_t)heap_start;
+    uintptr_t page_ind = heap_offset / alaska::page_size;
+    void *page = (void *)((uintptr_t)heap_start + page_ind * alaska::page_size);
+
+    auto *p = walk(page, false);
+    if (p == nullptr) return nullptr;
+    return *p;
+  }
+
+  inline void HeapPageTable::set(void *page, alaska::HeapPage *hp) { *walk(page, true) = hp; }
+
+
+  inline alaska::HeapPage **HeapPageTable::walk(void *vpage, bool ensure) {
+    // ck::scoped_lock lk(this->lock);  // TODO: reader/writer lock
+
+    // `page` here means the offset from the start of the heap.
+    uintptr_t page_off = (uintptr_t)vpage - (uintptr_t)heap_start;
+    // Extrac the page number (just an index into the page table structure)
+    off_t page_number = page_off >> alaska::page_shift_factor;
+    // printf("vpage: %p, heap_start: %p, page_off: %lu, page_number: %lu\n", vpage, heap_start,
+    //     page_off, page_number);
+
+
+    if (page_number >= table.size()) {
+      if (!ensure) {
+        return nullptr;
+      }
+      // If the page number is greater than the size of the table, we need to grow the table.
+      table.resize(page_number + 1);
+    }
+
+    return &table[page_number];
+  }
 
 
   // The Heap provides a simple interface for allocating and freeing memory. It's main job
@@ -173,8 +217,6 @@ namespace alaska {
     long compact_sizedpages(void);
     long compact_locality_pages(void);
 
-    long jumble();
-
    private:
     template <typename T, typename Fn>
     T *find_or_alloc_page(
@@ -191,8 +233,6 @@ namespace alaska {
   template <typename T, typename Fn>
   T *Heap::find_or_alloc_page(
       alaska::Magazine<T> &mag, ThreadCache *owner, size_t avail_requirement, Fn &&init_fn) {
-    ALASKA_SANITY(
-        this->lock.is_locked(), "The lock must be held before calling find_or_alloc_page");
     if (mag.size() != 0) {
       T *best = nullptr;
       mag.foreach ([&](T *p) {

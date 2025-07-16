@@ -305,8 +305,8 @@ namespace alaska::sim {
       tlb.print_state();
     }
 
-    // Localize, returning if utilization has been improved.
-    bool localize(void) {
+    // Localize, returning skew cycles.
+    size_t localize(void) {
       auto &rt = alaska::Runtime::get();
 
       // auto utilization_before = get_htlb_utilization();
@@ -318,16 +318,17 @@ namespace alaska::sim {
       for (size_t i = 0; i < handles.size(); i++) {
         buffer[i] = handles[i];
       }
-      this->thread_cache->localizer.feed_hotness_buffer(528, buffer);
+      auto res = this->thread_cache->localizer.feed_hotness_buffer(528, buffer);
 
-      // auto utilization_after = get_htlb_utilization();
-      // printf("%3.0f%% -> %3.0f%%\n", utilization_before * 100.0, utilization_after * 100.0);
-      // rt.heap.dump(stdout);
-      // we want to raise utilization by localization. Return true if we have.
-      // return utilization_after > utilization_before;
-      return false;
+      if (res.localized) {
+        return 400 * 1000;
+      } else {
+        return 2000;
+      }
     }
 
+
+    size_t memory_access_latency = 50;
 
     float get_htlb_utilization(void) {
       auto entries = htlb.get_entries();
@@ -350,9 +351,17 @@ namespace alaska::sim {
 
     void invalidate(handle_id_t hid) { htlb.invalidate(hid); }
 
-    bool memory_load(uintptr_t addr) { return dcache.access(addr / 128); }
+    size_t memory_load(uintptr_t addr) {
+      if (dcache.access(addr / 128)) {
+        return 1;
+      } else {
+        return memory_access_latency;
+      }
+    }
 
-    void access(alaska::Mapping &m, uint32_t offset) {
+    // access the htlb, and return some kind of modelled latency for the access.
+    size_t access(alaska::Mapping &m, uint32_t offset) {
+      size_t latency = 0;
       bool hit_in_htlb = htlb.access(m.handle_id());
       handle_lookups++;
       if (!hit_in_htlb) {
@@ -361,17 +370,21 @@ namespace alaska::sim {
         // to perform a handle table walk.
         handle_walks++;
         memory_accesses++;
-        memory_load((uintptr_t)&m);
+
+        latency += memory_load((uintptr_t)&m);
       }
 
       bool hit_in_tlb = tlb.access(to_page((char *)m.get_pointer() + offset));
       if (!hit_in_tlb) {
         memory_accesses += 3;  // page walk!
+
+        latency += memory_access_latency * 3;
         page_walks++;
       }
 
-      memory_load((uintptr_t)m.get_pointer() + offset);
+      latency += memory_load((uintptr_t)m.get_pointer() + offset);
       memory_accesses++;  // the actual access.
+      return latency;
     }
   };
 

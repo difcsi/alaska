@@ -17,21 +17,23 @@
 namespace alaska {
 
 
+
   struct ObjectHeader final {
     // The first 32 bits of the object header are the handle id. We use this
     // very often, so we want it to be fast as possible to access (without masks or anything)
-    uint32_t handle_id : 32;
+    uint32_t handle_id;
     // we track the size of the object in the header by counting the number of "blocks"
     // that the object takes up. Really, this is the size over 8
     // This is just to save bits here :)
-    uint32_t blocks : 24;
-    // 8 extra bits of metadata
+    uint16_t blocks;
+
+    // And then theres some metadata
     union {
       struct {
         bool localized : 1;   // A marker to quickly indicate if the object is localized
         uint8_t hotness : 6;  // saturating counter for how many times an object has been in a dump
       };
-      uint8_t __metadata : 8;  // don't use this manually. just here to ensure space
+      uint16_t __metadata : 16;  // don't use this manually. just here to ensure space
     };
 
     size_t object_size(void) const { return this->blocks * 8; }
@@ -60,6 +62,7 @@ namespace alaska {
     static ObjectHeader *from(alaska::Mapping &m) { return from(m.get_pointer()); }
     static ObjectHeader *from(alaska::Mapping *m) { return from(m->get_pointer()); }
     static ObjectHeader *from(void *ptr) {
+      // return (ObjectHeader *)__builtin_assume_aligned((ObjectHeader *)((off_t)ptr - sizeof(ObjectHeader)), sizeof(ObjectHeader));
       return (ObjectHeader *)((off_t)ptr - sizeof(ObjectHeader));
     }
 
@@ -78,5 +81,5 @@ namespace alaska {
 
   } __attribute__((packed));
 
-  // static_assert(sizeof(ObjectHeader) == 8, "ObjectHeader must be 8 bytes");
+  static_assert(sizeof(ObjectHeader) == 8, "ObjectHeader must be 8 bytes");
 }  // namespace alaska

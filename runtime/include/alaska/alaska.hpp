@@ -60,64 +60,64 @@ namespace alaska {
 #endif
 
 
+
   class Mapping {
    private:
-    // Represent the fact that a handle is just a pointer w/ "important bit patterns"
-    // as a simple union.
-    union {
-      void *ptr;  // Raw pointer memory
-      struct {
-        uint64_t misc : 62;   // Some kind of extra info (usually just a pointer)
-        unsigned pinned : 1;  // If this handle is pinned currently.
-        unsigned invl : 1;    // This handle is allocated, but invalid
-      } alt __attribute__((packed));
-    };
+    static constexpr uint64_t MAPPING_BIT_PINNED = (1UL << 63);
+    uint64_t value;
+
 
    public:
-    ALASKA_INLINE void *get_pointer(void) const { return (void *)(uint64_t)alt.misc; }
+    ALASKA_INLINE void *get_pointer(void) const { return (void *)this->value; }
 
-    ALASKA_INLINE void *get_pointer_fast(void) const { return ptr; }
+    ALASKA_INLINE void *get_pointer_fast(void) const { return (void *)this->value; }
 
     inline void invalidate(void) {
 #ifdef __riscv
       // Fence *before* the handle invalidation.
-      __asm__ volatile("fence" ::: "memory");
+      // __asm__ volatile("fence" ::: "memory");
       __asm__ volatile("csrw 0xc4, %0" ::"rK"((uint64_t)handle_id()) : "memory");
 #endif
     }
 
     void set_pointer(void *ptr) {
-      reset();
-      this->ptr = ptr;
-      alt.invl = 0;
+      // reset();
+
+      this->value = (uint64_t)ptr;
       invalidate();
     }
+
 
 
     // Get the next mapping in the free list. Returns NULL
     // if this isn't a free handle
     alaska::Mapping *get_next(void) {
       if (is_free()) return NULL;
-      return (alaska::Mapping *)(uint64_t)alt.misc;
+      return (alaska::Mapping *)this->value;
     }
 
-    bool is_free(void) const { return alt.invl; }
+    bool is_free(void) const {
+      // TODO:
+      return false;
+    }
 
 
     // TODO: should these be atomic?
-    bool is_pinned(void) const { return this->alt.pinned; }
-    void set_pinned(bool to) { this->alt.pinned = to; }
-
-    // TODO: Atomics:
-    void set_invalid(void) { this->alt.invl = 1; }
-    // TODO: Atomics:
-    void clear_invalid(void) { this->alt.invl = 0; }
-    bool is_invalid(void) { return this->alt.invl; }
+    bool is_pinned(void) const {
+      // check MAPPING_BIT_PINNED
+      return (this->value & MAPPING_BIT_PINNED) != 0;
+    }
+    void set_pinned(bool to) {
+      if (to) {
+        this->value |= MAPPING_BIT_PINNED;
+      } else {
+        this->value &= ~MAPPING_BIT_PINNED;
+      }
+    }
 
 
     void reset(void) {
-      ptr = NULL;
-      alt.invl = 0;
+      this->value = 0;
       invalidate();
     }
 
@@ -163,7 +163,7 @@ namespace alaska {
     // return null.
     static ALASKA_INLINE alaska::Mapping *from_handle_safe(void *ptr) {
       if (alaska::Mapping::is_handle_slow(ptr)) {
-        return alaska::Mapping::from_handle(ptr);
+        return (alaska::Mapping *)(alaska::Mapping::from_handle(ptr));
       }
       // Return null if the pointer is not really a handle
       return nullptr;
@@ -183,6 +183,9 @@ namespace alaska {
     static ALASKA_INLINE bool is_handle_slow(void *ptr) { return ((uint64_t)ptr >> 62) == 0b10; }
   };
 
+  static_assert(
+      sizeof(alaska::Mapping) == 8, "Mapping must be 8 bytes to fit in a handle. Please fix this.");
+
   // runtime.cpp
   extern void record_translation_info(bool hit);
 
@@ -194,25 +197,6 @@ namespace alaska {
     memcpy(dst_data, src_data, size);
   }
 
-
-  // template <typename T, typename... Args>
-  // T *make_object(Args &&...args) {
-  //   // Allocate raw memory for the object
-  //   void *ptr = alaska_internal_malloc(sizeof(T));
-  //   // Use placement new to construct the object in the allocated memory
-  //   new (ptr) T(args...);
-  //   return (T *)ptr;
-  // }
-
-  // template <typename T>
-  // void delete_object(T *ptr) {
-  //   if (ptr) {
-  //     // Call the destructor explicitly
-  //     ptr->~T();
-  //     // Free the raw memory
-  //     alaska_internal_free(ptr);
-  //   }
-  // }
 
 
   // Construct an array of length `length` with default constructors

@@ -69,7 +69,7 @@ namespace alaska {
     void *objects_start;                // The start of the object memory
     void *objects_end;                  // The end of the object memory (exclusive)
     void *bump_next;                    // The next object to be bump allocated.
-    alaska::ShardedFreeList free_list;  // A free list for tracking releases
+    alaska::ShardedFreeList<DefaultFreeListBlock> free_list;  // A free list for tracking releases
   };
 
 

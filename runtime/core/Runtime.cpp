@@ -32,8 +32,10 @@ namespace alaska {
       : config(config)
       , handle_table(config)
       , heap(config) {
-    // Validate that there is not already a runtime (TODO: atomics?)
-    ALASKA_ASSERT(g_runtime == nullptr, "Cannot create more than one runtime");
+    if (g_runtime != nullptr) {
+      log_error("Cannot create a new Alaska Runtime, one already exists at %p", g_runtime);
+      abort();
+    }
 
     // Assign the global runtime to be this instance
     atomic_set(g_runtime, this);
@@ -172,7 +174,6 @@ namespace alaska {
     auto *m = alaska::Mapping::from_handle((void *)handle);
     // printf("fault on %p\n", m);
     handle_faults.track_atomic(1);
-    m->clear_invalid();
     return 0;
   }
 

@@ -15,6 +15,7 @@
 #include <sys/wait.h>
 #include <alaska/HugeObjectAllocator.hpp>
 #include <getopt.h>
+#include <math.h>
 
 enum class Event : uint8_t {
   ALLOC,
@@ -29,6 +30,32 @@ struct TraceEvent {
   // misc data. In ALLOC, this is the size. in ACCESS, this is the offset.
   uint32_t misc;
 };
+
+// Generate exponentially distributed random number with the given mean
+// result is in us for use with itimer
+static uint64_t exp_rand(uint64_t mean_us) {
+  return mean_us;
+  double u = drand48();
+
+  // u = [0,1), uniform random, now convert to exponential
+  u = -log(1.0 - u) * ((double)mean_us);
+
+  // now shape u back into a uint64_t and return
+  uint64_t ret = 0;
+  if (u > ((double)(-1ULL))) {
+    ret = -1ULL;
+  } else {
+    ret = (uint64_t)u;
+  }
+
+  // corner case
+  if (ret == 0) {
+    ret = 1;
+  }
+
+  return ret;
+}
+
 
 
 static void ensure_traceb(std::string path) {
@@ -307,8 +334,8 @@ class TraceRunner {
     double remaining_percent = 1.0 - progress;
     double time_remaining_seconds = remaining_percent / percent_per_second;
 
-    printf("[%s %12fs %6.2f%%] %'10ld ev/s  | ~%6lds remaining\n", run_name.c_str(), time_seconds, progress * 100.0,
-           (long)events_per_second, (long)time_remaining_seconds);
+    printf("[%s %12fs %6.2f%%] %'10ld ev/s  | ~%6lds remaining\n", run_name.c_str(), time_seconds,
+        progress * 100.0, (long)events_per_second, (long)time_remaining_seconds);
 
     // float progress = printf(
     //     "[%16.8fs %3.0f%%] processed %15zu events %15.0f/s, %12.0fcyc/s, alloc:%8.0f/s, "
@@ -351,6 +378,8 @@ class HTLBTraceRunner : public TraceRunner {
   FILE *frag_file;     // file where csv fragmentation goes
 
 
+  uint64_t ns_sim_skew = 0;
+
   HTLBTraceRunner(std::string path)
       : TraceRunner(path) {
     htlb.thread_cache = tc;
@@ -358,12 +387,24 @@ class HTLBTraceRunner : public TraceRunner {
 
   virtual ~HTLBTraceRunner() { fclose(hitrate_file); }
 
+
+  int miss_count = 0;
   void on_access(uint64_t cycle, alaska::Mapping *m, uint32_t offset) override {
-    if (simulating) htlb.access(*m, offset);
+    if (simulating) {
+      ns_sim_skew += htlb.access(*m, offset);
+    }
   }
   void on_free(uint64_t cycle, alaska::Mapping *m) override {
     if (simulating) htlb.invalidate(m->handle_id());
   }
+
+
+
+
+  size_t min_misses = -1;
+  size_t max_misses = 0;
+  float miss_frac = 0;
+
 
   void maybe_output_state(uint64_t cycle) {
     if (last_dump_cycle == 0) last_dump_cycle = cycle;
@@ -372,15 +413,24 @@ class HTLBTraceRunner : public TraceRunner {
     uint64_t cycles_passed = cycle - last_dump_cycle;
     last_dump_cycle = cycle;
 
+    size_t misses = htlb.tlb.l2.misses;
+
+    if (misses < min_misses) min_misses = misses;
+    if (misses > max_misses) max_misses = misses;
+    miss_frac = (float)(misses - min_misses) / (float)(max_misses - min_misses);
+
     if (hitrate_file != NULL) {
       fprintf(hitrate_file, "%zu,", cycle);
       fprintf(hitrate_file, "%zu,", htlb.tlb.l1.hits);
       fprintf(hitrate_file, "%zu,", htlb.tlb.l1.misses);
       fprintf(hitrate_file, "%zu,", htlb.tlb.l1.hits);
-      fprintf(hitrate_file, "%zu", htlb.tlb.l2.misses);
+      fprintf(hitrate_file, "%zu,", htlb.tlb.l2.misses);
+      fprintf(hitrate_file, "%f,", miss_frac);
+      fprintf(hitrate_file, "%zu", tc->localizer.localized_objects);
       fprintf(hitrate_file, "\n");
       fflush(hitrate_file);
       htlb.reset();
+      // tc->localizer.localized_objects = 0;
     }
 
 
@@ -396,21 +446,29 @@ class HTLBTraceRunner : public TraceRunner {
     // }
   }
 
+  bool cleared = false;
+
   void on_timer(uint64_t cycle) override {
-    if (simulating and do_localization) {
-      htlb.localize();
+    float sim_time_seconds = (float)(cycle + ns_sim_skew) / 1e9f;
+    if (simulating and do_localization and sim_time_seconds > 0) {
+      tc->localizer.knobs.effort = miss_frac;
+
+      ns_sim_skew += htlb.localize();
     }
+
     auto &knobs = tc->localizer.knobs;
 
     us_since_last_dump += knobs.dump_interval_us;
     if (us_since_last_dump > 10 * 1000) {
       us_since_last_dump = 0;
 
-      maybe_output_state(cycle);
+      maybe_output_state(cycle + ns_sim_skew);
       htlb.reset();
     }
 
-    set_timer(tc->localizer.knobs.dump_interval_us);
+    auto interval = exp_rand(tc->localizer.knobs.localization_interval);
+
+    set_timer(interval);
   }
 
   void run_sim(std::string output_dir) {
@@ -418,7 +476,7 @@ class HTLBTraceRunner : public TraceRunner {
     std::filesystem::create_directories(output_dir);
     std::string hitrate_path = output_dir + "/hitrate.csv";
     hitrate_file = fopen(hitrate_path.c_str(), "w");
-    fprintf(hitrate_file, "cycle,l1hit,l1miss,l2hit,l2miss\n");
+    fprintf(hitrate_file, "cycle,l1hit,l1miss,l2hit,l2miss,quality,localized_objects\n");
 
     std::string frag_path = output_dir + "/frag.csv";
     frag_file = fopen(frag_path.c_str(), "w");
@@ -578,3 +636,4 @@ int main(int argc, char **argv) {
 
   return 0;
 }
+

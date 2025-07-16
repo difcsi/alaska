@@ -13,7 +13,7 @@
 
 #include <alaska/liballoc.h>
 
-#ifdef ALASKA_SANITY_CHECK
+#ifndef ALASKA_RELEASE_BUILD
 #define ALASKA_SANITY(c, msg, ...)                                                              \
   do {                                                                                          \
     if (!(c)) { /* if the check is not true... */                                               \
@@ -31,6 +31,9 @@
 #define ALASKA_SANITY(c, msg, ...) /* do nothing if it's disabled */
 #endif
 
+
+// if in release mode
+#ifndef ALASKA_RELEASE_BUILD
 #define ALASKA_ASSERT(c, msg, ...)                                                              \
   do {                                                                                          \
     if (!(c)) { /* if the check is not true... */                                               \
@@ -44,6 +47,10 @@
       fprintf(stderr, "\x1b[31m----------------------------------------------------\x1b[0m\n"); \
     }                                                                                           \
   } while (0);
+#else
+#define ALASKA_ASSERT(c, msg, ...)
+#endif
+
 
 
 

@@ -13,11 +13,6 @@
 #include <alaska/Heap.hpp>
 
 
-__attribute__((noinline))
-extern "C" void me_abort_yay(void) {
-  //
-}
-
 namespace alaska {
 
 
@@ -52,7 +47,7 @@ namespace alaska {
 
   void *LocalityPage::alloc(const alaska::Mapping &m, alaska::AlignedSize size) {
     if (current_slab == nullptr) {
-      printf("allocating new slab\n");
+      // printf("allocating new slab\n");
       current_slab = allocate_slab();
     }
 

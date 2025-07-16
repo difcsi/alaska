@@ -31,7 +31,6 @@ namespace alaska {
       configure(objects, object_size, object_count);
     }
     ~SizedAllocator(void) {
-      if (bitmap) alaska_internal_free(bitmap);
     }
 
     // Allocate an object of size `this->object_size`
@@ -41,12 +40,10 @@ namespace alaska {
     inline void release_local(void *ptr) {
       free_list.free_local(ptr);
       alaska_track_free(ptr, 0);
-      track_freed(ptr);
     }
     inline void release_remote(void *ptr) {
       free_list.free_remote(ptr);
       alaska_track_free(ptr, 0);
-      track_freed(ptr);
     }
 
     float fragmentation(void) { return (float)num_free_in_free_list() / (float)object_extent(); }
@@ -182,7 +179,7 @@ namespace alaska {
     void *bump_next;                    // The next object to be bump allocated.
     size_t object_size;                 // How large each object is
     uint8_t *bitmap = nullptr;          // A pointer to the start of the free bitmap
-    alaska::ShardedFreeList free_list;  // A free list for tracking releases
+    alaska::ShardedFreeList<DefaultFreeListBlock> free_list;  // A free list for tracking releases
     alaska::AllocationRateCounter rates;
   };
 
@@ -197,7 +194,6 @@ namespace alaska {
     }
 
     alaska_track_malloc_size(object, object_size, object_size, 0);
-    track_allocated(object);
 
     return object;
   }
@@ -248,15 +244,6 @@ namespace alaska {
     this->objects_end = (void *)((uintptr_t)objects + (object_count * object_size));
     this->object_size = object_size;
 
-
-    if (bitmap) {
-      alaska_internal_free(bitmap);
-      bitmap = nullptr;
-    }
-    // Allocate the bitmap to track which objects are allocated.
-    auto bitmap_size = (object_count + 8 - 1) / 8;
-    this->bitmap = (uint8_t *)alaska_internal_calloc(1, bitmap_size);
-    // Re-construct the free list just in case
     this->free_list = ShardedFreeList();
   }
 

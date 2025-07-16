@@ -53,26 +53,6 @@ namespace alaska {
 
 
 
-  void ThreadCache::free_allocation(const alaska::Mapping &m) {
-    this->free_rate.track(1);
-    void *ptr = m.get_pointer();
-
-    // Grab the page from the global heap (walk the page table).
-    auto *page = this->runtime.heap.pt.get_unaligned(ptr);
-    if (unlikely(page == NULL)) {
-      this->runtime.heap.huge_allocator.free(ptr);
-      return;
-    }
-    ALASKA_ASSERT(page != NULL, "calling hfree should always return a heap page");
-
-    if (page->is_owned_by(this)) {
-      log_trace("Free handle %p locally (ptr = %p)", &m, ptr);
-      page->release_local(m, ptr);
-    } else {
-      log_trace("Free handle %p remotely (ptr = %p)", &m, ptr);
-      page->release_remote(m, ptr);
-    }
-  }
 
 
 
@@ -170,10 +150,23 @@ namespace alaska {
       // ALASKA_ASSERT(worked, "huge free failed");
       return;
     }
-    // Free the allocation behind a mapping
-    free_allocation(*m);
+
+    // --- Free the data allocation --- //
+    void *ptr = m->get_pointer();
+    auto *page = this->runtime.heap.pt.get_unaligned(ptr);
+    if (unlikely(page == NULL)) {
+      this->runtime.heap.huge_allocator.free(ptr);
+      return;
+    }
+    if (page->is_owned_by(this)) {
+      page->release_local(*m, ptr);
+    } else {
+      page->release_remote(*m, ptr);
+    }
+
     m->set_pointer(nullptr);
-    // Return the handle to the handle table.
+
+    // --- Free the handle allocation --- //
     this->runtime.handle_table.put(m, this);
   }
 

@@ -14,6 +14,18 @@
 
 #include <alaska/ThreadCache.hpp>
 
+/* Used to chat w/ the kernel module to deliver timer interrupts for dumping */
+#include <linux/ioctl.h>
+struct yukon_schedule_arg {
+  unsigned long handler_address;  // Address of the handler function
+  unsigned long delay;            // Delay in microseconds before scheduling
+};
+
+#define YUKON_IOCTL_MAGIC 'y'
+#define YUKON_IOCTL_SCHEDULE _IOR(YUKON_IOCTL_MAGIC, 0, struct yukon_schedule_arg *)
+#define YUKON_IOCTL_RETURN _IO(YUKON_IOCTL_MAGIC, 1)
+
+
 
 namespace yukon {
 
@@ -33,4 +45,7 @@ namespace yukon {
   alaska::ThreadCache *get_dump_tc(void);
 
 
-}
+  void dump_alarm_handler(int sig);
+
+
+}  // namespace yukon

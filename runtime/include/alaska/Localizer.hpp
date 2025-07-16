@@ -13,7 +13,10 @@
 
 #include <alaska/alaska.hpp>
 #include <alaska/Configuration.hpp>
+#include "alaska/Runtime.hpp"
 #include <ck/set.h>
+#include <alaska/RateCounter.hpp>
+
 
 namespace alaska {
 
@@ -27,23 +30,24 @@ namespace alaska {
 
 
   struct LocalizerKnobs {
+    float effort = 1.0;
     // What is the maximum time allowed between dumps? (microseconds)
-    long dump_interval_us = 50;
+    long dump_interval_us = 100; // 1000000;
 
     // How often do we act on dumps? (number of dumps)
-    long localization_interval = 64;  // (50 * 1000) / dump_interval_us;
+    long localization_interval = 1000;  // (50 * 1000) / dump_interval_us;
 
     // When localizing an object, how far do we recurse into the pointer graph of that object to
     // localize the objects it points to?
-    long localization_depth = 4;
+    long localization_depth = 0;
 
     // This value is used to determine which handles are hot and which aren't.
-    // A value of N here means that if a handle has been seen in >N dumps, it is hot.
-    long hotness_cutoff = 24;
+    long hotness_cutoff = 32;
 
     // If true, the localizer will attempt to relocalize handles that have
     // been localized before.
     bool relocalize = false;
+
     // If relocalizing is on, we multiply a handle's hotness by this value to
     // compute the effective hotness of the handle.
     float relocalize_ratio = 0.5;
@@ -84,6 +88,12 @@ namespace alaska {
     alaska::ThreadCache &tc;
     size_t expected_count = 0;
 
+    // Updated when parsing a dump image.
+    alaska::RateCounter saturated_handle_counter;
+    alaska::RateCounter invalid_handle_counter;
+    alaska::RateCounter valid_handle_counter;
+    alaska::RateCounter bytes_localized_counter;
+
     struct buffer {
       struct buffer *next;
     };
@@ -91,19 +101,27 @@ namespace alaska {
 
     long dumps_recorded = 0;
 
-    ck::map<handle_id_t, ck::map<handle_id_t, uint64_t>> dump_connectivity;
+    size_t saturated_bytes = 0;              // how many bytes are referenced by the handles in...
+    ck::vec<handle_id_t> saturated_handles;  // ... the queue of hids which have saturated hotness.
+
+    float compute_quality(handle_id_t *hids, size_t count);
 
 
    public:
+    size_t localized_objects = 0;
+    float last_quality = 0;
     LocalizerKnobs knobs;
     Localizer(alaska::Configuration &config, alaska::ThreadCache &tc);
 
     // Get a hotness buffer that can fit `count` handle_ids.
     handle_id_t *get_hotness_buffer(size_t count);
 
+    void localize_saturated_handles();
+
 
     struct ScanResult {
-      long new_hot;  // how many new handles were considered hot?
+      long new_hot;    // how many new handles were considered hot?
+      bool localized;  // did we perform localization?
     };
 
     // Give a hotness buffer back to the localizer, filled with `count` handle ids

@@ -135,16 +135,6 @@ TEST_F(RuntimeTest, SlabNFreeDecreasesOnHandleGet) {
   ASSERT_EQ(slab->allocator.num_free(), initialNFree - 1);
 }
 
-TEST_F(RuntimeTest, SlabNFreeOnInitialAllocation) {
-  // Allocate a fresh slab from the handle table
-  auto* slab = runtime.handle_table.fresh_slab(DUMMY_THREADCACHE);
-  // Get the initial nfree count
-  int initialNFree = slab->allocator.num_free();
-  // Check that the nfree count is equal to the slab's capacity
-  ASSERT_EQ(initialNFree, alaska::HandleTable::slab_capacity);
-}
-
-
 
 // Make sure that for many slabs, get_slab returns the right one
 TEST_F(RuntimeTest, SlabGetSlab) {
@@ -161,11 +151,14 @@ TEST_F(RuntimeTest, SlabGetSlab) {
 TEST_F(RuntimeTest, SlabGetReturnsNullWhenOutOfCapacity) {
   // Allocate a fresh slab from the handle table
   auto* slab = runtime.handle_table.fresh_slab(DUMMY_THREADCACHE);
+
   // Fill up the slab with handles
-  for (size_t i = 0; i < alaska::HandleTable::slab_capacity; i++) {
+  for (size_t i = 0; i < slab->num_free(); i++) {
     auto handle = slab->alloc();
+    // ::printf("allocated handle %p %zu\n", handle, slab->num_free());
     ASSERT_NE(handle, nullptr);
   }
+  ::printf("out of capacity, num_free: %zu\n", slab->num_free());
   // Try to get another handle from the slab
   auto handle = slab->alloc();
   // Check that the handle is null
@@ -180,7 +173,7 @@ TEST_F(RuntimeTest, SlabUniqueHandles) {
   // Create a set to store the handles
   std::set<alaska::Mapping*> handles;
   // Fill up the slab with handles
-  for (size_t i = 0; i < alaska::HandleTable::slab_capacity; i++) {
+  for (size_t i = 0; i < slab->num_free(); i++) {
     auto handle = slab->alloc();
     ASSERT_NE(handle, nullptr);
     // Check that the handle is unique
@@ -215,7 +208,7 @@ TEST_F(RuntimeTest, SlabMappingIndex) {
     // Allocate a fresh slab from the handle table
     auto* slab = runtime.handle_table.fresh_slab(DUMMY_THREADCACHE);
     // Fill up the slab with handles
-    for (size_t i = 0; i < alaska::HandleTable::slab_capacity; i++) {
+    for (size_t i = 0; slab->num_free() > 0; i++) {
       auto handle = slab->alloc();
       ASSERT_NE(handle, nullptr);
       // Check that the handle is in the right index

@@ -56,4 +56,16 @@ namespace alaska {
 
     return false;
   }
+
+
+  template <typename T>
+  size_t lphashset_count(T *set, size_t size) {
+    size_t count = 0;
+    for (size_t i = 0; i < size; ++i) {
+      if (set[i] != 0xFFFFFFFFFFFFFFFFUL) {
+        count += 1;
+      }
+    }
+    return count;
+  }
 }  // namespace alaska

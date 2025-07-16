@@ -67,65 +67,6 @@ static void *barrier_thread_func(void *) {
       rt.heap.dump(stdout);
       rt.heap.compact_sizedpages();
       return;
-
-
-      auto rng = [&]() -> unsigned long {
-        seed = (1103515245 * seed + 12345) & 0x7fffffff;
-        return seed;
-      };
-
-      // Generate a random number between min and max (inclusive)
-      auto random_range = [&](int min, int max) -> unsigned long {
-        return min + (rng() % (max - min + 1));
-      };
-
-      auto should_mark = [&]() -> bool {
-        return true;
-        // return in_marking_state;
-        // return in_marking_state and (random_range(0, 2) == 1);
-        return random_range(0, 10) == 1;
-      };
-
-
-      auto mark_in_slab = [&](alaska::HandleSlab *slab) {
-        for (auto *v : slab->allocator) {
-          auto *m = (alaska::Mapping *)v;
-          if (m->is_invalid()) {
-            already_invalid++;
-          }
-          total_handles++;
-
-          if (not m->is_pinned() and should_mark()) {
-            newly_marked++;
-            m->set_invalid();
-          }
-        }
-      };
-
-      auto &slabs = rt.handle_table.get_slabs();
-
-      auto start = alaska_timestamp();
-      if (slabs.size() != 0) {
-        auto *slab = slabs[random_range(0, slabs.size() - 1)];
-        mark_in_slab(slab);
-      }
-
-      // for (auto *slab : slabs)
-      //   mark_in_slab(slab);
-
-      auto end = alaska_timestamp();
-      auto duration = (end - start) / 1000.0 / 1000.0;
-
-      cold_perc = ((float)already_invalid / (float)total_handles);
-      if (cold_perc > 0.7) {
-        in_marking_state = false;
-      }
-
-      if (cold_perc < 0.1) {
-        in_marking_state = true;
-      }
-
-      printf("handle faults per second: %f\n", rt.handle_faults.digest());
     });
   }
 

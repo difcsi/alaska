@@ -11,7 +11,7 @@ set(WARNINGS "-Wall -Werror -Wno-multichar -Wno-unused -Wno-unused-function -Wno
 #   endif()
 # endif()
 
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -gdwarf-4 ${WARNINGS} ")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -gdwarf-4 ${WARNINGS} -fno-plt")
 set(CMAKE_CXX_FLAGS "${CMAKE_C_FLAGS} -std=c++2a -Wsign-compare -Wno-deprecated -fno-exceptions -Wno-ctad-maybe-unsupported -Wno-reorder -fno-rtti -Wno-invalid-offsetof ")
 
 
@@ -26,6 +26,11 @@ set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE}")
 
 
 set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
+
+
+if(CMAKE_BUILD_TYPE MATCHES "Release")
+  add_definitions(-DALASKA_RELEASE_BUILD=1)
+endif()
 
 
 
@@ -71,9 +76,9 @@ set(CORE_SOURCES
   core/DiskHeap.cpp
 
 
-  core/disk/Disk.cpp
-  core/disk/BufferPool.cpp
-  core/disk/Structure.cpp
+  # core/disk/Disk.cpp
+  # core/disk/BufferPool.cpp
+  # core/disk/Structure.cpp
 
 
   # liballoc is a simple, small, malloc implementation that we embed
@@ -161,6 +166,7 @@ if(NOT ALASKA_CORE_ONLY) # -----------------------------------------------------
     rt/halloc.cpp
     rt/compat.c
     rt/barrier.cpp
+    $<TARGET_OBJECTS:alaska_core_objects>
   )
 
 
@@ -173,7 +179,7 @@ endif(ALASKA_HTLB_SIM)
   target_include_directories(alaska PUBLIC include/)
   set_target_properties(alaska PROPERTIES LINKER_LANGUAGE C)
   set_target_properties(alaska PROPERTIES SOVERSION ${ALASKA_VERSION})
-  target_link_libraries(alaska alaska_core dl pthread ${LIBUNWIND_LIBRARIES})
+  target_link_libraries(alaska dl pthread ${LIBUNWIND_LIBRARIES})
 
   # target_compile_options(alaska PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-nostdlib++ -nostdinc++>)
   target_compile_options(alaska PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-nostdinc++>)
@@ -248,19 +254,19 @@ endif(NOT ALASKA_CORE_ONLY) # --------------------------------------------------
 
 if(ALASKA_YUKON)
   add_library(yukon SHARED
-    yukon/yukon.cpp
+    yukon/yukon.cpp $<TARGET_OBJECTS:alaska_core_objects>
   )
 
   target_include_directories(yukon PUBLIC include/)
   set_target_properties(yukon PROPERTIES LINKER_LANGUAGE C)
   set_target_properties(yukon PROPERTIES SOVERSION ${ALASKA_VERSION})
-  target_link_libraries(yukon alaska_core_static dl pthread ${LIBUNWIND_LIBRARIES})
+  target_link_libraries(yukon PRIVATE dl pthread ${LIBUNWIND_LIBRARIES})
   target_compile_options(yukon PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-nostdlib++ -nostdinc++>)
 
-  if(CMAKE_BUILD_TYPE MATCHES "Release")
-    add_custom_command(TARGET yukon POST_BUILD
-                       COMMAND ${CMAKE_STRIP} $<TARGET_FILE:yukon>)
-  endif()
+  # if(CMAKE_BUILD_TYPE MATCHES "Release")
+  #   add_custom_command(TARGET yukon POST_BUILD
+  #                      COMMAND ${CMAKE_STRIP} $<TARGET_FILE:yukon>)
+  # endif()
 
   install(
     TARGETS yukon
@@ -271,18 +277,20 @@ if(ALASKA_YUKON)
 
 
   add_library(yukon_stub SHARED
-    yukon/yukon_stub.cpp
+    yukon/yukon_stub.cpp $<TARGET_OBJECTS:alaska_core_objects>
   )
   target_include_directories(yukon_stub PUBLIC include/)
   set_target_properties(yukon_stub PROPERTIES LINKER_LANGUAGE C)
   set_target_properties(yukon_stub PROPERTIES SOVERSION ${ALASKA_VERSION})
-  target_link_libraries(yukon_stub alaska_core_static dl pthread ${LIBUNWIND_LIBRARIES})
+  target_link_libraries(yukon_stub PRIVATE dl pthread ${LIBUNWIND_LIBRARIES})
   target_compile_options(yukon_stub PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-nostdlib++ -nostdinc++>)
+  target_compile_options(yukon_stub PRIVATE -Wl,-Bsymbolic-functions)
 
-  if(CMAKE_BUILD_TYPE MATCHES "Release")
-    add_custom_command(TARGET yukon_stub POST_BUILD
-                       COMMAND ${CMAKE_STRIP} $<TARGET_FILE:yukon>)
-  endif()
+
+  # if(CMAKE_BUILD_TYPE MATCHES "Release")
+  #   add_custom_command(TARGET yukon_stub POST_BUILD
+  #                      COMMAND ${CMAKE_STRIP} $<TARGET_FILE:yukon>)
+  # endif()
 
   install(
     TARGETS yukon_stub

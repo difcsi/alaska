@@ -62,7 +62,6 @@ namespace alaska {
 
     // If we don't have a free page, we need to allocate a new one with the bump allocator.
     void *page = this->bump;
-    log_trace("PageManager: bumping to %p", this->bump);
     this->bump = (void *)((uintptr_t)this->bump + alaska::page_size);
 
     log_trace("PageManager: end = %p", this->end);
@@ -103,48 +102,6 @@ namespace alaska {
   HeapPageTable::~HeapPageTable() {}
 
 
-  alaska::HeapPage *HeapPageTable::get(void *page) {
-    auto *p = walk(page, false);
-    if (p == nullptr) return nullptr;
-    return *p;
-  }
-
-
-  alaska::HeapPage *HeapPageTable::get_unaligned(void *addr) {
-    uintptr_t heap_offset = (uintptr_t)addr - (uintptr_t)heap_start;
-    uintptr_t page_ind = heap_offset / alaska::page_size;
-    void *page = (void *)((uintptr_t)heap_start + page_ind * alaska::page_size);
-
-    auto *p = walk(page, false);
-    if (p == nullptr) return nullptr;
-    return *p;
-  }
-
-  void HeapPageTable::set(void *page, alaska::HeapPage *hp) { *walk(page, true) = hp; }
-
-
-  alaska::HeapPage **HeapPageTable::walk(void *vpage, bool ensure) {
-    ck::scoped_lock lk(this->lock);  // TODO: reader/writer lock
-
-    // `page` here means the offset from the start of the heap.
-    uintptr_t page_off = (uintptr_t)vpage - (uintptr_t)heap_start;
-    // Extrac the page number (just an index into the page table structure)
-    off_t page_number = page_off >> alaska::page_shift_factor;
-    // printf("vpage: %p, heap_start: %p, page_off: %lu, page_number: %lu\n", vpage, heap_start,
-    //     page_off, page_number);
-
-
-    if (page_number >= table.size()) {
-      if (!ensure) {
-        return nullptr;
-      }
-      // If the page number is greater than the size of the table, we need to grow the table.
-      table.resize(page_number + 1);
-    }
-
-    ALASKA_ASSERT(page_number < table.size(), "Page number out of bounds.");
-    return &table[page_number];
-  }
 
 
 
@@ -228,8 +185,8 @@ namespace alaska {
         wasted_bytes += frag * alaska::page_size;
 
         int c = (1.0 - frag) * 255;
-        fprintf(stream, "\033[48;2;255;%d;%dm \033[0m", c, c);
-        return true;
+        // fprintf(stream, "\033[48;2;255;%d;%dm \033[0m", c, c);
+        // return true;
 
         // if (sp->get_owner() != nullptr) {
         //   fprintf(stream, "\033[48;2;0;0;%dm", (int)(255 * used_frac));
@@ -246,8 +203,8 @@ namespace alaska {
         int red = 255 - blue;
 
         fprintf(stream, "\033[48;2;%d;0;%dm", red, blue);
-        fprintf(stream, "%7.2f%% ", 100.0 * used_frac);
-        // fprintf(stream, "%8.2f/%7.2fkb ", avail * size / 1024.0, alaska::page_size / 1024.0);
+        // fprintf(stream, "%7.2f%% ", 100.0 * used_frac);
+        fprintf(stream, "%8.2f/%7.2fkb ", avail * size / 1024.0, alaska::page_size / 1024.0);
         // fprintf(stream, "%8.2fkb ", avail * size / 1024.0);
         // fprintf(stream, "%8.2f/%7.2fkb ", avail * size / 1024.0, alaska::page_size / 1024.0);
         // fprintf(stream, "%8.2fkb/%7.2fkb ", used * size / 1024.0, alaska::page_size / 1024.0);
@@ -255,7 +212,7 @@ namespace alaska {
         // fprintf(stream, "%+12.2fp ", pressure);
         // fprintf(stream, "%+5.2ft ", tend);
         // fprintf(stream, "%+12.0fΔ ", r.delta());
-        // fprintf(stream, "%+12.2fΔ ", r.allocation_bytes_per_second - r.free_bytes_per_second);
+        fprintf(stream, "%+12.2fΔ ", r.allocation_bytes_per_second - r.free_bytes_per_second);
 
         fprintf(stream, "\e[0m ");
 
@@ -272,14 +229,14 @@ namespace alaska {
 
       int c = (1.0 - frag) * 255;
       fprintf(stream, "\033[48;2;255;%d;%dm \033[0m", c, c);
-      return true;
+      // return true;
       // iterate over the locality slab list
       lp->for_each_slab([&](auto *slab) {
         ind++;
         float u = slab->utilization();
 
         int c = (1.0 - u) * 255;
-        fprintf(stream, "\033[48;2;255;%d;%dm \033[0m", c, c);
+        fprintf(stream, "\033[48;2;255;%d;%dm %7.2f \033[0m", c, c, u * 100.0f);
 
 
         // if (ind > 200) {
@@ -354,7 +311,7 @@ namespace alaska {
     for (auto &mag : size_classes) {
       mag.foreach ([&](SizedPage *sp) {
         long z = 0, t = 0;
-        if (sp->fragmentation() > 0.4) {
+        if (sp->fragmentation() > 0.15) {
           zero_bytes += z;
           total_bytes += t;
           total_objects += t / sp->get_object_size();
@@ -398,17 +355,6 @@ namespace alaska {
     return c;
   }
 
-
-  long Heap::jumble(void) {
-    long c = 0;
-    for (auto &mag : size_classes) {
-      mag.foreach ([&](SizedPage *sp) {
-        c += sp->jumble();
-        return true;
-      });
-    }
-    return c;
-  }
 
 
   void *mmap_alloc(size_t bytes) {
