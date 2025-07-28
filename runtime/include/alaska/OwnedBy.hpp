@@ -23,13 +23,9 @@ namespace alaska {
     OwnedBy(void)
         : m_current_owner(nullptr) {}
 
-    inline T *get_owner(void) const { return __atomic_load_n(&m_current_owner, __ATOMIC_ACQUIRE); }
-    inline void set_owner(T *new_owner) {
-      __atomic_store_n(&m_current_owner, new_owner, __ATOMIC_RELEASE);
-    }
-    bool is_owned_by(T *other) const {
-      return __atomic_load_n(&m_current_owner, __ATOMIC_ACQUIRE) == other;
-    }
+    inline T *get_owner(void) const { return m_current_owner; }
+    inline void set_owner(T *new_owner) { this->m_current_owner = new_owner; }
+    bool is_owned_by(T *other) const { return other == m_current_owner; }
 
    private:
     T *m_current_owner;

@@ -78,6 +78,7 @@ namespace alaska {
       num_local_free++;
     }
 
+    __attribute__((noinline))
     inline void free_remote(void *p) {
       auto *block = (Block *)p;
       Block **list = &remote_free;

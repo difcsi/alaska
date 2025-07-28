@@ -34,6 +34,17 @@ namespace alaska {
   int size_to_class(size_t sz);
   size_t class_to_size(int cls);
 
-  bool should_be_huge_object(size_t size);
+  inline bool should_be_huge_object(size_t size) {
+#ifdef ALASKA_YUKON
+    // For yukon, huge objects are anything over 4KiB
+    if (size >= 4096) {
+      return true;
+    }
+#endif
+
+
+    if (size >= 0xFFFF) return true;
+    return false;
+  }
 
 }  // namespace alaska
