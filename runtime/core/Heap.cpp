@@ -123,7 +123,7 @@ namespace alaska {
     // Look for a sized page in the magazine with at least one allocation space available.
     // TODO: it would be smart to adjust this requirement dynamically based on the allocation
     // request.
-    auto *p = this->find_or_alloc_page<SizedPage>(mag, owner, 1, [&](auto p) {
+    auto *p = this->find_or_alloc_page<SizedPage>(mag, owner, 1, [=](auto p) {
       p->set_size_class(cls);
     });
     return p;
@@ -173,6 +173,8 @@ namespace alaska {
 
       long page_index = 0;
       mag.foreach ([&](SizedPage *sp) {
+        printf("%zu/%zu ", sp->available(), sp->object_capacity());
+        return true;
         // if (page_index == 0) printf("(%8lu) ", sp->object_capacity());
         bool color = sp->get_owner() != nullptr;
         long avail = sp->available();
@@ -222,42 +224,42 @@ namespace alaska {
       fprintf(stream, "\n");
     }
 
-    printf("locality pages: %lu\n", locality_pages.size());
-    long ind = 0;
-    locality_pages.foreach ([&](LocalityPage *lp) {
-      float frag = lp->fragmentation();
+    // printf("locality pages: %lu\n", locality_pages.size());
+    // long ind = 0;
+    // locality_pages.foreach ([&](LocalityPage *lp) {
+    //   float frag = lp->fragmentation();
 
-      int c = (1.0 - frag) * 255;
-      fprintf(stream, "\033[48;2;255;%d;%dm \033[0m", c, c);
-      // return true;
-      // iterate over the locality slab list
-      lp->for_each_slab([&](auto *slab) {
-        ind++;
-        float u = slab->utilization();
+    //   int c = (1.0 - frag) * 255;
+    //   fprintf(stream, "\033[48;2;255;%d;%dm \033[0m", c, c);
+    //   // return true;
+    //   // iterate over the locality slab list
+    //   lp->for_each_slab([&](auto *slab) {
+    //     ind++;
+    //     float u = slab->utilization();
 
-        int c = (1.0 - u) * 255;
-        fprintf(stream, "\033[48;2;255;%d;%dm %7.2f \033[0m", c, c, u * 100.0f);
-
-
-        // if (ind > 200) {
-        //   ind = 0;
-        //   fprintf(stream, "\n");
-        // }
-        // if (u == 0) {
-        //   fprintf(stream, "\e[31m");
-        // }
-        // fprintf(stream, "%3.0f ", 100.0 * u);
-
-        // fprintf(stream, "%8.2f/%7.2fkb ", lp->used() / 1024.0, lp->heap_size() / 1024.0);
-        // fprintf(stream, "%8.2fkb ", lp->used() / 1024.0);
-        // fprintf(stream, "%8.2f/%7.2fkb ", lp->used() / 1024.0, lp->heap_size() / 1024.0);
-        // fprintf(stream, "%8.2fkb/%7.2fkb ", lp->used() / 1024.0, lp->heap_size() / 1024.0);
-        // fprintf(stream, "\n");
-      });
+    //     int c = (1.0 - u) * 255;
+    //     fprintf(stream, "\033[48;2;255;%d;%dm %7.2f \033[0m", c, c, u * 100.0f);
 
 
-      return true;
-    });
+    //     // if (ind > 200) {
+    //     //   ind = 0;
+    //     //   fprintf(stream, "\n");
+    //     // }
+    //     // if (u == 0) {
+    //     //   fprintf(stream, "\e[31m");
+    //     // }
+    //     // fprintf(stream, "%3.0f ", 100.0 * u);
+
+    //     // fprintf(stream, "%8.2f/%7.2fkb ", lp->used() / 1024.0, lp->heap_size() / 1024.0);
+    //     // fprintf(stream, "%8.2fkb ", lp->used() / 1024.0);
+    //     // fprintf(stream, "%8.2f/%7.2fkb ", lp->used() / 1024.0, lp->heap_size() / 1024.0);
+    //     // fprintf(stream, "%8.2fkb/%7.2fkb ", lp->used() / 1024.0, lp->heap_size() / 1024.0);
+    //     // fprintf(stream, "\n");
+    //   });
+
+
+    //   return true;
+    // });
     fprintf(stream, "\n");
     // fprintf(stream, "\n");
   }

@@ -43,12 +43,5 @@ namespace alaska {
   void *HeapPage::alloc(const Mapping &m, AlignedSize size) { return nullptr; }
 
 
-  void atomic_block_push(Block **list, Block *block) {
-    // TODO: NOT SURE ABOUT THE CONSISTENCY OPTIONS HERE
-    do {
-      block->next = *list;
-    } while (!__atomic_compare_exchange_n(
-        list, &block->next, block, 1, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED));
-  }
 
 }  // namespace alaska

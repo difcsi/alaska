@@ -158,18 +158,5 @@ namespace alaska {
     return class_to_size(size_to_class(sz));
   }
 
-  bool should_be_huge_object(size_t size) {
-#ifdef ALASKA_YUKON
-    // For yukon, huge objects are anything over 4KiB
-    if (size >= 4096) {
-      return true;
-    }
-#endif
-
-    if (size >= alaska::huge_object_thresh) {
-      return true;
-    }
-    return false;
-  }
 
 }  // namespace alaska
