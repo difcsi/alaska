@@ -249,7 +249,7 @@ PreservedAnalyses PinTrackingPass::run(Module &M, ModuleAnalysisManager &AM) {
           id = 'C';
         }
       }
-      alaska::println(id, "  ", *call, "  | ", patch_size);
+      // alaska::println(id, "  ", *call, "  | ", patch_size);
 
 
 
