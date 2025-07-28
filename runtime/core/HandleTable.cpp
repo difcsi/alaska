@@ -172,7 +172,7 @@ namespace alaska {
         log_trace("Attempting to allocate from slab %p (idx %lu)", slab, slab->idx);
         // if (slab->idx == 0) continue;
         if ((slab->get_owner() == nullptr || slab->get_owner() == new_owner) &&
-            slab->allocator.num_free() > 0) {
+            slab->num_free() > 0) {
           slab->set_owner(new_owner);
           return slab;
         }
@@ -190,7 +190,7 @@ namespace alaska {
     // log_info(" - Size: %zu bytes\n", m_capacity * HandleTable::slab_size);
     for (auto *slab : m_slabs) {
       bool has_owner = slab->get_owner() != nullptr;
-      long avail = slab->allocator.num_free();
+      long avail = slab->num_free();
 
 
       float avail_frac = avail / (float)slab_capacity;
@@ -218,7 +218,9 @@ namespace alaska {
     }
 
     auto *slab = m_slabs[idx];
-    return slab->allocator.is_allocated(m);
+    // return slab->allocator.is_allocated(m);
+
+    return true;  // TODO:
   }
 
 
@@ -283,35 +285,36 @@ namespace alaska {
       : table(table)
       , idx(idx) {
 
-
-    auto start = table.get_slab_start(idx);
-    auto capacity = HandleTable::slab_capacity;
-
-    allocator.configure(start, sizeof(alaska::Mapping), capacity);
-
-
-    // If we are the first slab, we need to ask the allocator to
-    // allocate one handle, so that handle id 0 is "leaked" and will
-    // not be used by any application. This is to maintain the invariant
-    // that handle id 0 is a "invalid" or "null" handle in the runtime.
-    if (idx == 0) {
-      auto *p = allocator.alloc();
-      if (p != start) {
-        fprintf(stderr,
-            "Failed to allocate first handle in slab 0. Allocator returned %p, expected %p\n", p,
-            start);
-        abort();
-      }
+    void *memory = table.get_slab_start(idx);
+    // assert that memory is aligned to page size
+    if ((((uintptr_t)memory % alaska::page_size) != 0)) {
+      log_fatal(
+          "Handle slab memory is not aligned to page size. "
+          "This is a bug in the Alaska runtime. Please report this bug to the Alaska developers.");
+      abort();
     }
+
+    *(HandleSlab **)memory = this;  // Set the slab pointer at the start of the memory
+    // Then set the start, end, and next_free pointers to the next location
+    this->start = this->next_free = (alaska::Mapping *)memory + 1;
+
+    // Finally, set the end pointer to the end of the slab
+    this->end = (alaska::Mapping *)memory + HandleTable::slab_capacity;
   }
 
 
+  __attribute__((noinline)) alaska::Mapping *HandleSlab::alloc_slow(void) {
+    // Attempt to bump allocate
+    if (next_free < end) {
+      alaska::Mapping *m = next_free;
+      next_free += 1;
+      return m;
+    }
 
-  Mapping *HandleSlab::alloc(void) {
-    auto *m = (Mapping *)allocator.alloc();
-
-    if (unlikely(m == nullptr)) return nullptr;
-    return m;
+    // If we are here, there is no bump allocation available.
+    // Swap the local and remote free lists and try to get the first entry from the local list.
+    free_list.swap();
+    return (alaska::Mapping *)free_list.pop();
   }
 
 

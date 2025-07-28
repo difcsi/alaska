@@ -41,6 +41,14 @@ namespace alaska {
   // same slab at the same time.
   struct HandleSlab final : public alaska::OwnedBy<alaska::ThreadCache>,
                             public alaska::InternalHeapAllocated {
+   private:
+    alaska::Mapping *start;
+    alaska::Mapping *end;
+    alaska::Mapping *next_free;  // Bump allocator.
+
+    alaska::ShardedFreeList<DefaultFreeListBlock> free_list;  // A free list for tracking releases
+
+   public:
     slabidx_t idx;                           // Which slab is this?
     HandleSlabState state = SlabStateEmpty;  // What is the state of this slab?
     HandleTable &table;                      // Which table does this belong to?
@@ -48,7 +56,6 @@ namespace alaska {
     HandleSlab *next = nullptr;                // The next slab in the queue
     HandleSlab *prev = nullptr;                // The previous slab in the queue
     HandleSlabQueue *current_queue = nullptr;  // What queue is this slab in?
-
 
 
     // -- Methods --
@@ -60,15 +67,31 @@ namespace alaska {
     void release_local(alaska::Mapping *m);   // Return a mapping back to this slab (local)
     void mlock(void);                         // `mlock` the memory behind this slab
 
-    size_t num_free(void) const { return allocator.num_free(); }
-    SizedAllocator allocator;
+
+
+    // Implmented in HandleTable.cpp, this function cannot be inlined and is meant
+    // to be used when the local free list is empty.
+    alaska::Mapping *alloc_slow(void);
+
+    size_t num_free(void) const { return free_list.num_free() + (end - next_free); }
+    size_t capacity(void) const { return end - start; }
   };
 
 
 
-  inline void HandleSlab::release_remote(Mapping *m) { allocator.release_remote(m); }
 
-  inline void HandleSlab::release_local(Mapping *m) { allocator.release_local(m); }
+  inline alaska::Mapping *HandleSlab::alloc(void) {
+    // 1. Attempt to allocate a mapping from the free list.
+    auto *m = (alaska::Mapping *)free_list.pop();
+    // 2. If that fails, drop out to the slow path
+    if (unlikely(m == nullptr)) {
+      m = alloc_slow();
+    }
+    return m;
+  }
+
+  inline void HandleSlab::release_remote(Mapping *m) { free_list.free_remote((void *)m); }
+  inline void HandleSlab::release_local(Mapping *m) { free_list.free_local((void *)m); }
 
 
 
@@ -119,10 +142,15 @@ namespace alaska {
     bool valid_handle(alaska::Mapping *m) const;
 
 
+    inline alaska::HandleSlab *get_slab(alaska::Mapping *m) {
+      alaska::HandleSlab *slab = *(alaska::HandleSlab **)((uintptr_t)m & ~(alaska::page_size - 1));
+      return slab;
+    }
+
     // Free/release *some* mapping
     inline void put(
         alaska::Mapping *m, alaska::ThreadCache *owner = (alaska::ThreadCache *)0x1000UL) {
-      auto *slab = m_slabs[mapping_slab_idx(m)];
+      alaska::HandleSlab *slab = get_slab(m);
       if (slab->is_owned_by(owner)) {
         slab->release_local(m);
       } else {
