@@ -87,6 +87,41 @@ static alaska::Runtime *the_runtime = NULL;
 static uint64_t yukon_mean_dump_interval = 10000;  // microseconds
 
 
+static const char *riscv_abi_names[] = {
+    "zero",
+    "ra",
+    "sp",
+    "gp",
+    "tp",
+    "t0",
+    "t1",
+    "t2",
+    "s0/fp",
+    "s1",
+    "a0",
+    "a1",
+    "a2",
+    "a3",
+    "a4",
+    "a5",
+    "a6",
+    "a7",
+    "s2",
+    "s3",
+    "s4",
+    "s5",
+    "s6",
+    "s7",
+    "s8",
+    "s9",
+    "s10",
+    "s11",
+    "t3",
+    "t4",
+    "t5",
+    "t6",
+};
+
 static void yukon_signal_handler(int sig, siginfo_t *info, void *ucontext) {
   // If a pagefault occurs while handle table walking, we will throw the
   // exception back up and even if you handle the page fault, the HTLB
@@ -97,20 +132,55 @@ static void yukon_signal_handler(int sig, siginfo_t *info, void *ucontext) {
     //       treat that as a page fault to the *handle table*. Basically, we need
     //       to read/write that handle entry.
     // printf("Caught segfault to address %p. Clearing htlb and trying again!\n", info->si_addr);
+
+    uint64_t fault_pc = 0;
 #if defined(__riscv)
     ucontext_t *uc = (ucontext_t *)ucontext;
     greg_t *regs = uc->uc_mcontext.__gregs;
 
     printf("Segfault at address: %p on thread %ld\n", info->si_addr, pthread_self());
     printf("Register state:\n");
+    fault_pc = regs[0];
     printf("ra =0x%016lx inst=%08x\n", regs[0], *(uint32_t *)regs[0]);
     printf("sp =0x%016lx\n", regs[1]);
     printf("gp =0x%016lx\n", regs[2]);
     printf("tp =0x%016lx\n", regs[3]);
-    for (int i = 4; i < 32; i++) {
-      printf("x%-2d=0x%016lx\n", i, regs[i]);
+    for (int i = 1; i < 31; i++) {
+      printf("  x%-2d/%-5s =0x%016lx\n", i, riscv_abi_names[i + 1], regs[i]);
     }
 #endif
+
+    // get a backtrace
+    void *buffer[64];
+    int nptrs = backtrace(buffer, sizeof(buffer) / sizeof(void *));
+    char **symbols = backtrace_symbols(buffer, nptrs);
+    if (symbols == NULL) {
+      perror("backtrace_symbols");
+      exit(EXIT_FAILURE);
+    }
+    printf("Backtrace:\n");
+    for (int i = 0; i < nptrs; i++) {
+      printf("%016lx %s\n", (uint64_t)buffer[i], symbols[i]);
+    }
+    // free(symbols);
+
+    // FILE *maps_file = fopen("/proc/self/maps", "r");
+    // char line[512];
+    // while (fgets(line, sizeof(line), maps_file)) {
+    //   printf("YUKON_MAP_REGION=%s", line);
+    //   // if faultpc is within, print the offset
+    //   uintptr_t start, end;
+    //   char perms[5];
+    //   if (sscanf(line, "%lx-%lx %4s", &start, &end, perms) == 3) {
+    //     if (fault_pc >= start && fault_pc < end) {
+    //       uintptr_t offset = fault_pc - start;
+    //       printf(
+    //           "Faulting address %p is within this region, offset %lx\n", (void *)fault_pc, offset);
+    //     }
+    //   }
+    // }
+    // fclose(maps_file);
+
 
     exit(-11);
     // write_csr(CSR_HTINVAL, ((1LU << (64 - ALASKA_SIZE_BITS)) - 1));
@@ -509,16 +579,16 @@ namespace yukon {
     }
 
 
-    if (getenv("NODUMP") == nullptr) {
-      signal(SIGPROF, yukon::dump_alarm_handler);
+    // if (getenv("NODUMP") == nullptr) {
+    //   signal(SIGPROF, yukon::dump_alarm_handler);
 
-      yukon_mean_dump_interval = 10 * 1000;
-      fprintf(stderr, "YUKON: dump interval %zuus\n", yukon_mean_dump_interval);
+    //   yukon_mean_dump_interval = 10 * 1000;
+    //   fprintf(stderr, "YUKON: dump interval %zuus\n", yukon_mean_dump_interval);
 
-      // Schedule the first dump for 50ms from now (just to make sure
-      // initialization is done. This is a Super-Hack)
-      schedule_localization(50 * 1000);
-    }
+    //   // Schedule the first dump for 50ms from now (just to make sure
+    //   // initialization is done. This is a Super-Hack)
+    //   schedule_localization(50 * 1000);
+    // }
   }
 }  // namespace yukon
 
@@ -563,19 +633,19 @@ static void *_halloc(size_t sz, int zero) {
 
 extern "C" void *halloc(size_t sz) noexcept {
   LocalizationLatch loc_latch;
-  RuntimeTracker fencer;
+  // RuntimeTracker fencer;
   return _halloc(sz, 0);
 }
 extern "C" void *hcalloc(size_t nmemb, size_t size) {
   LocalizationLatch loc_latch;
-  RuntimeTracker fencer;
+  // RuntimeTracker fencer;
   return _halloc(nmemb * size, 1);
 }
 
 // Reallocate a handle
 extern "C" void *hrealloc(void *handle, size_t new_size) {
   LocalizationLatch loc_latch;
-  RuntimeTracker fencer;
+  // RuntimeTracker fencer;
 
   alaska::LockedThreadCache tc = *yukon::get_tc();
 
@@ -607,7 +677,7 @@ extern "C" void *hrealloc(void *handle, size_t new_size) {
 
 extern "C" void hfree(void *ptr) {
   LocalizationLatch loc_latch;
-  RuntimeTracker fencer;
+  // RuntimeTracker fencer;
   // no-op if NULL is passed
   if (unlikely(ptr == NULL)) return;
 

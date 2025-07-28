@@ -138,9 +138,15 @@ __attribute__((noinline)) void init(void) {
   });
 }
 
-static inline alaska::ThreadCache *get_tc() {
+
+__attribute__((noinline))
+static void thread_cache_init(void) {
   if (the_runtime == NULL) init();
   if (tc == NULL) tc = the_runtime->new_threadcache();
+}
+
+static inline alaska::ThreadCache *get_tc() {
+  if (unlikely(tc == NULL)) thread_cache_init();
   return tc;
 }
 
@@ -181,19 +187,19 @@ static void *_halloc(size_t sz, int zero) {
 
 extern "C" void *halloc(size_t sz) noexcept {
   LocalizationLatch loc_latch;
-  AutoFencer fencer;
+  // AutoFencer fencer;
   return _halloc(sz, 0);
 }
 extern "C" void *hcalloc(size_t nmemb, size_t size) {
   LocalizationLatch loc_latch;
-  AutoFencer fencer;
+  // AutoFencer fencer;
   return _halloc(nmemb * size, 1);
 }
 
 // Reallocate a handle
 extern "C" void *hrealloc(void *handle, size_t new_size) {
   LocalizationLatch loc_latch;
-  AutoFencer fencer;
+  // AutoFencer fencer;
 
   alaska::LockedThreadCache tc = *get_tc();
 
@@ -228,7 +234,7 @@ extern "C" void *hrealloc(void *handle, size_t new_size) {
 
 extern "C" void hfree(void *ptr) {
   LocalizationLatch loc_latch;
-  AutoFencer fencer;
+  // AutoFencer fencer;
   // no-op if NULL is passed
   if (unlikely(ptr == NULL)) return;
   ptr = reverse(ptr);
