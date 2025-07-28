@@ -42,9 +42,6 @@ namespace alaska {
     Block* next;
   };
 
-  void atomic_block_push(Block** list, Block* block);
-
-
 
   // A super simple type-level indicator that a size is aligned to the heap's alignment
   class AlignedSize final {

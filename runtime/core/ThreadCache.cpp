@@ -30,31 +30,6 @@ namespace alaska {
   }
 
 
-  void *ThreadCache::allocate_backing_data(const alaska::Mapping &m, size_t size) {
-    int cls = alaska::size_to_class(size);
-    this->allocation_rate.track(1);
-    void *ptr;
-
-    SizedPage *page = size_classes[cls];
-    if (unlikely(page == nullptr)) {
-      page = new_sized_page(cls);
-    }
-    ptr = page->alloc(m, size);
-    if (unlikely(ptr == nullptr)) {
-      // OOM?
-      page = new_sized_page(cls);
-      ptr = page->alloc(m, size);
-      ALASKA_ASSERT(ptr != nullptr, "OOM!");
-    }
-
-    return ptr;
-  }
-
-
-
-
-
-
 
 
   SizedPage *ThreadCache::new_sized_page(int cls) {
@@ -103,7 +78,6 @@ namespace alaska {
     req.zero = zero;
 
     int cls = alaska::size_to_class(size);
-    this->allocation_rate.track(1);
     void *ptr;
     SizedPage *page = size_classes[cls];
     if (unlikely(page == nullptr)) page = new_sized_page(cls);
@@ -142,32 +116,52 @@ namespace alaska {
   }
 
 
+
   void ThreadCache::hfree(void *handle) {
     alaska::Mapping *m = alaska::Mapping::from_handle_safe(handle);
+    // The first case in hfree is handling huge allocations.
+    // These allocations are not tracked in the handle table, so we
+    // need to handle them by calling out to the huge allocator.
+    // This is behind an unlikely check because it is expected that these
+    // are relatively rare.
     if (unlikely(m == nullptr)) {
-      bool worked = this->runtime.heap.huge_allocator.free(handle);
-      (void)worked;
-      // ALASKA_ASSERT(worked, "huge free failed");
+      this->runtime.heap.huge_allocator.free(handle);
       return;
     }
 
     // --- Free the data allocation --- //
     void *ptr = m->get_pointer();
-    auto *page = this->runtime.heap.pt.get_unaligned(ptr);
-    if (unlikely(page == NULL)) {
-      this->runtime.heap.huge_allocator.free(ptr);
-      return;
-    }
-    if (page->is_owned_by(this)) {
-      page->release_local(*m, ptr);
-    } else {
-      page->release_remote(*m, ptr);
-    }
+    auto *handle_slab = this->runtime.handle_table.get_slab(m);
+    auto *heap_page = this->runtime.heap.pt.get_unaligned(ptr);
 
-    m->set_pointer(nullptr);
 
-    // --- Free the handle allocation --- //
-    this->runtime.handle_table.put(m, this);
+    bool heap_owned = heap_page->is_owned_by(this);
+    bool handle_owned = handle_slab->is_owned_by(this);
+
+    // m->set_pointer(nullptr); // clear the handle before freeing it
+
+    // if (likely(heap_owned and handle_owned)) {
+    //   heap_page->release_local(*m, ptr);  
+    //   handle_slab->release_local(m);
+    //   return;
+    // }
+
+    // Now the slow path.
+
+
+    // if (likely(heap_page->is_owned_by(this))) {
+    //   heap_page->release_local(*m, ptr);
+    // } else {
+    //   heap_page->release_remote(*m, ptr);
+    // }
+
+
+    // if (likely(handle_slab->is_owned_by(this))) {
+    //   handle_slab->release_local(m);
+    // } else {
+    //   handle_slab->release_remote(m);
+    // }
+    return;
   }
 
 

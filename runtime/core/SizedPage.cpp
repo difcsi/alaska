@@ -97,7 +97,7 @@ namespace alaska {
     allocator.reset_free_list();
 
 
-
+#if 0
 
     // This algorithm is a two-finger walk. We have two pointers, one
     // pointing to the left (destination) and one pointing to the right
@@ -264,8 +264,8 @@ namespace alaska {
         map_r->set_pointer(obj_l->data());
         obj_l->set_mapping(map_r);
 
-        allocator.track_freed(obj_r);
-        allocator.track_allocated(obj_l);
+        // allocator.track_freed(obj_r);
+        // allocator.track_allocated(obj_l);
         moved_objects++;
 
 
@@ -278,6 +278,7 @@ namespace alaska {
     // end = last_object_seen + 1;
     // dump("end of loop");
     allocator.reset_bump_allocator(get_object(end));
+#endif
 
     return moved_objects;
   }

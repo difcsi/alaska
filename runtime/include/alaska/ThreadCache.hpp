@@ -105,9 +105,6 @@ namespace alaska {
     void free_mapping(alaska::Mapping *);
 
    private:
-    // Allocate backing data for a handle, but don't assign it yet.
-    void *allocate_backing_data(const alaska::Mapping &m, size_t size);
-
     // Swap to a new sized page owned by this thread cache
     alaska::SizedPage *new_sized_page(int cls);
     // Swap to a new locality page owned by this thread cache

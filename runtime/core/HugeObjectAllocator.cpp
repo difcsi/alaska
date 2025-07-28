@@ -38,7 +38,10 @@ namespace alaska {
 
   void* HugeObjectAllocator::allocate(size_t size) {
     if (strat == HugeAllocationStrategy::MALLOC_BACKED) {
-      return ::alaska_internal_malloc(size);
+      void *ptr = ::alaska_internal_malloc(size);
+      printf("HugeObjectAllocator::allocate(%zu) = %p\n", size, ptr);
+
+      return ptr;
     }
     ALASKA_ASSERT(strat == HugeAllocationStrategy::CUSTOM_MMAP_BACKED, "Invalid huge strat");
 

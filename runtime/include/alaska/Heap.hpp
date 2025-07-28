@@ -128,7 +128,7 @@ namespace alaska {
     ck::mutex lock;  // TODO: reader/writer lock!
     ck::vec<alaska::HeapPage *> table;
   };
-  
+
 
 
   inline alaska::HeapPage *HeapPageTable::get(void *page) {
@@ -174,12 +174,6 @@ namespace alaska {
   }
 
 
-  // The Heap provides a simple interface for allocating and freeing memory. It's main job
-  // is to take requests for allocations of a certain size, and to redirect those requests to
-  // alaska::HeapPage instances, which manage memory issued by the PageManager. The interesting
-  // part of this specific heap is that its HeapPages do not all operate the same way. Some pages
-  // are used for allocations of a specific size class, while others can mix and match allocation
-  // sizes for manufacturing locality and friends.
   class Heap final {
    public:
     PageManager pm;

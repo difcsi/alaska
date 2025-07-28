@@ -41,7 +41,7 @@ namespace alaska {
     bool owns(void* ptr);
 
    private:
-    HugeAllocationStrategy strat;
+    HugeAllocationStrategy strat = HugeAllocationStrategy::MALLOC_BACKED;
     ck::mutex m_lock;
     struct list_head allocations = LIST_HEAD_INIT(allocations);
 

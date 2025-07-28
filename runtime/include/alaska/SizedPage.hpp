@@ -21,7 +21,7 @@ namespace alaska {
   struct Block;
 
   // A SizedPage allocates objects of one specific size class.
-  class SizedPage : public alaska::HeapPage {
+  class SizedPage final : public alaska::HeapPage {
    public:
     using HeapPage::HeapPage;
     ~SizedPage(void) override;

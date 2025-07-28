@@ -126,13 +126,13 @@ TEST_F(RuntimeTest, SlabNFreeDecreasesOnHandleGet) {
   // Allocate a fresh slab from the handle table
   auto* slab = runtime.handle_table.fresh_slab(DUMMY_THREADCACHE);
   // Get the initial nfree count
-  int initialNFree = slab->allocator.num_free();
+  int initialNFree = slab->num_free();
   // Get a handle from the slab
   auto handle = slab->alloc();
   // Check that the handle is valid
   ASSERT_NE(handle, nullptr);
   // Check that the nfree count has decreased by 1
-  ASSERT_EQ(slab->allocator.num_free(), initialNFree - 1);
+  ASSERT_EQ(slab->num_free(), initialNFree - 1);
 }
 
 
@@ -153,7 +153,7 @@ TEST_F(RuntimeTest, SlabGetReturnsNullWhenOutOfCapacity) {
   auto* slab = runtime.handle_table.fresh_slab(DUMMY_THREADCACHE);
 
   // Fill up the slab with handles
-  for (size_t i = 0; i < slab->num_free(); i++) {
+  for (size_t i = 0; i < slab->capacity(); i++) {
     auto handle = slab->alloc();
     // ::printf("allocated handle %p %zu\n", handle, slab->num_free());
     ASSERT_NE(handle, nullptr);

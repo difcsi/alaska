@@ -51,7 +51,7 @@ namespace alaska {
 
     void configure(void *objects, size_t object_size, long object_count);
 
-    auto get_rates(TimeCache &tc) { return rates.digest(tc); }
+    auto get_rates(TimeCache &tc) { return alaska::AllocationRate(); }
 
     inline bool some_available(void) {
       return free_list.has_local_free() || free_list.has_remote_free() ||
@@ -87,89 +87,6 @@ namespace alaska {
       return ((off_t)bump_next - (off_t)objects_start) / object_size;
     }
 
-
-    class AllocatedObjectIterator {
-     public:
-      // Constructor
-      AllocatedObjectIterator(
-          const uint8_t *bitmap, size_t size_in_bits, void *start, size_t object_size)
-          : bitmap(bitmap)
-          , size(size_in_bits)
-          , current_index(0)
-          , start_object(start)
-          , object_size(object_size) {
-        advance_to_next_set_bit();
-      }
-      AllocatedObjectIterator(void)
-          : current_index(-1) {}
-
-
-
-      // Iterator methods
-      bool operator!=(const AllocatedObjectIterator &other) const {
-        return current_index != other.current_index;
-      }
-
-      void *operator*() const {
-        return (void *)((off_t)start_object + current_index * object_size);
-      }
-
-      AllocatedObjectIterator &operator++() {
-        ++current_index;
-        advance_to_next_set_bit();
-        return *this;
-      }
-
-     private:
-      const uint8_t *bitmap;
-      long size;
-      long current_index;
-
-      void *start_object;
-      size_t object_size;
-
-
-      void advance_to_next_set_bit() {
-        while (current_index < size) {
-          size_t byte_index = current_index / 8;
-          size_t bit_offset = current_index % 8;
-
-          if (bitmap[byte_index] & (1 << bit_offset)) {
-            return;
-          }
-          ++current_index;
-        }
-
-        // Mark as end
-        current_index = -1;
-      }
-    };
-
-    AllocatedObjectIterator begin() const {
-      return AllocatedObjectIterator(bitmap, object_count, objects_start, object_size);
-    }
-    AllocatedObjectIterator end() const { return AllocatedObjectIterator(); }
-
-
-
-    inline bool is_allocated(void *p) {
-      auto i = object_index(p);
-      uint8_t byte_value = __atomic_load_n(&bitmap[i / 8], __ATOMIC_RELAXED);
-      return (byte_value & (1 << (i % 8))) != 0;
-    }
-    inline bool is_free(void *p) { return not is_allocated(p); }
-    inline void track_allocated(void *p) {
-      rates.alloc(object_size);
-      auto i = object_index(p);
-      __atomic_fetch_or(&bitmap[i / 8], 1 << (i % 8), __ATOMIC_RELAXED);
-    }
-
-    inline void track_freed(void *p) {
-      rates.free(object_size);
-      auto i = object_index(p);
-      __atomic_fetch_and(&bitmap[i / 8], ~(1 << (i % 8)), __ATOMIC_RELAXED);
-    }
-
    private:
     void *alloc_slow(void);
 
@@ -180,7 +97,7 @@ namespace alaska {
     size_t object_size;                 // How large each object is
     uint8_t *bitmap = nullptr;          // A pointer to the start of the free bitmap
     alaska::ShardedFreeList<DefaultFreeListBlock> free_list;  // A free list for tracking releases
-    alaska::AllocationRateCounter rates;
+    // alaska::AllocationRateCounter rates;
   };
 
 
@@ -193,7 +110,7 @@ namespace alaska {
       return alloc_slow();
     }
 
-    alaska_track_malloc_size(object, object_size, object_size, 0);
+    // alaska_track_malloc_size(object, object_size, object_size, 0);
 
     return object;
   }
