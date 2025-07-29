@@ -270,6 +270,11 @@ static void schedule_localization(uint64_t interval_override = 0) {
 
 
 extern "C" void yukon_enable_localization(int enable) {
+  if (getenv("NODUMP") != nullptr) {
+    fprintf(stderr, "YUKON: localization disabled by NODUMP env var!\n");
+    enable = 0;
+  }
+
   enable_localization = enable;
   if (enable_localization) {
     schedule_localization();
@@ -579,16 +584,22 @@ namespace yukon {
     }
 
 
-    // if (getenv("NODUMP") == nullptr) {
-    //   signal(SIGPROF, yukon::dump_alarm_handler);
 
-    //   yukon_mean_dump_interval = 10 * 1000;
-    //   fprintf(stderr, "YUKON: dump interval %zuus\n", yukon_mean_dump_interval);
+    signal(SIGPROF, yukon::dump_alarm_handler);
+    yukon_mean_dump_interval = 10 * 1000;
+    if (getenv("NODUMP") == nullptr) {
+      fprintf(stderr, "YUKON: dump interval %zuus\n", yukon_mean_dump_interval);
 
-    //   // Schedule the first dump for 50ms from now (just to make sure
-    //   // initialization is done. This is a Super-Hack)
-    //   schedule_localization(50 * 1000);
-    // }
+      yukon_enable_localization(true);
+      // Schedule the first dump for 50ms from now (just to make sure
+      // initialization is done. This is a Super-Hack)
+      schedule_localization(50 * 1000);
+    } else {
+      yukon_enable_localization(false);
+      enable_localization = false;
+      yukon_mean_dump_interval = 0;
+      fprintf(stderr, "YUKON: localization disabled!\n");
+    }
   }
 }  // namespace yukon
 
