@@ -173,7 +173,7 @@ namespace alaska {
 
       long page_index = 0;
       mag.foreach ([&](SizedPage *sp) {
-        printf("%zu/%zu ", sp->available(), sp->object_capacity());
+        fprintf(stream, "%zu/%zu ", sp->available(), sp->object_capacity());
         return true;
         // if (page_index == 0) printf("(%8lu) ", sp->object_capacity());
         bool color = sp->get_owner() != nullptr;
