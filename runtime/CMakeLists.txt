@@ -73,9 +73,7 @@ set(CORE_SOURCES
 
   core/Utils.cpp
 
-  core/DiskHeap.cpp
-
-
+  # core/DiskHeap.cpp
   # core/disk/Disk.cpp
   # core/disk/BufferPool.cpp
   # core/disk/Structure.cpp
