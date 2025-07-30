@@ -62,6 +62,8 @@ namespace alaska {
     HandleSlab(HandleTable &table, slabidx_t idx);
     void dump(FILE *stream);  // Dump this slab's debug info to a file
 
+
+    // Implemented at the bottom of this file...
     alaska::Mapping *alloc(void);             // Allocate a mapping from this slab
     void release_remote(alaska::Mapping *m);  // Return a mapping back to this slab (remote)
     void release_local(alaska::Mapping *m);   // Return a mapping back to this slab (local)
@@ -77,21 +79,6 @@ namespace alaska {
     size_t capacity(void) const { return end - start; }
   };
 
-
-
-
-  inline alaska::Mapping *HandleSlab::alloc(void) {
-    // 1. Attempt to allocate a mapping from the free list.
-    auto *m = (alaska::Mapping *)free_list.pop();
-    // 2. If that fails, drop out to the slow path
-    if (unlikely(m == nullptr)) {
-      m = alloc_slow();
-    }
-    return m;
-  }
-
-  inline void HandleSlab::release_remote(Mapping *m) { free_list.free_remote((void *)m); }
-  inline void HandleSlab::release_local(Mapping *m) { free_list.free_local((void *)m); }
 
 
 
@@ -214,4 +201,20 @@ namespace alaska {
     auto byte_distance = (uintptr_t)m - (uintptr_t)m_table;
     return byte_distance / HandleTable::slab_size;
   }
+
+
+
+
+  inline alaska::Mapping *HandleSlab::alloc(void) {
+    // 1. Attempt to allocate a mapping from the free list.
+    auto *m = (alaska::Mapping *)free_list.pop();
+    // 2. If that fails, drop out to the slow path
+    if (unlikely(m == nullptr)) {
+      m = alloc_slow();
+    }
+    return m;
+  }
+
+  inline void HandleSlab::release_remote(Mapping *m) { free_list.free_remote((void *)m); }
+  inline void HandleSlab::release_local(Mapping *m) { free_list.free_local((void *)m); }
 }  // namespace alaska
