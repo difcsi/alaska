@@ -34,6 +34,7 @@ endfunction()
 
 alaska_switch(ALASKA_ENABLE_COMPILER ON)
 alaska_switch(ALASKA_ENABLE_TESTING  ON)
+alaska_switch(ALASKA_ENABLE_LOGGING  OFF)
 alaska_switch(ALASKA_CORE_ONLY       OFF)
 alaska_switch(ALASKA_HTLB_SIM        OFF)
 
