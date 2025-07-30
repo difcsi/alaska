@@ -331,7 +331,7 @@ namespace alaska {
 
     auto owner = this->get_owner();
     log_info("owner: %4d | ", owner ? owner->get_id() : -1);
-    log_info("free %4zu | ", allocator.num_free());
+    log_info("free %4zu | ", num_free());
     log_info("\n");
   }
 }  // namespace alaska
