@@ -122,6 +122,30 @@ static const char *riscv_abi_names[] = {
     "t6",
 };
 
+static void output_register(uint64_t value) {
+  auto &rt = alaska::Runtime::get();
+
+  alaska::printf("0x%016lx ", value);
+
+  // if the value is a valid handle.
+  void *p = (void *)value;
+  if (rt.is_valid_handle(p)) {
+    auto *m = alaska::Mapping::from_handle_safe(p);
+    if (m) {
+      void *ptr = m->get_pointer();
+      auto *h = alaska::ObjectHeader::from(ptr);
+      size_t size = h->object_size();
+      alaska::printf("m=%p -> %p ", m, ptr);
+      alaska::printf("h=%p size=%zu ", h, size);
+
+      uint8_t *data = (uint8_t *)ptr;
+      for (size_t i = 0; i < size; i++) {
+        alaska::printf("%02x ", data[i]);
+      }
+    }
+  }
+}
+
 static void yukon_signal_handler(int sig, siginfo_t *info, void *ucontext) {
   // If a pagefault occurs while handle table walking, we will throw the
   // exception back up and even if you handle the page fault, the HTLB
@@ -138,15 +162,17 @@ static void yukon_signal_handler(int sig, siginfo_t *info, void *ucontext) {
     ucontext_t *uc = (ucontext_t *)ucontext;
     greg_t *regs = uc->uc_mcontext.__gregs;
 
-    printf("Segfault at address: %p on thread %ld\n", info->si_addr, pthread_self());
-    printf("Register state:\n");
+    log_fatal("Segfault at address: %p on thread %ld\n", info->si_addr, pthread_self());
+    log_fatal("Register state:\n");
     fault_pc = regs[0];
-    printf("ra =0x%016lx inst=%08x\n", regs[0], *(uint32_t *)regs[0]);
-    printf("sp =0x%016lx\n", regs[1]);
-    printf("gp =0x%016lx\n", regs[2]);
-    printf("tp =0x%016lx\n", regs[3]);
+    log_fatal("ra =0x%016lx inst=%08x\n", regs[0], *(uint32_t *)regs[0]);
+    log_fatal("sp =0x%016lx\n", regs[1]);
+    log_fatal("gp =0x%016lx\n", regs[2]);
+    log_fatal("tp =0x%016lx\n", regs[3]);
     for (int i = 1; i < 31; i++) {
-      printf("  x%-2d/%-5s =0x%016lx\n", i, riscv_abi_names[i + 1], regs[i]);
+      alaska::printf("     x%-2d/%-5s ", i, riscv_abi_names[i + 1]);
+      output_register(regs[i]);
+      alaska::printf("\n");
     }
 #endif
 
@@ -158,9 +184,9 @@ static void yukon_signal_handler(int sig, siginfo_t *info, void *ucontext) {
       perror("backtrace_symbols");
       exit(EXIT_FAILURE);
     }
-    printf("Backtrace:\n");
+    log_fatal("Backtrace:\n");
     for (int i = 0; i < nptrs; i++) {
-      printf("%016lx %s\n", (uint64_t)buffer[i], symbols[i]);
+      log_fatal("%016lx %s\n", (uint64_t)buffer[i], symbols[i]);
     }
     // free(symbols);
 
@@ -175,7 +201,8 @@ static void yukon_signal_handler(int sig, siginfo_t *info, void *ucontext) {
     //     if (fault_pc >= start && fault_pc < end) {
     //       uintptr_t offset = fault_pc - start;
     //       printf(
-    //           "Faulting address %p is within this region, offset %lx\n", (void *)fault_pc, offset);
+    //           "Faulting address %p is within this region, offset %lx\n", (void *)fault_pc,
+    //           offset);
     //     }
     //   }
     // }
@@ -596,7 +623,6 @@ namespace yukon {
       schedule_localization(50 * 1000);
     } else {
       yukon_enable_localization(false);
-      enable_localization = false;
       yukon_mean_dump_interval = 0;
       fprintf(stderr, "YUKON: localization disabled!\n");
     }
@@ -606,6 +632,14 @@ namespace yukon {
 
 
 void __attribute__((constructor(102))) alaska_init(void) {
+  // read all the lines from /proc/self/maps and print them. use the FILE c api
+  // FILE *maps_file = fopen("/proc/self/maps", "r");
+  // char line[512];
+  // while (fgets(line, sizeof(line), maps_file)) {
+  //   printf("YUKON_MAP_REGION=%s", line);
+  // }
+  // fclose(maps_file);
+
   unsetenv("LD_PRELOAD");  // make it so we don't run alaska in subprocesses!
   // allocate
   yukon::get_tc();
@@ -706,9 +740,13 @@ extern "C" size_t halloc_usable_size(void *handle) {
     alaska::LockedThreadCache tc = *yukon::get_tc();
     return tc->get_size(handle);
   }
+
+
   if (m->is_free()) return 0;
   void *ptr = m->get_pointer();
   auto header = alaska::ObjectHeader::from(ptr);
+  // log_info("ThreadCache::get_size handle=%p m=%p -> %p %p size=%zu", handle, m, ptr, header,
+  //     header->object_size());
   return header->object_size();
 }
 
@@ -718,6 +756,18 @@ void *operator new(size_t size) { return halloc(size); }
 void *operator new[](size_t size) { return halloc(size); }
 void operator delete(void *ptr) { hfree(ptr); }
 void operator delete[](void *ptr) { hfree(ptr); }
+
+
+// extern "C" int strcmp(const char *s1, const char *s2) {
+//   alaska::Runtime::get().dump(stdout);
+//   log_info("strcmp(%p, %p)", s1, s2);
+//   // log_info("  -> strcmp(%s, %s)", s1, s2);
+//   while (*s1 && (*s1 == *s2)) {
+//     s1++;
+//     s2++;
+//   }
+//   return *(unsigned char *)s1 - *(unsigned char *)s2;
+// }
 
 
 extern "C" {
