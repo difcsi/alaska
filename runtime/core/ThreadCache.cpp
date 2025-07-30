@@ -70,13 +70,20 @@ namespace alaska {
       // Allocate the huge allocation.
       return this->runtime.heap.huge_allocator.allocate(size);
     }
+    // -- TEMP -- //
+    // alaska::ObjectHeader *header = (alaska::ObjectHeader *)alaska_internal_malloc(size + sizeof(alaska::ObjectHeader));
+    // auto *m = this->new_mapping();
+    // m->set_pointer(header->data());
+    // header->set_object_size(size);
+    // header->set_mapping(m);
+    // if (zero) {
+    //   memset(header->data(), 0, size);
+    // }
+    // return m->to_handle();
+    // -- TEMP -- //
 
-
-
-    log_info("ThreadCache::halloc size=%zu", size);
     alaska::AllocationRequest req(*this, size);
     req.zero = zero;
-
     int cls = alaska::size_to_class(size);
     void *ptr;
     SizedPage *page = size_classes[cls];
@@ -89,8 +96,6 @@ namespace alaska {
       ptr = page->allocate_handle(req);
       ALASKA_ASSERT(ptr != nullptr, "OOM!");
     }
-
-
     return ptr;
   }
 
@@ -110,7 +115,7 @@ namespace alaska {
 
     handle_memcpy(new_handle, handle, copy_size);
 
-    hfree(handle);
+    this->hfree(handle);
 
     return new_handle;
   }
@@ -119,6 +124,8 @@ namespace alaska {
 
   void ThreadCache::hfree(void *handle) {
     alaska::Mapping *m = alaska::Mapping::from_handle_safe(handle);
+
+    // log_info("ThreadCache::hfree handle=%p m=%p", handle, m);
     // The first case in hfree is handling huge allocations.
     // These allocations are not tracked in the handle table, so we
     // need to handle them by calling out to the huge allocator.
@@ -131,36 +138,40 @@ namespace alaska {
 
     // --- Free the data allocation --- //
     void *ptr = m->get_pointer();
+
+    // // TEMP
+    // alaska::ObjectHeader *header = alaska::ObjectHeader::from(ptr);
+    // alaska_internal_free(header);
+    // // TEMP
+
     auto *handle_slab = this->runtime.handle_table.get_slab(m);
     auto *heap_page = this->runtime.heap.pt.get_unaligned(ptr);
-
-
     bool heap_owned = heap_page->is_owned_by(this);
     bool handle_owned = handle_slab->is_owned_by(this);
 
-    // m->set_pointer(nullptr); // clear the handle before freeing it
 
-    // if (likely(heap_owned and handle_owned)) {
-    //   heap_page->release_local(*m, ptr);  
-    //   handle_slab->release_local(m);
-    //   return;
-    // }
+    if (likely(heap_owned and handle_owned)) {
+      heap_page->release_local(*m, ptr);
+      handle_slab->release_local(m);
+      m->set_pointer(nullptr);  // clear the handle before freeing it
+      return;
+    }
 
     // Now the slow path.
 
+    if (likely(heap_page->is_owned_by(this))) {
+      heap_page->release_local(*m, ptr);
+    } else {
+      heap_page->release_remote(*m, ptr);
+    }
 
-    // if (likely(heap_page->is_owned_by(this))) {
-    //   heap_page->release_local(*m, ptr);
-    // } else {
-    //   heap_page->release_remote(*m, ptr);
-    // }
 
-
-    // if (likely(handle_slab->is_owned_by(this))) {
-    //   handle_slab->release_local(m);
-    // } else {
-    //   handle_slab->release_remote(m);
-    // }
+    if (likely(handle_slab->is_owned_by(this))) {
+      handle_slab->release_local(m);
+    } else {
+      handle_slab->release_remote(m);
+    }
+    m->set_pointer(nullptr);  // clear the handle before freeing it
     return;
   }
 
@@ -171,7 +182,9 @@ namespace alaska {
       return this->runtime.heap.huge_allocator.size_of(handle);
     }
 
+
     if (m->is_free()) return 0;
+
     void *ptr = m->get_pointer();
     auto header = alaska::ObjectHeader::from(ptr);
     return header->object_size();
