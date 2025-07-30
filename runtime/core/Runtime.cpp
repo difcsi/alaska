@@ -84,7 +84,8 @@ namespace alaska {
           tc->handle_table_churn.digest());
       fprintf(stream, "\n");
     }
-    // handle_table.dump(stream);
+    handle_table.dump(stream);
+    heap.dump(stream);
   }
 
 
