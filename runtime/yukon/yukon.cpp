@@ -270,6 +270,7 @@ static void schedule_localization(uint64_t interval_override = 0) {
 
   uint64_t interval =
       interval_override != 0 ? interval_override : exp_rand(yukon_mean_dump_interval);
+  alaska::printf("Scheduling localization in %zuus\n", interval);
 
   // Apply a minimum interval for safety (or something)
   constexpr uint64_t min_interval = 20;
@@ -539,19 +540,6 @@ static uint64_t last_dump_instret = 0;
 static uint64_t last_dump_misses = 0;
 
 namespace yukon {
-  void set_handle_table_base(void *addr) {
-    uint64_t value;
-    read_csr(CSR_HTBASE, value);
-    if (getenv("YUKON_PHYS") != nullptr) {
-      value |= (1LU << 63);
-    }
-
-    write_csr(CSR_HTBASE, value);
-  }
-
-
-
-
   void dump_htlb(alaska::ThreadCache *tc) {
     auto fd = alaska::HandleTable::get_ht_fd();
     static size_t localization_count = 0;
@@ -646,33 +634,10 @@ void __attribute__((constructor(102))) alaska_init(void) {
 }
 
 
-static void touch_pages(uintptr_t start, uintptr_t end) {
-  constexpr uintptr_t page_size = 4096;
-  // Align the start to the beginning of the first 4KB page in the range
-  uintptr_t current_page = start & ~(page_size - 1);
-  if (current_page < start) {
-    current_page += page_size;
-  }
-
-  // Loop through each page until we exceed the end
-  while (current_page < end) {
-    volatile uint8_t *p = (volatile uint8_t *)current_page;
-    *p = 0;
-    // Move to the next page
-    current_page += page_size;
-  }
-}
-
 static void *_halloc(size_t sz, int zero) {
   void *result = NULL;
-
   result = yukon::get_tc()->halloc(sz, zero);
-  // if (m) {
-  //   auto backing_data = (uintptr_t)m->get_pointer();
-  //   touch_pages(backing_data, backing_data + sz);
-  // }
   if (result == NULL) errno = ENOMEM;
-
   return result;
 }
 
@@ -699,12 +664,6 @@ extern "C" void *hrealloc(void *handle, size_t new_size) {
     return tc->halloc(new_size);
   }
   auto *m = alaska::Mapping::from_handle_safe(handle);
-  if (m == NULL) {
-    if (!alaska::Runtime::get().heap.huge_allocator.owns(handle)) {
-      log_fatal("realloc edge case: not a handle %p!", handle);
-      exit(-1);
-    }
-  }
 
   // If the size is equal to zero, and the handle is not null, realloc acts like free(handle)
   if (new_size == 0) {
@@ -725,7 +684,6 @@ extern "C" void hfree(void *ptr) {
   // RuntimeTracker fencer;
   // no-op if NULL is passed
   if (unlikely(ptr == NULL)) return;
-
 
   alaska::LockedThreadCache tc = *yukon::get_tc();
   tc->hfree(ptr);

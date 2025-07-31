@@ -19,6 +19,8 @@
 #include <alaska/utils.h>
 #include <alaska/lphash_set.h>
 
+#include <execinfo.h>
+
 namespace alaska {
 
   ThreadCache::ThreadCache(int id, alaska::Runtime &rt)
@@ -64,16 +66,17 @@ namespace alaska {
 
   void *ThreadCache::halloc(size_t size, bool zero) {
     if (unlikely(size == 0)) return NULL;
+    // alaska::printf("ThreadCache::halloc size=%zu zero=%d\n", size, zero);
 
     if (unlikely(alaska::should_be_huge_object(size))) {
       log_debug("ThreadCache::halloc huge size=%zu\n", size);
       // Allocate the huge allocation.
-      return this->runtime.heap.huge_allocator.allocate(size);
+      return alaska_internal_malloc(size);
     }
+
     // -- TEMP -- //
-    // alaska::ObjectHeader *header = (alaska::ObjectHeader *)alaska_internal_malloc(size + sizeof(alaska::ObjectHeader));
-    // auto *m = this->new_mapping();
-    // m->set_pointer(header->data());
+    // alaska::ObjectHeader *header = (alaska::ObjectHeader *)alaska_internal_malloc(size +
+    // sizeof(alaska::ObjectHeader)); auto *m = this->new_mapping(); m->set_pointer(header->data());
     // header->set_object_size(size);
     // header->set_mapping(m);
     // if (zero) {
@@ -107,7 +110,12 @@ namespace alaska {
     alaska::Mapping *m = alaska::Mapping::from_handle_safe(handle);
 
     auto original_size = this->get_size(handle);
-    void *new_handle = this->halloc(new_size);
+    if (original_size >= new_size) {
+      return handle;  // No need to realloc if the size is the same or larger.
+    }
+
+    // alaska::printf("ThreadCache::hrealloc handle=%p original_size=%zu new_size=%zu\n", handle, original_size, new_size);
+    void *new_handle = this->halloc(new_size, true);
 
 
     // We should copy the minimum of the two sizes between the allocations.
@@ -125,19 +133,20 @@ namespace alaska {
   void ThreadCache::hfree(void *handle) {
     alaska::Mapping *m = alaska::Mapping::from_handle_safe(handle);
 
-    // log_info("ThreadCache::hfree handle=%p m=%p", handle, m);
     // The first case in hfree is handling huge allocations.
     // These allocations are not tracked in the handle table, so we
     // need to handle them by calling out to the huge allocator.
     // This is behind an unlikely check because it is expected that these
     // are relatively rare.
+
     if (unlikely(m == nullptr)) {
-      this->runtime.heap.huge_allocator.free(handle);
+      // alaska_internal_free(handle);
       return;
     }
 
     // --- Free the data allocation --- //
     void *ptr = m->get_pointer();
+
 
     // // TEMP
     // alaska::ObjectHeader *header = alaska::ObjectHeader::from(ptr);
@@ -145,15 +154,17 @@ namespace alaska {
     // // TEMP
 
     auto *handle_slab = this->runtime.handle_table.get_slab(m);
-    auto *heap_page = this->runtime.heap.pt.get_unaligned(ptr);
-    bool heap_owned = heap_page->is_owned_by(this);
     bool handle_owned = handle_slab->is_owned_by(this);
 
+    auto *heap_page = this->runtime.heap.pt.get_unaligned(ptr);
+    bool heap_owned = heap_page->is_owned_by(this);
+
+    // heap_page->release_remote(*m, ptr);
+    // handle_slab->release_remote(m);
 
     if (likely(heap_owned and handle_owned)) {
       heap_page->release_local(*m, ptr);
       handle_slab->release_local(m);
-      m->set_pointer(nullptr);  // clear the handle before freeing it
       return;
     }
 
@@ -171,7 +182,6 @@ namespace alaska {
     } else {
       handle_slab->release_remote(m);
     }
-    m->set_pointer(nullptr);  // clear the handle before freeing it
     return;
   }
 
@@ -179,7 +189,7 @@ namespace alaska {
   size_t ThreadCache::get_size(void *handle) {
     alaska::Mapping *m = alaska::Mapping::from_handle_safe(handle);
     if (m == nullptr) {
-      return this->runtime.heap.huge_allocator.size_of(handle);
+      return alaska_internal_size_of(handle);
     }
 
 

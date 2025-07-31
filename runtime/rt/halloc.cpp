@@ -75,13 +75,6 @@ void *hrealloc(void *handle, size_t new_size) {
 
 
   auto *m = alaska::Mapping::from_handle_safe(handle);
-  if (m == NULL) {
-    if (!alaska::Runtime::get().heap.huge_allocator.owns(handle)) {
-      log_debug("realloc edge case: not a handle %p!", handle);
-      return ::realloc(handle, new_size);
-    }
-  }
-
   // If the size is equal to zero, and the handle is not null, realloc acts like free(handle)
   if (new_size == 0) {
     log_debug("realloc edge case: zero size %p!", handle);

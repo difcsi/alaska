@@ -179,7 +179,6 @@ namespace alaska {
     PageManager pm;
     HeapPageTable pt;
 
-    HugeObjectAllocator huge_allocator;
 
     Heap(alaska::Configuration &config);
     ~Heap(void);

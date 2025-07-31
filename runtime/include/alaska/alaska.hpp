@@ -75,7 +75,7 @@ namespace alaska {
     inline void invalidate(void) {
 #ifdef __riscv
       // Fence *before* the handle invalidation.
-      // __asm__ volatile("fence" ::: "memory");
+      __asm__ volatile("fence" ::: "memory");
       __asm__ volatile("csrw 0xc4, %0" ::"rK"((uint64_t)handle_id()) : "memory");
 #endif
     }
@@ -158,6 +158,7 @@ namespace alaska {
       return (alaska::Mapping *)((uint64_t)handle >> (ALASKA_SIZE_BITS - ALASKA_SQUEEZE_BITS));
     }
 
+    static ALASKA_INLINE bool is_handle_slow(void *ptr) { return ((uint64_t)ptr >> 62) == 0b10; }
     // Extract an encoded mapping out of the bits of a handle. This variant of the function
     // will first check if the pointer provided is a handle. If it is not, this method will
     // return null.
@@ -180,7 +181,6 @@ namespace alaska {
     }
 
 
-    static ALASKA_INLINE bool is_handle_slow(void *ptr) { return ((uint64_t)ptr >> 62) == 0b10; }
   };
 
   static_assert(

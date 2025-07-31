@@ -212,12 +212,6 @@ extern "C" void *hrealloc(void *handle, size_t new_size) {
   handle = reverse(handle);
 
   auto *m = alaska::Mapping::from_handle_safe(handle);
-  if (m == NULL) {
-    if (!alaska::Runtime::get().heap.huge_allocator.owns(handle)) {
-      log_fatal("realloc edge case: not a handle %p!", handle);
-      exit(-1);
-    }
-  }
 
   // If the size is equal to zero, and the handle is not null, realloc acts like free(handle)
   if (new_size == 0) {

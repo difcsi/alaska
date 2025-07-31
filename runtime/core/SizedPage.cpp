@@ -22,25 +22,70 @@ namespace alaska {
 
   SizedPage::~SizedPage() { return; }
 
+
+  long SizedPage::extend(long count) {
+    size_t real_size = this->object_size + sizeof(ObjectHeader);
+    long extended_count = 0;
+    off_t start = (off_t)bump_next;
+    off_t end = start + real_size * count;
+    if (end > (off_t)objects_end) end = (off_t)objects_end;
+    bump_next = (void *)end;
+
+    for (off_t o = end - real_size; o >= start; o -= real_size) {
+      freelist.free_local((SizePageBlock *)o);
+      extended_count++;
+    }
+
+    return extended_count;
+  }
+
+  __attribute__((noinline))  // Don't inline this function, we want it to be a slow path.
+  void *
+  SizedPage::alloc_slow(const alaska::Mapping &m, alaska::AlignedSize size) {
+    long extended_count = extend(64);
+
+    // 1. If we managed to extend the list, return one of the blocks from it.
+    if (extended_count > 0) {
+      // Fall back into the alloc function to do the heavy lifting of actually allocating
+      // one of the blocks we just extended the list with.
+      return alloc(m, size);
+    }
+
+    // 2. If the list was not extended, try swapping the remote_free list and the local_free list.
+    // This is a little tricky because we need to worry about atomics here.
+    freelist.swap();
+
+    // If local-free is still null, return null
+    if (not freelist.has_local_free()) return nullptr;
+
+    // Otherwise, fall back to alloc
+    return alloc(m, size);
+  }
+
   void *SizedPage::alloc(const alaska::Mapping &m, alaska::AlignedSize size) {
-    auto *header = (ObjectHeader *)allocator.alloc();
-    if (unlikely(header == nullptr)) return nullptr;
-    header->set_mapping(&m);
-    header->set_object_size(size);
-    return header->data();
+    SizePageBlock *p = freelist.pop();
+    if (unlikely(p == nullptr)) {
+      return alloc_slow(m, size);
+    }
+
+
+    p->header.set_mapping(&m);
+    p->header.set_object_size(size);
+
+    return p->header.data();
   }
 
 
   bool SizedPage::release_local(const alaska::Mapping &m, void *ptr) {
     auto header = alaska::ObjectHeader::from(ptr);
-    allocator.release_local((void *)header);
+    release_local(header);
     return true;
   }
 
 
   bool SizedPage::release_remote(const alaska::Mapping &m, void *ptr) {
     auto header = alaska::ObjectHeader::from(ptr);
-    allocator.release_remote((void *)header);
+    release_remote(header);
     return true;
   }
 
@@ -55,12 +100,16 @@ namespace alaska {
     size_t real_size = this->object_size + sizeof(ObjectHeader);
     // The number of objects (and headers) that can fit in this page.
     this->capacity = (double)alaska::page_size / real_size;
-    this->live_objects = 0;
 
     snprintf(name, sizeof(name), "Sized(%zu)", this->object_size);
 
-    // initialize
-    allocator.configure(this->memory, real_size, capacity);
+    void *objects = this->memory;
+
+    this->objects_start = this->bump_next = objects;
+    // the number of objects in this array
+    this->objects_end = (void *)((uintptr_t)objects + (capacity * real_size));
+
+    freelist = ShardedFreeList<SizePageBlock>();
   }
 
 
@@ -90,14 +139,15 @@ namespace alaska {
   long SizedPage::compact(void) {
     // The return value - how many objects this function has moved.
     long moved_objects = 0;
+#if 0
 
     // The first step is to clear the free list so that we don't have any
     // corruption problems. Later we will update it to point at the end of
     // the allocated objects.
-    allocator.reset_free_list();
+    // allocator.reset_free_list();
 
 
-#if 0
+    freelist.reset();
 
     // This algorithm is a two-finger walk. We have two pointers, one
     // pointing to the left (destination) and one pointing to the right
@@ -115,7 +165,7 @@ namespace alaska {
 
     off_t left = 0;
     off_t right = 0;
-    off_t end = allocator.object_extent();
+    off_t end = object_extent();
     off_t last_object_seen = -1;
 
     // A helper function to get the object header at a given index.
@@ -124,43 +174,9 @@ namespace alaska {
       return (ObjectHeader *)((off_t)this->memory + index * (object_size + sizeof(ObjectHeader)));
     };
 
-    // This is a helper function I used while debugging. Not gonna remove it
-    // incase something else pops up.
-    /*
-    auto dump = [&](const char *msg) {
-      printf("%15s: ", msg);
-      for (off_t i = 0; i < end; i++) {
-        auto *header = get_object(i);
 
-        if (i == left) {
-          printf("\e[32m[");
-        } else {
-          printf(" ");
-        }
-
-        if (allocator.is_free(header)) {
-          printf(". . . . .");
-        } else {
-          if (i == last_object_seen) {
-            printf("!");
-          } else {
-            printf(" ");
-          }
-          printf("%08lx", (unsigned long)header->get_mapping()->handle_id());
-        }
-
-        if (i == right) {
-          printf("]\e[0m");
-        } else {
-          printf(" ");
-        }
-      }
-      if (right == end) {
-        printf("  >\e[0m");
-      }
-      printf("\n");
-    };
-    */
+    printf("Before compaction, %ld objects in %p to %p\n", this->memory, (void *)bump_next);
+    dump_live();
 
 
     // first, run the end back until we find an allocated object. This sets the
@@ -168,11 +184,10 @@ namespace alaska {
     // being called with a large value)
     while (end > 0) {
       auto obj = get_object(end - 1);
-      if (allocator.is_allocated(obj)) {
+      if (is_allocated(obj)) {
         break;
       }
       end--;
-      // dump("end wb");
     }
 
     while (left < end) {
@@ -181,10 +196,9 @@ namespace alaska {
       if (right <= left) {
         right = left + 1;
       }
-      // dump("top of loop");
 
       auto left_obj = get_object(left);
-      if (allocator.is_allocated(left_obj)) {
+      if (is_allocated(left_obj)) {
         left++;
         continue;
       }
@@ -197,8 +211,7 @@ namespace alaska {
         // free list.
 
         while (right > left) {
-          // dump("ec backup");
-          if (allocator.is_allocated(get_object(right))) {
+          if (is_allocated(get_object(right))) {
             break;
           }
           right--;
@@ -207,10 +220,9 @@ namespace alaska {
         end = right;
 
         while (left < end) {
-          // dump("ec top");
           auto left_obj = get_object(left);
-          if (allocator.is_free(left_obj)) {
-            allocator.release_local(left_obj);
+          if (not is_allocated(left_obj)) {
+            release_local(left_obj);
           }
           // if the left pointer points to an allocated object, we can't do anything so
           // walk it forward (towards the right)
@@ -224,11 +236,10 @@ namespace alaska {
       // we found a free slot. we need to the object to the right to move here.
       bool found_right = false;  // Did we find a valid object to move?
       while (right < end) {
-        // dump("right loop");
         // if the right pointer points to a free slot, we can't do anything so
         // move it forward
         auto right_obj = get_object(right);
-        if (allocator.is_free(right_obj)) {
+        if (not is_allocated(right_obj)) {
           // TODO: make this the spot we "skip" to next time we need to pick a left value.
           right++;
           continue;
@@ -248,8 +259,6 @@ namespace alaska {
 
 
       if (found_right) {
-        // dump("found right");
-
         auto obj_r = get_object(right);
         auto map_r = obj_r->get_mapping();
 
@@ -264,91 +273,20 @@ namespace alaska {
         map_r->set_pointer(obj_l->data());
         obj_l->set_mapping(map_r);
 
-        // allocator.track_freed(obj_r);
-        // allocator.track_allocated(obj_l);
         moved_objects++;
-
-
-
-        // now. move!
       }
     }
-
-
     // end = last_object_seen + 1;
     // dump("end of loop");
     allocator.reset_bump_allocator(get_object(end));
+    printf("After compaction, moved %ld objects from %p to %p\n", moved_objects, this->memory, (void *)bump_next);
+    dump_live();
+
+    this->bump_next = get_object(end);
 #endif
 
     return moved_objects;
   }
-
-
-
-
-  long SizedPage::jumble(void) {
-    return 0;
-#if 0
-    char buf[this->object_size];  // BAD
-
-    // Simple two finger walk to swap every allocation
-    long left = 0;
-    long right = capacity - 1;
-    long swapped = 0;
-
-    while (right > left) {
-      auto *lo = ind_to_header(left);
-      auto *ro = ind_to_header(right);
-
-      auto *rm = ro->get_mapping();
-      auto *lm = lo->get_mapping();
-
-      if (rm == NULL or rm->is_pinned()) {
-        right--;
-        continue;
-      }
-
-      if (lm == NULL or lm->is_pinned()) {
-        left++;
-        continue;
-      }
-
-
-      // swap the handles!
-
-      // Grab the two pointers
-      void *left_ptr = ind_to_object(left);
-      void *right_ptr = ind_to_object(right);
-
-      // Swap their data
-      memcpy(buf, left_ptr, object_size);
-      memcpy(left_ptr, right_ptr, object_size);
-      memcpy(right_ptr, buf, object_size);
-
-      // Tick the fingers
-      left++;
-      right--;
-
-
-      // Swap the mappings and whatnot
-      auto lss = lo->size_slack;
-      auto rss = ro->size_slack;
-
-      rm->set_pointer(left_ptr);
-      ro->set_mapping(lm);
-      ro->size_slack = lss;
-
-      lm->set_pointer(right_ptr);
-      lo->set_mapping(rm);
-      lo->size_slack = rss;
-
-      swapped++;
-    }
-
-    return swapped;
-#endif
-  }
-
 
 
 }  // namespace alaska

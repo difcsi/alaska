@@ -104,13 +104,10 @@ namespace alaska {
 
 
 
-
-
   ////////////////////////////////////
   Heap::Heap(alaska::Configuration &config)
       : pm()
-      , pt(pm.get_start())
-      , huge_allocator(config.huge_strategy) {
+      , pt(pm.get_start()) {
     log_debug("Heap: Initialized heap");
   }
 
