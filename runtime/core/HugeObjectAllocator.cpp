@@ -15,7 +15,7 @@
 
 #include <alaska/Heap.hpp>
 #include <alaska/HugeObjectAllocator.hpp>
-#include <alaska/liballoc.h>
+#include <alaska/alaska_internal_malloc.h>
 #include <alaska/list_head.h>
 
 namespace alaska {
@@ -91,7 +91,7 @@ namespace alaska {
 
   size_t HugeObjectAllocator::size_of(void* ptr) {
     if (strat == HugeAllocationStrategy::MALLOC_BACKED) {
-      return ::alaska_internal_size_of(ptr);
+      return ::alaska_internal_malloc_usable_size(ptr);
     }
 
     ck::scoped_lock l(m_lock);

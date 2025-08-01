@@ -69,9 +69,14 @@ namespace alaska {
     // alaska::printf("ThreadCache::halloc size=%zu zero=%d\n", size, zero);
 
     if (unlikely(alaska::should_be_huge_object(size))) {
-      log_debug("ThreadCache::halloc huge size=%zu\n", size);
       // Allocate the huge allocation.
-      return alaska_internal_malloc(size);
+
+      void *p = alaska_internal_malloc(size);
+      if (zero) memset(p, 0, size);
+      // alaska::printf("allocated large object sz=%zu,%zu p=%p, zero=%d\n", size,
+      //     alaska_internal_malloc_usable_size(p), p, zero);
+
+      return p;
     }
 
     // -- TEMP -- //
@@ -114,7 +119,7 @@ namespace alaska {
       return handle;  // No need to realloc if the size is the same or larger.
     }
 
-    // alaska::printf("ThreadCache::hrealloc handle=%p original_size=%zu new_size=%zu\n", handle, original_size, new_size);
+
     void *new_handle = this->halloc(new_size, true);
 
 
@@ -140,13 +145,18 @@ namespace alaska {
     // are relatively rare.
 
     if (unlikely(m == nullptr)) {
-      // alaska_internal_free(handle);
+      alaska_internal_free(handle);
       return;
     }
 
     // --- Free the data allocation --- //
     void *ptr = m->get_pointer();
 
+    auto *header = alaska::ObjectHeader::from(ptr);
+    if (header->get_mapping() != m) {
+      alaska::printf("MAPPING IS INCORRECT\n");
+      abort();
+    }
 
     // // TEMP
     // alaska::ObjectHeader *header = alaska::ObjectHeader::from(ptr);
@@ -189,7 +199,7 @@ namespace alaska {
   size_t ThreadCache::get_size(void *handle) {
     alaska::Mapping *m = alaska::Mapping::from_handle_safe(handle);
     if (m == nullptr) {
-      return alaska_internal_size_of(handle);
+      return alaska_internal_malloc_usable_size(handle);
     }
 
 

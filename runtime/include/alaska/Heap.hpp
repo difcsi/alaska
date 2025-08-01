@@ -65,6 +65,8 @@ namespace alaska {
     void free_page(void *page);
     void *get_start(void) const { return heap; }
 
+    inline bool contains(void *ptr) { return (ptr >= heap && ptr < end); }
+
 
     double get_usage_frac(void) const {
       return 100.0 * (alloc_count / (double)(heap_size / page_size));
@@ -209,6 +211,8 @@ namespace alaska {
     // Run a compaction on sized pages.
     long compact_sizedpages(void);
     long compact_locality_pages(void);
+
+    inline bool contains(void *ptr) { return this->pm.contains(ptr); }
 
    private:
     template <typename T, typename Fn>

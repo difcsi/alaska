@@ -11,7 +11,7 @@
 
 #pragma once
 
-#include <alaska/liballoc.h>
+#include <alaska/alaska_internal_malloc.h>
 
 #ifndef ALASKA_RELEASE_BUILD
 #define ALASKA_SANITY(c, msg, ...)                                                              \

@@ -18,7 +18,7 @@ namespace alaska {
   // be marked as such, and when `::end()` returns they should be released. The core runtime relies
   // on this to be the case for safe operation. If the user of the core runtime does not need to
   // pin any handles, the barrier does not need to do anything.
-  struct BarrierManager : public alaska::InternalHeapAllocated {
+  struct BarrierManager : public alaska::PersistentAllocation {
     virtual ~BarrierManager() = default;
     virtual bool begin(void) { return true; };
     virtual void end(void){};

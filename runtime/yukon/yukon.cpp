@@ -18,7 +18,6 @@
 #include "alaska.h"
 #include "alaska/HugeObjectAllocator.hpp"
 #include "alaska/ThreadCache.hpp"
-#include <alaska/liballoc.h>
 #include <stdlib.h>
 #include <errno.h>
 #include <signal.h>

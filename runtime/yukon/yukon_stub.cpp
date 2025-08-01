@@ -14,7 +14,6 @@
 #include <stdio.h>
 #include <alaska/ThreadCache.hpp>
 #include <alaska/Runtime.hpp>
-#include "alaska/liballoc.h"
 #include <assert.h>
 #include <sys/signal.h>
 
@@ -170,7 +169,9 @@ static void *from_handle(void *ptr) {
 
 static void *reverse(void *ptr) {
   if (ptr == NULL) return NULL;
-  if (alaska_internal_is_managed(ptr)) return ptr;
+  if (the_runtime and not the_runtime->heap.pm.contains(ptr)) {
+    return ptr;
+  }
   auto header = alaska::ObjectHeader::from(ptr);
   // alaska::printf("revr %p -> %p\n", ptr, header->get_mapping()->to_handle());
   return header->get_mapping()->to_handle(0);

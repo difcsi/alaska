@@ -19,7 +19,8 @@
 
 #include <alaska/utils.h>
 #include <alaska/list_head.h>
-#include <alaska/liballoc.h>
+#include <alaska/alaska_internal_malloc.h>
+#include <alaska/PersistentAllocation.h>
 #include <alaska/Logger.hpp>
 
 #include <ck/utility.h>

@@ -40,7 +40,7 @@ namespace alaska {
    *  - Heap: A global memory manager that allocates and frees memory blocks.
    *  - ThreadCaches: a list of the thread caches currently alive in the system.
    */
-  struct Runtime final : public alaska::InternalHeapAllocated {
+  struct Runtime final : public alaska::PersistentAllocation {
     alaska::Configuration config;
     // The handle table is a global table that maps handles to their corresponding memory blocks.
     alaska::HandleTable handle_table;

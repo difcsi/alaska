@@ -24,7 +24,7 @@ namespace alaska {
   // A ThreadRegistry allows threads to be added and removed,
   // and allows a little bit of data to be attached to the thread
   template <typename T>
-  class ThreadRegistry final : public alaska::InternalHeapAllocated {
+  class ThreadRegistry final : public alaska::PersistentAllocation {
    public:
     ThreadRegistry(void) {}
     using ThreadData = T;

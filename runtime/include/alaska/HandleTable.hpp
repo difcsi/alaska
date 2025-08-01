@@ -40,7 +40,7 @@ namespace alaska {
   // mappings. It is a fixed size, and no two threads will allocate from the
   // same slab at the same time.
   struct HandleSlab final : public alaska::OwnedBy<alaska::ThreadCache>,
-                            public alaska::InternalHeapAllocated {
+                            public alaska::PersistentAllocation {
    private:
     alaska::Mapping *start;
     alaska::Mapping *end;

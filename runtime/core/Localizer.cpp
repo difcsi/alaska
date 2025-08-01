@@ -13,7 +13,6 @@
 
 #include <alaska/Runtime.hpp>
 #include <alaska/Localizer.hpp>
-#include "alaska/liballoc.h"
 #include <alaska/lphash_set.h>
 
 namespace alaska {

@@ -19,6 +19,7 @@
 #include "alaska/utils.h"
 #include <stdlib.h>
 #include <alaska/utils.h>
+#include <alaska/alaska_internal_malloc.h>
 
 namespace alaska {
   // The default instance of a barrier manager.
@@ -36,6 +37,7 @@ namespace alaska {
       log_error("Cannot create a new Alaska Runtime, one already exists at %p", g_runtime);
       abort();
     }
+
 
     // Assign the global runtime to be this instance
     atomic_set(g_runtime, this);

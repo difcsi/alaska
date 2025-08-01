@@ -65,6 +65,7 @@ set(CORE_SOURCES
   core/ThreadCache.cpp
 	core/SizeClass.cpp
   core/HugeObjectAllocator.cpp
+  core/PersistentAllocation.cpp
 
   core/HeapPage.cpp
   core/SizedPage.cpp
@@ -78,11 +79,8 @@ set(CORE_SOURCES
   # core/disk/BufferPool.cpp
   # core/disk/Structure.cpp
 
-
-  # liballoc is a simple, small, malloc implementation that we embed
-  # so alaska can temporially allocate objects w/o implementing a non-handle
-  # allocator as well
-  core/liballoc.c
+  # include our internal malloc implementation (which is a rip of rpmalloc)
+  core/alaska_internal_malloc.c
 
 
 	# C++ glue stuff, since we don't link against libc++ in the core library.

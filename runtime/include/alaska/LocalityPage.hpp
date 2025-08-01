@@ -52,7 +52,7 @@ namespace alaska {
    * so it's important to keep it small to maximize the number of objects that can
    * be allocated from the slab.
    */
-  struct LocalitySlab final : public alaska::InternalHeapAllocated {
+  struct LocalitySlab final : public alaska::PersistentAllocation {
     size_t bump_size = 0;        // How many bytes have been allocated in this slab
     size_t freed = 0;            // how many bytes have been freed.
     struct list_head slab_list;  // TODO: don't track like this.

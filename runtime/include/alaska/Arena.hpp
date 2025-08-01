@@ -15,6 +15,7 @@
 
 #include <stdlib.h>
 #include <alaska/alaska.hpp>
+#include <alaska/Logger.hpp>
 
 namespace alaska {
 
@@ -47,7 +48,7 @@ namespace alaska {
     Arena(size_t arena_size = DEFAULT_ARENA_SIZE, bool can_grow = true)
         : m_arena_size(arena_size)
         , m_can_grow(can_grow) {
-      new_block();  // allocate the first block.
+      // new_block();  // allocate the first block.
     }
 
     ~Arena() {
@@ -61,10 +62,14 @@ namespace alaska {
 
 
     void* push(size_t size, bool zero = false) {
-      // TODO: edge case!
-      if (size > (m_arena_size - sizeof(Block))) {
-        return nullptr;
+      if (unlikely(m_current_block == nullptr)) {
+        this->new_block();
       }
+
+      // TODO: edge case!
+      // if (size > (m_arena_size - sizeof(Block))) {
+      //   return nullptr;
+      // }
       void* ptr = m_current_block->allocate(size);
       if (ptr == nullptr) {
         if (m_can_grow) {
@@ -110,6 +115,7 @@ namespace alaska {
 
    private:
     Block* new_block(void) {
+      alaska::printf("Creating new arena block of size %zu\n", m_arena_size);
       Block* new_block = (Block*)alaska_internal_malloc(sizeof(Block) + m_arena_size);
       new_block->next = nullptr;
       new_block->used = 0;
