@@ -70,6 +70,18 @@ namespace alaska {
     void mlock(void);                         // `mlock` the memory behind this slab
 
 
+    bool contains(alaska::Mapping *m) const {
+      // Check if the mapping is within the bounds of this slab
+      return (m >= start && m < end);
+    }
+
+    bool allocated(alaska::Mapping *m) const {
+      void *ptr = m->get_pointer();
+      if (contains((alaska::Mapping *)ptr)) {
+        return false;
+      }
+      return true;
+    }
 
     // Implmented in HandleTable.cpp, this function cannot be inlined and is meant
     // to be used when the local free list is empty.

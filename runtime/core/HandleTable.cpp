@@ -218,9 +218,7 @@ namespace alaska {
     }
 
     auto *slab = m_slabs[idx];
-    // return slab->allocator.is_allocated(m);
-
-    return true;  // TODO:
+    return slab->allocated(m);
   }
 
 
