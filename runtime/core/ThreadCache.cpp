@@ -115,10 +115,6 @@ namespace alaska {
     alaska::Mapping *m = alaska::Mapping::from_handle_safe(handle);
 
     auto original_size = this->get_size(handle);
-    if (original_size >= new_size) {
-      return handle;  // No need to realloc if the size is the same or larger.
-    }
-
 
     void *new_handle = this->halloc(new_size, true);
 
