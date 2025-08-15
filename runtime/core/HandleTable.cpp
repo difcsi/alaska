@@ -44,19 +44,12 @@ static inline void mark_free(uint64_t handle_id) {
 #endif
 
 
-#ifdef __riscv
 static int dev_alaska_fd = -1;
-#endif
 
 namespace alaska {
 
 
-  int HandleTable::get_ht_fd(void) {
-#ifdef ALASKA_YUKON
-    return dev_alaska_fd;
-#endif
-    return -1;
-  }
+  int HandleTable::get_ht_fd(void) { return dev_alaska_fd; }
 
   //////////////////////
   // Handle Table
@@ -70,18 +63,23 @@ namespace alaska {
     m_capacity = HandleTable::initial_capacity;
 
 
-#ifdef __riscv
-    if (dev_alaska_fd == -1) dev_alaska_fd = open("/dev/alaska", O_RDWR);
+    if (dev_alaska_fd == -1) {
+      int fd = open("/dev/alaska", O_RDWR);
+      if (fd > 0) dev_alaska_fd = fd;
+    }
 
-    m_table = (Mapping *)mmap((void *)table_start, m_capacity * HandleTable::slab_size,
-        PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED, dev_alaska_fd, 0);
-    printf("Yukon: allocated handle table to %p with the kernel module!\n", m_table);
+    if (dev_alaska_fd > 0) {
+      m_table = (Mapping *)mmap((void *)table_start, m_capacity * HandleTable::slab_size,
+          PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED, dev_alaska_fd, 0);
+      alaska::printf("Yukon: allocated handle table to %p with the kernel module!\n", m_table);
+    } else {
+      // Attempt to allocate the initial memory for the table.
+      m_table = (Mapping *)mmap((void *)table_start, m_capacity * HandleTable::slab_size,
+          PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
 
-#else
-    // Attempt to allocate the initial memory for the table.
-    m_table = (Mapping *)mmap((void *)table_start, m_capacity * HandleTable::slab_size,
-        PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
-#endif
+      alaska::printf("Allocated handle table to %p with anon mmap\n", m_table);
+    }
+
 
     // Validate that the table was allocated
     ALASKA_ASSERT(
@@ -282,7 +280,6 @@ namespace alaska {
   HandleSlab::HandleSlab(HandleTable &table, slabidx_t idx)
       : table(table)
       , idx(idx) {
-
     void *memory = table.get_slab_start(idx);
     // assert that memory is aligned to page size
     if ((((uintptr_t)memory % alaska::page_size) != 0)) {
