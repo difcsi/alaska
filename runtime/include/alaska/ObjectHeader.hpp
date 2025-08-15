@@ -36,18 +36,29 @@ namespace alaska {
       uint16_t __metadata : 16;  // don't use this manually. just here to ensure space
     };
 
-    size_t object_size(void) const { return this->blocks * 8; }
+
+    uint32_t hit_count;
+    uint32_t __reserved;
+
+    inline size_t object_size(void) const { return this->blocks * 8; }
+    inline size_t real_object_size(void) const { return object_size() + sizeof(ObjectHeader); }
+
     void set_object_size(size_t size_bytes) {
       this->blocks = round_up(size_bytes, 8) / 8;
       ALASKA_SANITY(this->blocks != 0, "object size must be greater than 0");
     }
     void *data(void) { return (void *)((off_t)this + sizeof(ObjectHeader)); }
+
+    inline void reset(void) {
+      __metadata = 0;
+      hit_count = 0;
+    }
     alaska::Mapping *get_mapping(void) const { return alaska::Mapping::from_handle_id(handle_id); }
     // Passing null here means the object is not mapped.
     inline void set_mapping(const alaska::Mapping *m) {
       // clear metadata. This is important because we don't want to accidentally
       // have uninitialized metadata.
-      __metadata = 0;
+      reset();
       handle_id = m->handle_id();
     }
 
@@ -62,7 +73,8 @@ namespace alaska {
     static ObjectHeader *from(alaska::Mapping &m) { return from(m.get_pointer()); }
     static ObjectHeader *from(alaska::Mapping *m) { return from(m->get_pointer()); }
     static ObjectHeader *from(void *ptr) {
-      // return (ObjectHeader *)__builtin_assume_aligned((ObjectHeader *)((off_t)ptr - sizeof(ObjectHeader)), sizeof(ObjectHeader));
+      // return (ObjectHeader *)__builtin_assume_aligned((ObjectHeader *)((off_t)ptr -
+      // sizeof(ObjectHeader)), sizeof(ObjectHeader));
       return (ObjectHeader *)((off_t)ptr - sizeof(ObjectHeader));
     }
 
@@ -81,5 +93,5 @@ namespace alaska {
 
   } __attribute__((packed));
 
-  static_assert(sizeof(ObjectHeader) == 8, "ObjectHeader must be 8 bytes");
+  static_assert(sizeof(ObjectHeader) == 16, "ObjectHeader must be 8 bytes");
 }  // namespace alaska
