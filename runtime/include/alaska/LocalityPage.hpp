@@ -21,62 +21,6 @@
 
 namespace alaska {
 
-  /**
-   * LocalityPage: a page which is used to allocate objects of variable sizes
-   * in order of their expected access pattern in the future. We chunk the heap page
-   * into "slabs" which are explicitly managed. Objects can only be allocated from
-   * a locality page by a special mechanism (that is, the normal alloc function will
-   * abort). Objects can be freed, but the memory will not be re-used until the page
-   * is compacted (or evacutated).
-   *
-   *
-   */
-
-  // The power-of-two of a locality slab
-  static constexpr uint64_t locality_slab_shift_factor = 13;
-  // How many bytes are in a locality slab
-  static constexpr uint64_t locality_slab_size = 1 << locality_slab_shift_factor;
-  // How many slabs are in a locality page
-  static constexpr uint64_t locality_slabs = 1 << (page_shift_factor - locality_slab_shift_factor);
-
-
-  /**
-   * LocalitySlab: a slice of the memory managed by a LocalityPage. This
-   * structure gets a pointer to the start of the slab and strictly bump
-   * allocates with no reuse policy.
-   *
-   * Each object allocated from the slab has a metadata header that is
-   * used to track the size of the object in bytes.
-   *
-   * The LocalitySlab lives within the memory managed by the locality slab itself,
-   * so it's important to keep it small to maximize the number of objects that can
-   * be allocated from the slab.
-   */
-  struct LocalitySlab final : public alaska::PersistentAllocation {
-    size_t bump_size = 0;        // How many bytes have been allocated in this slab
-    size_t freed = 0;            // how many bytes have been freed.
-    struct list_head slab_list;  // TODO: don't track like this.
-    uint8_t data[0];
-
-
-    void init(void) {
-      bump_size = 0;
-      freed = 0;
-      slab_list = LIST_HEAD_INIT(slab_list);
-    }
-    void *alloc(size_t size, const alaska::Mapping &m);
-    void free(void *ptr);
-    inline void *start(void) const { return (void *)((uintptr_t)data); }
-    inline void *end(void) const { return (void *)((uintptr_t)this + locality_slab_size); }
-    inline size_t available(void) const {
-      return (uintptr_t)end() - ((uintptr_t)start() + bump_size);
-    }
-    size_t get_size(void *ptr);  // must be the poitner to the start of the data.
-
-    float fragmentation(void) { return (float)freed / (float)bump_size; }
-    float utilization(void) { return (float)(bump_size - freed) / (float)locality_slab_size; }
-  };
-
   // A locality page is meant to strictly bump allocate objects of variable size in order
   // of their expected access pattern in the future. It's optimized for moving objects into
   // this page, and the expected lifetimes of these objects is long enough that we don't really
@@ -86,66 +30,26 @@ namespace alaska {
     LocalityPage(void *backing_memory)
         : alaska::HeapPage(backing_memory) {
       snprintf(this->name, sizeof(this->name), "Locality");
-      next_slab = 0;
+      bump_next = (void *)this->memory_start();
     }
 
-    size_t available(void) {
-      size_t remaining_in_current_slab = current_slab == NULL ? 0 : current_slab->available();
-      return (locality_slabs - next_slab) * locality_slab_size + remaining_in_current_slab;
-    }
-
-
-    LocalitySlab *get_slab(void *ptr) {
-      off_t offset = (uintptr_t)ptr - (uintptr_t)this->memory;
-
-      // now we have an offset within the page, we can grab the slab easily
-      return (LocalitySlab *)((uintptr_t)this->memory + (offset & ~(locality_slab_size - 1)));
-    }
+    // Available - The memory which can be allocated
+    size_t available(void) { return memory_end() - (uintptr_t)bump_next; }
+    // Committed - The memory which has been allocated.
+    size_t committed(void) { return (uintptr_t)bump_next - memory_start(); }
 
     ~LocalityPage() override;
 
+    // the main interface
     void *alloc(const alaska::Mapping &m, alaska::AlignedSize size) override;
     bool release_local(const alaska::Mapping &m, void *ptr) override;
 
 
-    float fragmentation(void) override {
-      size_t freed_bytes = 0;
-      size_t total_bytes = 0;
-
-      for_each_slab([&](LocalitySlab *slab) {
-        freed_bytes += slab->freed;
-        total_bytes += slab->bump_size;
-      });
-
-      return freed_bytes / (float)total_bytes;
-    }
-
-    // TODO: TEMPORARY
-    struct list_head slab_list_head = LIST_HEAD_INIT(slab_list_head);
-    template <typename T>
-    void for_each_slab(T &&fn) {
-      struct list_head *pos;
-      list_for_each(pos, &slab_list_head) {
-        auto *slab = list_entry(pos, LocalitySlab, slab_list);
-        fn(slab);
-      }
-    }
+    // Fragmentation - How much of the committed memory was freed?
+    float fragmentation(void) override { return freed_bytes / committed(); }
 
    private:
-    LocalitySlab *allocate_slab(void) {
-      if (next_slab == locality_slabs) {
-        return nullptr;
-      }
-
-      auto *slab = (LocalitySlab *)((uintptr_t)this->memory + next_slab * locality_slab_size);
-      next_slab++;
-      slab->init();
-      // TODO: TEMPORARY
-      list_add(&slab->slab_list, &slab_list_head);
-      return slab;
-    }
-
-    long next_slab = 0;
-    LocalitySlab *current_slab = nullptr;
+    size_t freed_bytes = 0;
+    void *bump_next;
   };
 };  // namespace alaska

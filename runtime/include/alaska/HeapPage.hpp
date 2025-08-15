@@ -35,6 +35,7 @@ namespace alaska {
   template <typename T>
   class Magazine;
   class ThreadCache;
+  class HeapPage;
 
 
   // used for linked lists in HeapPage instances
@@ -54,6 +55,15 @@ namespace alaska {
     operator size_t(void) { return size; }
     AlignedSize operator+(size_t other) { return size + other; }
   };
+
+
+  // This structure is placed at the start of each heap page in memory to identify the owner.
+  struct HeapPageHeader {
+    HeapPage* owner;
+    char* end;      // End of the usable memory in this page.
+    char start[0];  // Start of the usable memory in this page.
+  };
+  static_assert(sizeof(HeapPageHeader) <= 16, "HeapPageHeader must be 16 bytes");
 
 
 
@@ -98,6 +108,10 @@ namespace alaska {
    protected:
     // This is the backing memory for the page. it is alaska::page_size bytes long.
     void* memory = nullptr;
+
+    inline HeapPageHeader* header(void) const { return (HeapPageHeader*)memory; }
+    inline uintptr_t memory_start(void) const { return (uintptr_t)memory + sizeof(HeapPageHeader); }
+    inline uintptr_t memory_end(void) const { return (uintptr_t)memory + page_size; }
 
    public:
     // Intrusive linked list for magazine membership

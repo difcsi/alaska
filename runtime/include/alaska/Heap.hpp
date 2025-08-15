@@ -141,13 +141,17 @@ namespace alaska {
 
 
   inline alaska::HeapPage *HeapPageTable::get_unaligned(void *addr) {
-    uintptr_t heap_offset = (uintptr_t)addr - (uintptr_t)heap_start;
-    uintptr_t page_ind = heap_offset / alaska::page_size;
-    void *page = (void *)((uintptr_t)heap_start + page_ind * alaska::page_size);
+    HeapPageHeader *h = (HeapPageHeader *)((uintptr_t)addr & ~(alaska::page_size - 1));
+    // alaska::printf("get_unaligned: addr=%p, header=%p, owner=%p\n", addr, h, h->owner);
+    return h->owner;
 
-    auto *p = walk(page, false);
-    if (p == nullptr) return nullptr;
-    return *p;
+    // uintptr_t heap_offset = (uintptr_t)addr - (uintptr_t)heap_start;
+    // uintptr_t page_ind = heap_offset / alaska::page_size;
+    // void *page = (void *)((uintptr_t)heap_start + page_ind * alaska::page_size);
+
+    // auto *p = walk(page, false);
+    // if (p == nullptr) return nullptr;
+    // return *p;
   }
 
   inline void HeapPageTable::set(void *page, alaska::HeapPage *hp) { *walk(page, true) = hp; }

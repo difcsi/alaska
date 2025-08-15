@@ -20,6 +20,11 @@ namespace alaska {
   HeapPage::HeapPage(void *backing_memory)
       : memory(backing_memory) {
     snprintf(name, sizeof(name), "HeapPage");
+
+    // The first thing we do is store the back pointer to ourselves in the backing memory.
+    header()->owner = this;
+    header()->end = (char *)memory + page_size;
+    // alaska::printf("HeapPage: memory: %p, header %p, owned by %p\n", memory, (uintptr_t)this->header(), this->header()->owner);
     mag_list = LIST_HEAD_INIT(mag_list);
   }
 

@@ -16,58 +16,40 @@
 namespace alaska {
 
 
-  void *LocalitySlab::alloc(size_t size, const alaska::Mapping &m) {
-    size = round_up(size, 8);
-    auto required = size + sizeof(alaska::ObjectHeader);
-    if ((char*)data + bump_size + required > (char*)end()) return nullptr;
+  LocalityPage::~LocalityPage() {}
 
-    auto header = (alaska::ObjectHeader *)(data + bump_size);
-    bump_size += required;
+  void *LocalityPage::alloc(const alaska::Mapping &m, alaska::AlignedSize size) {
+    size_t real_size = size + sizeof(alaska::ObjectHeader);
+    if (unlikely(real_size >= available())) {
+      // alaska::printf(
+      //     "Locality page could not allocated %zu bytes (only %zu available, %zu committed, %zu "
+      //     "freed)\n",
+      //     size, available(), committed(), freed_bytes);
+      return nullptr;
+    }
 
+    // alaska::printf(
+    //     "Locality page %p allocating %zu bytes (of %zu available, %zu committed, %zu freed)\n",
+    //     this, size, available(), committed(), freed_bytes);
+
+    // Bump allocate!
+    alaska::ObjectHeader *header =
+        (alaska::ObjectHeader *)__builtin_assume_aligned((void *)bump_next, 16);
     header->set_mapping(&m);
     header->set_object_size(size);
-    header->localized = true;
+    header->localized = 1;
+
+    bump_next = (void *)((uintptr_t)bump_next + header->real_object_size());
 
     return header->data();
   }
 
-  void LocalitySlab::free(void *ptr) {
-    auto md = (alaska::ObjectHeader *)((off_t)ptr - sizeof(alaska::ObjectHeader));
-    md->set_mapping(NULL);  // Freeing is trival - just say it has no handle id assigned.
-    freed += md->object_size() + sizeof(alaska::ObjectHeader);
-  }
-
-  size_t LocalitySlab::get_size(void *ptr) {
-    auto md = (alaska::ObjectHeader *)((off_t)ptr - sizeof(alaska::ObjectHeader));
-    return md->object_size();
-  }
-
-
-  LocalityPage::~LocalityPage() {}
-
-  void *LocalityPage::alloc(const alaska::Mapping &m, alaska::AlignedSize size) {
-    if (current_slab == nullptr) {
-      // printf("allocating new slab\n");
-      current_slab = allocate_slab();
-    }
-
-    void *ptr = current_slab->alloc(size, m);
-    if (unlikely(ptr == nullptr)) {
-      current_slab = allocate_slab();
-      if (current_slab == nullptr) {
-        return nullptr;
-      }
-      // try again.
-      return this->alloc(m, size);
-    }
-    return ptr;
-  }
-
   // TODO:
   bool LocalityPage::release_local(const alaska::Mapping &m, void *ptr) {
-    // defer to the slab
-    auto slab = get_slab(ptr);
-    slab->free(ptr);
+    auto *header = alaska::ObjectHeader::from(ptr);
+    this->freed_bytes += header->real_object_size();
+
+    header->set_mapping(nullptr);  // This is how we free.
     return true;
   }
 

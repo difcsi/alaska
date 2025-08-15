@@ -64,7 +64,7 @@ namespace alaska {
     return lp;
   }
 
-  void *ThreadCache::halloc(size_t size, bool zero) {
+  LTO_INLINE void *ThreadCache::halloc(size_t size, bool zero) {
     if (unlikely(size == 0)) return NULL;
     // alaska::printf("ThreadCache::halloc size=%zu zero=%d\n", size, zero);
 
@@ -73,42 +73,35 @@ namespace alaska {
 
       void *p = alaska_internal_malloc(size);
       if (zero) memset(p, 0, size);
-      // alaska::printf("allocated large object sz=%zu,%zu p=%p, zero=%d\n", size,
-      //     alaska_internal_malloc_usable_size(p), p, zero);
 
       return p;
+    } else {
+      auto *m = this->new_mapping();
+
+      int cls = alaska::size_to_class(size);
+      void *ptr;
+      SizedPage *page = size_classes[cls];
+
+      if (unlikely(page == nullptr)) page = new_sized_page(cls);
+      ptr = page->alloc(*m, size);
+      if (unlikely(ptr == nullptr)) {
+        // OOM?
+        page = new_sized_page(cls);
+        ptr = page->alloc(*m, size);
+      }
+
+      if (zero) {
+        memset(ptr, 0, size);
+      }
+
+      m->set_pointer(ptr);
+      return m->to_handle(0);
     }
-
-    // -- TEMP -- //
-    // alaska::ObjectHeader *header = (alaska::ObjectHeader *)alaska_internal_malloc(size +
-    // sizeof(alaska::ObjectHeader)); auto *m = this->new_mapping(); m->set_pointer(header->data());
-    // header->set_object_size(size);
-    // header->set_mapping(m);
-    // if (zero) {
-    //   memset(header->data(), 0, size);
-    // }
-    // return m->to_handle();
-    // -- TEMP -- //
-
-    alaska::AllocationRequest req(*this, size);
-    req.zero = zero;
-    int cls = alaska::size_to_class(size);
-    void *ptr;
-    SizedPage *page = size_classes[cls];
-    if (unlikely(page == nullptr)) page = new_sized_page(cls);
-
-    ptr = page->allocate_handle(req);
-    if (unlikely(ptr == nullptr)) {
-      // OOM?
-      page = new_sized_page(cls);
-      ptr = page->allocate_handle(req);
-      ALASKA_ASSERT(ptr != nullptr, "OOM!");
-    }
-    return ptr;
   }
 
 
-  void *ThreadCache::hrealloc(void *handle, size_t new_size) {
+
+  LTO_INLINE void *ThreadCache::hrealloc(void *handle, size_t new_size) {
     // TODO: There is a race here... I think its okay, as a realloc really should
     // be treated like a UAF, and ideally another thread would not access the handle
     // while it is being reallocated.
@@ -117,7 +110,6 @@ namespace alaska {
     auto original_size = this->get_size(handle);
 
     void *new_handle = this->halloc(new_size, true);
-
 
     // We should copy the minimum of the two sizes between the allocations.
     size_t copy_size = original_size > new_size ? new_size : original_size;
@@ -131,7 +123,7 @@ namespace alaska {
 
 
 
-  void ThreadCache::hfree(void *handle) {
+  LTO_INLINE void ThreadCache::hfree(void *handle) {
     alaska::Mapping *m = alaska::Mapping::from_handle_safe(handle);
 
     // The first case in hfree is handling huge allocations.
@@ -147,55 +139,139 @@ namespace alaska {
 
     // --- Free the data allocation --- //
     void *ptr = m->get_pointer();
-
-    auto *header = alaska::ObjectHeader::from(ptr);
-    if (header->get_mapping() != m) {
-      alaska::printf("MAPPING IS INCORRECT\n");
-      abort();
-    }
-
-    // // TEMP
-    // alaska::ObjectHeader *header = alaska::ObjectHeader::from(ptr);
-    // alaska_internal_free(header);
-    // // TEMP
+    // auto *header = alaska::ObjectHeader::from(ptr);
 
     auto *handle_slab = this->runtime.handle_table.get_slab(m);
-    bool handle_owned = handle_slab->is_owned_by(this);
-
     auto *heap_page = this->runtime.heap.pt.get_unaligned(ptr);
-    bool heap_owned = heap_page->is_owned_by(this);
 
-    // heap_page->release_remote(*m, ptr);
-    // handle_slab->release_remote(m);
+    // alaska::printf("hfree: handle=%p, ptr=%p\n", handle, ptr);
+    // alaska::printf("  handle slab: %p\n", handle_slab);
+    // alaska::printf("  heap page: %p\n", heap_page);
 
-    if (likely(heap_owned and handle_owned)) {
-      heap_page->release_local(*m, ptr);
-      handle_slab->release_local(m);
-      return;
-    }
+    heap_page->release_local(*m, ptr);
+    handle_slab->release_local(m);
+
+    // bool handle_owned = handle_slab->is_owned_by(this);
+    // bool heap_owned = heap_page->is_owned_by(this);
+    // if (likely(heap_owned and handle_owned)) {
+    //   heap_page->release_local(*m, ptr);
+    //   handle_slab->release_local(m);
+    //   return;
+    // }
 
     // Now the slow path.
 
-    if (likely(heap_page->is_owned_by(this))) {
-      heap_page->release_local(*m, ptr);
-    } else {
-      heap_page->release_remote(*m, ptr);
-    }
+    // if (likely(heap_page->is_owned_by(this))) {
+    //   heap_page->release_local(*m, ptr);
+    // } else {
+    //   heap_page->release_remote(*m, ptr);
+    // }
 
 
-    if (likely(handle_slab->is_owned_by(this))) {
-      handle_slab->release_local(m);
-    } else {
-      handle_slab->release_remote(m);
-    }
+    // if (likely(handle_slab->is_owned_by(this))) {
+    //   handle_slab->release_local(m);
+    // } else {
+    //   handle_slab->release_remote(m);
+    // }
     return;
   }
 
+#define STUB_ALLOCATES_HANDLES
 
-  size_t ThreadCache::get_size(void *handle) {
+  // -------------------------------------------------------------- //
+  LTO_INLINE void *ThreadCache::malloc(size_t size, bool zero) {
+    void *ptr;
+    if (unlikely(alaska::should_be_huge_object(size))) {
+      // Allocate the huge allocation.
+      ptr = alaska_internal_malloc(size);
+    } else {
+      int cls = alaska::size_to_class(size);
+      SizedPage *page = size_classes[cls];
+      if (unlikely(page == nullptr)) page = new_sized_page(cls);
+
+      alaska::Mapping *m;
+
+#ifdef STUB_ALLOCATES_HANDLES
+      m = this->new_mapping();
+#else
+      // Stub Mapping
+      alaska::Mapping m_p{};
+      m = &m_p;
+#endif
+
+      ptr = page->alloc(*m, size);
+      if (unlikely(ptr == nullptr)) {
+        // OOM?
+        page = new_sized_page(cls);
+        ptr = page->alloc(*m, size);
+      }
+      m->set_pointer(ptr);
+    }
+
+    if (zero) memset(ptr, 0, size);
+    return ptr;
+  }
+
+
+  LTO_INLINE void *ThreadCache::realloc(void *ptr, size_t new_size) {
+    auto original_size = this->get_size(ptr);
+    void *new_ptr = this->malloc(new_size, true);
+    // We should copy the minimum of the two sizes between the allocations.
+    size_t copy_size = original_size > new_size ? new_size : original_size;
+    handle_memcpy(new_ptr, ptr, copy_size);
+    this->free(ptr);
+    return new_ptr;
+  }
+
+  LTO_INLINE void ThreadCache::free(void *ptr) {
+    alaska::Mapping *m;
+    if (this->runtime.heap.contains(ptr)) {
+      auto *heap_page = this->runtime.heap.pt.get_unaligned(ptr);
+
+
+#ifdef STUB_ALLOCATES_HANDLES
+      alaska::Mapping *m = ObjectHeader::from(ptr)->get_mapping();
+      // Release the mapping
+
+      auto *handle_slab = this->runtime.handle_table.get_slab(m);
+      if (likely(handle_slab->is_owned_by(this))) {
+        handle_slab->release_local(m);
+      } else {
+        handle_slab->release_remote(m);
+      }
+#else
+      // Stub mapping
+      alaska::Mapping m_p{};
+      m = &m_p;
+#endif
+
+      heap_page->release_local(*m, ptr);
+      // if (heap_page->is_owned_by(this)) {
+      //   // If the heap page is owned by this thread, we can free it locally.
+      //   heap_page->release_local(*m, ptr);
+      // } else {
+      //   // Otherwise, we need to release it remotely.
+      //   heap_page->release_remote(*m, ptr);
+      // }
+    } else {
+      alaska_internal_free(ptr);
+    }
+  }
+
+  // -------------------------------------------------------------- //
+
+
+  LTO_INLINE size_t ThreadCache::get_size(void *handle) {
     alaska::Mapping *m = alaska::Mapping::from_handle_safe(handle);
     if (m == nullptr) {
-      return alaska_internal_malloc_usable_size(handle);
+      void *pointer = handle;
+
+      if (runtime.heap.contains(pointer)) {
+        // it has an object header.
+        return alaska::ObjectHeader::from(pointer)->object_size();
+      } else {
+        return alaska_internal_malloc_usable_size(pointer);
+      }
     }
 
 
@@ -206,25 +282,13 @@ namespace alaska {
     return header->object_size();
   }
 
-  Mapping *ThreadCache::new_mapping(void) {
+  __attribute__((noinline)) Mapping *ThreadCache::new_mapping_slow_path(void) {
+    handle_table_churn++;  // record that we are looking for a new handle table slab.
+    auto new_handle_slab = runtime.handle_table.new_slab(this);
+    this->handle_slab->set_owner(NULL);
+    this->handle_slab = new_handle_slab;
+    // This BETTER work!
     auto m = handle_slab->alloc();
-
-    if (unlikely(m == NULL)) {
-      handle_table_churn++;  // record that we are looking for a new handle table slab.
-      auto new_handle_slab = runtime.handle_table.new_slab(this);
-      this->handle_slab->set_owner(NULL);
-      this->handle_slab = new_handle_slab;
-      // This BETTER work!
-      m = handle_slab->alloc();
-    }
-
-    // Handle 0 is disallowed on yukon hardware because it cannot be invalidated
-    // Also, 10 is cursed so we skip it too
-    auto hid = m->handle_id();
-    if (unlikely(hid == 0 || hid == 10)) {
-      return new_mapping();
-    }
-
     return m;
   }
 
@@ -232,6 +296,7 @@ namespace alaska {
 
 
   long ThreadCache::localize(alaska::Mapping *m, long allowed_depth) {
+    // alaska::printf("Localizing mapping %p\n", m);
     long moved_count = 0;
     void *ptr = m->get_pointer();
     if (ptr == nullptr || m->is_free() || m->is_pinned()) return 0;
@@ -239,6 +304,7 @@ namespace alaska {
 
     // Validate that we can indeed move this object from the page.
     if (unlikely(source_page == nullptr)) {
+      alaska::printf("  Cannot localize pointer %p, not in heap\n", ptr);
       return 0;
     }
 
@@ -246,48 +312,28 @@ namespace alaska {
 
     // Ask the page for the size of the pointer
     auto size = header->object_size();
-    // If the size is too large, don't bother
-    if (size > alaska::locality_slab_size / 2) return 0;
 
-
-    // This size comparison is kinda nonsense
-    if (locality_page == nullptr or
-        locality_page->available() < size + sizeof(alaska::ObjectHeader) + 8) {
+    if (locality_page == nullptr) {
+      alaska::printf("locality_page is null, creating a new one\n");
       locality_page = new_locality_page(size + 32);
     }
 
-    void *new_location = nullptr;
-    while (true) {
+    void *new_location = locality_page->alloc(*m, size);
+    if (unlikely(new_location == nullptr)) {
+      alaska::printf("  Locality page %p cannot allocate %zu bytes\n", locality_page, size);
+      locality_page = new_locality_page(size + 32);
       new_location = locality_page->alloc(*m, size);
-      if (new_location != nullptr) break;
-      locality_page = new_locality_page(size + 32);
+      if (new_location == nullptr) {
+        return 0;
+      }
     }
 
-    hotness_hist[header->hotness]--;
+    // hotness_hist[header->hotness]--;
     // Now for the actual localization
     memcpy(new_location, ptr, size);       // Copy the data
     source_page->release_remote(*m, ptr);  // Release the old location
     m->set_pointer(new_location);          // Write the new location
     moved_count += 1;
-
-    // TODO: localize one level of pointers?
-    if (allowed_depth > 0) {
-      auto *header = alaska::ObjectHeader::from(new_location);
-      auto *ptr = (void **)new_location;
-      size_t scan_size = 128;
-      if (size < scan_size) scan_size = size;
-      auto *end = (void **)((char *)ptr + scan_size);
-      while (ptr < end) {
-        auto *p = *ptr;
-        if (p != nullptr) {
-          auto *m = alaska::Mapping::from_handle_safe(p);
-          if (m != nullptr) {
-            moved_count += localize(m, allowed_depth - 1);
-          }
-        }
-        ptr++;
-      }
-    }
 
     return moved_count;
   }

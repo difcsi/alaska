@@ -42,14 +42,27 @@ namespace alaska {
   __attribute__((noinline))  // Don't inline this function, we want it to be a slow path.
   void *
   SizedPage::alloc_slow(const alaska::Mapping &m, alaska::AlignedSize size) {
+#if 1
     long extended_count = extend(64);
-
     // 1. If we managed to extend the list, return one of the blocks from it.
     if (extended_count > 0) {
       // Fall back into the alloc function to do the heavy lifting of actually allocating
       // one of the blocks we just extended the list with.
       return alloc(m, size);
     }
+#else
+    // 1. attempt to extend the free list.
+    size_t real_size = this->object_size + sizeof(objectheader);
+    if ((uintptr_t)bump_next + real_size <= (uintptr_t)end()) {
+      // printf("sizedpage<%lu>.alloc_slow: extending free list by one object of size %zu\n",
+      // object_size, real_size);
+      sizepageblock *p = (sizepageblock *)bump_next;
+      p->header.set_mapping(&m);
+      p->header.set_object_size(size);
+      bump_next = (void *)((uintptr_t)bump_next + real_size);
+      return p;
+    }
+#endif
 
     // 2. If the list was not extended, try swapping the remote_free list and the local_free list.
     // This is a little tricky because we need to worry about atomics here.
@@ -99,15 +112,25 @@ namespace alaska {
     // The size of the block, which includes the header
     size_t real_size = this->object_size + sizeof(ObjectHeader);
     // The number of objects (and headers) that can fit in this page.
-    this->capacity = (double)alaska::page_size / real_size;
+
+    size_t byte_capacity = memory_end() - memory_start();
+    this->capacity = byte_capacity / real_size;
 
     snprintf(name, sizeof(name), "Sized(%zu)", this->object_size);
 
-    void *objects = this->memory;
+    void *objects = (void *)this->memory_start();
+
 
     this->objects_start = this->bump_next = objects;
     // the number of objects in this array
     this->objects_end = (void *)((uintptr_t)objects + (capacity * real_size));
+
+    // alaska::printf("SizedPage<%lu> created with %zu objects of size %zu  (%p)\n", this->object_size, this->capacity, real_size, this);
+    // alaska::printf("   %016lx to %016lx\n", memory_start(), this->memory_end());
+    // alaska::printf("   %016lx to %016lx\n", (uintptr_t)this->objects_start, (uintptr_t)this->objects_end);
+
+    // alaska::printf("  header: %016lx, owned by %016lx, this: %p\n", (uintptr_t)this->header(), this->header()->owner, this);
+
 
     freelist = ShardedFreeList<SizePageBlock>();
   }
@@ -139,7 +162,6 @@ namespace alaska {
   long SizedPage::compact(void) {
     // The return value - how many objects this function has moved.
     long moved_objects = 0;
-#if 0
 
     // The first step is to clear the free list so that we don't have any
     // corruption problems. Later we will update it to point at the end of
@@ -175,8 +197,8 @@ namespace alaska {
     };
 
 
-    printf("Before compaction, %ld objects in %p to %p\n", this->memory, (void *)bump_next);
-    dump_live();
+    // printf("Before compaction, %ld objects in %p to %p\n", this->memory, (void *)bump_next);
+    // dump_live();
 
 
     // first, run the end back until we find an allocated object. This sets the
@@ -278,12 +300,13 @@ namespace alaska {
     }
     // end = last_object_seen + 1;
     // dump("end of loop");
-    allocator.reset_bump_allocator(get_object(end));
-    printf("After compaction, moved %ld objects from %p to %p\n", moved_objects, this->memory, (void *)bump_next);
-    dump_live();
+    this->bump_next = (void *)end;
+    // allocator.reset_bump_allocator(get_object(end));
+    alaska::printf("SizedPage<%lu>.compact: moved %ld objects from %p to %p\n", object_size,
+        moved_objects, this->memory, (void *)bump_next);
+    // dump_live();
 
     this->bump_next = get_object(end);
-#endif
 
     return moved_objects;
   }

@@ -15,6 +15,9 @@
 #include <alaska/Localizer.hpp>
 #include <alaska/lphash_set.h>
 
+#define _GLIBCXX_INCLUDE_NEXT_C_HEADERS
+#include <math.h>
+
 namespace alaska {
 
 
@@ -43,13 +46,12 @@ namespace alaska {
     return reinterpret_cast<handle_id_t *>(buf);
   }
 
+
   float Localizer::compute_quality(handle_id_t *hids, size_t count) {
     size_t bytes_needed = 0;
     size_t bytes_used = 0;
     uintptr_t pages[count];
     lphashset_init(pages, count);
-
-
 
     for (size_t i = 0; i < count; i++) {
       if (hids[i] == 0) continue;
@@ -57,15 +59,14 @@ namespace alaska {
       void *data = m->get_pointer();
       if (data == nullptr) continue;
       auto header = ObjectHeader::from(m);
-      bytes_needed += header->object_size();  // + sizeof(ObjectHeader);
+      size_t object_size = header->object_size();
+      // sizes.push(object_size);
+      bytes_needed += object_size + sizeof(ObjectHeader);
 
       if (lphashset_insert(pages, count, (uintptr_t)data >> 12)) {
         bytes_used += 0x1000;
       }
     }
-
-    float average_size = (float)bytes_needed / count;
-
 
     // Quality is a metric we utilize to determine if objects in a
     // dump are at a good location or not.  It is based on the
@@ -85,20 +86,42 @@ namespace alaska {
       quality = 0;
     }
 
-    // printf("\n");
-    // printf("quality=%f, need=%zu, used=%zu\n", quality, bytes_needed, bytes_used);
     return quality;
   }
 
   Localizer::ScanResult Localizer::feed_hotness_buffer(size_t count, handle_id_t *handle_ids) {
     ScanResult res = {0};
     res.localized = false;
+    dumps_recorded++;
 
     auto &rt = alaska::Runtime::get();
 
-    dumps_recorded++;
+
+    alaska::printf("YUKON_DUMP: %zu", alaska_timestamp());
+    for (size_t i = 0; i < count; i++) {
+      if (handle_ids[i] == 0) continue;
+
+      // check if it is valid or not.
+      auto *m = Mapping::from_handle_id(handle_ids[i]);
+      void *data = m->get_pointer();
+      if (data == nullptr || m->is_free()) continue;
+      auto header = ObjectHeader::from(m);
+      alaska::printf(" %p:%zu", m->get_pointer(), header->object_size());
+    }
+    alaska::printf("\n");
+
+    // // Push the buffer back to the queue of buffers
+    // struct buffer *buf = reinterpret_cast<struct buffer *>(handle_ids);
+    // buf->next = buffers;
+    // buffers = buf;
+
+    // return res;
+
+#if 1
 
     float quality = compute_quality(handle_ids, count);
+    // alaska::printf("YUKON_QUALITY=%f\n", quality);
+    quality = 0;
 
 
     float quality_cutoff = 0.15;
@@ -107,110 +130,54 @@ namespace alaska {
 
     this->last_quality = quality;
 
-    if (quality < 0.7) {
-      // printf("  Bad quality\n");
-      for (size_t i = 0; i < count; i++) {
-        if (handle_ids[i] == 0) continue;
+    // TODO: can we sort by data address?
 
-        // check if it is valid or not.
-        auto *m = Mapping::from_handle_id(handle_ids[i]);
-        if (not rt.handle_table.valid_handle(m)) {
-          this->invalid_handle_counter++;
-          // printf("invalid handle %zu at offset %zu\n", handle_ids[i], i);
-          continue;
-        } else {
-          this->valid_handle_counter++;
-        }
 
-        void *data = m->get_pointer();
-        if (data == nullptr) continue;
-        auto header = ObjectHeader::from(m);
+    for (size_t i = 0; i < count; i++) {
+      // If the handle is 0, skip it. This means the HTLB entry was empty at the
+      // time of the dump (invalidation, etc)
+      if (handle_ids[i] == 0) continue;
+      auto *m = Mapping::from_handle_id(handle_ids[i]);
+      void *data = m->get_pointer();
+      if (data == nullptr || m->is_free()) continue;
+      auto header = ObjectHeader::from(m);
 
-        if (header->object_size() > 256) continue;
-
-        // An already localized object should not be double localized (yet)
-        if (header->localized and not knobs.relocalize) continue;
-        // if (header->localized) continue;
-
-        int hotness = header->hotness;
-
-        bool was_hot = hotness > knobs.hotness_cutoff;
-        hotness += 1;
-        bool is_hot = hotness > knobs.hotness_cutoff;
-
-        if (not was_hot and is_hot) {
-          saturated_bytes += header->object_size() + sizeof(ObjectHeader);
-          saturated_handles.push(m->handle_id());
-          this->saturated_handle_counter++;
-          // printf("saturated handles: %zu\n", saturated_handles.size());
-        }
-
-        header->hotness = hotness;
-        if (hotness > 0b111111) {
-          hotness = 0b111111;
-        }
+      if (header->localized) {
+        // If the object is already localized, skip it.
+        continue;
       }
-    } else {
-      // printf("  Quality is good\n");
+
+      int hotness = header->hotness;
+      bool was_hot = hotness > knobs.hotness_cutoff;
+      hotness += 1;
+      bool is_hot = hotness > knobs.hotness_cutoff;
+
+      if (not was_hot and is_hot) {
+        saturated_bytes += header->object_size() + sizeof(ObjectHeader);
+        saturated_handles.push(m->handle_id());
+      }
+
+      header->hotness = hotness;
+      if (hotness > 0b111111) {
+        hotness = 0b111111;
+      }
     }
-
-    // printf("quality: %f,%f\n", alaska_timestamp() / 1e9f, quality);
-    // printf("  %5zu recorded\n", dumps_recorded);
-    // printf("  %5zu in queue, %8zu bytes\n", saturated_handles.size(), saturated_bytes);
-
 
     bool should_localize = false;
-    if (dumps_recorded > knobs.localization_interval) {
-      printf("  ----------------------- Interval reached ---------------------------\n");
-      should_localize = true;
-    }
-    if (saturated_bytes > 100'000) {
-      printf("  ----------------------- Byte Limit Reached -------------------------\n");
-      should_localize = true;
-    }
+    if (dumps_recorded > knobs.localization_interval) should_localize = true;
 
 
 
     if (should_localize) {
-      printf("Localizing! %zu in queue\n", saturated_handles.size());
+      alaska::printf("Localizing! %zu in queue\n", saturated_handles.size());
       uint64_t scanned_hot = 0;
       dumps_recorded = 0;
       res.localized = true;
 
-
-
-      // printf("handle table:\n");
-      // rt.handle_table.dump(stdout);
-      // printf("heap:\n");
-      // rt.heap.dump(stdout);
-
-      // sort the saturated handles by hotness
-      qsort(saturated_handles.data(), saturated_handles.size(), sizeof(handle_id_t),
-          [](const void *a, const void *b) {
-            auto *ma = Mapping::from_handle_id(*(handle_id_t *)a);
-            auto *mb = Mapping::from_handle_id(*(handle_id_t *)b);
-            auto ha = ObjectHeader::from(ma);
-            auto hb = ObjectHeader::from(mb);
-            return hb->hotness - ha->hotness;
-          });
-
-      // float queue_quality = compute_quality(saturated_handles.data(), saturated_handles.size());
-      // printf("YUKON_DUMP: %zu, %f, ", alaska_timestamp(), queue_quality);
-      // for (auto hid : saturated_handles) {
-      //   printf("%u ", hid);
-      // }
-      // printf("\n");
-
       localize_saturated_handles();
 
-      alaska::TimeCache tc;
-      // printf("   saturated rate: %10.1f/s\n", saturated_handle_counter.digest(tc));
-      // printf("     invalid rate: %10.1f/s\n", invalid_handle_counter.digest(tc));
-      // printf("       valid rate: %10.1f/s\n", valid_handle_counter.digest(tc));
-      // printf("    localize rate: %10.1f bytes/s\n", bytes_localized_counter.digest(tc));
-
       rt.heap.compact_locality_pages();
-      rt.heap.compact_sizedpages();
+      // rt.heap.compact_sizedpages();
 
       saturated_bytes = 0;
       saturated_handles.clear();
@@ -223,6 +190,7 @@ namespace alaska {
     buffers = buf;
 
     return res;
+#endif
   }
 
 

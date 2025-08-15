@@ -30,19 +30,19 @@ namespace alaska {
 
 
   struct LocalizerKnobs {
-    float effort = 1.0;
+    float effort = 1.0; // NOT USED
     // What is the maximum time allowed between dumps? (microseconds)
     long dump_interval_us = 100; // 1000000;
 
     // How often do we act on dumps? (number of dumps)
-    long localization_interval = 1000;  // (50 * 1000) / dump_interval_us;
+    long localization_interval = 250;  // (50 * 1000) / dump_interval_us;
 
     // When localizing an object, how far do we recurse into the pointer graph of that object to
     // localize the objects it points to?
     long localization_depth = 0;
 
     // This value is used to determine which handles are hot and which aren't.
-    long hotness_cutoff = 32;
+    long hotness_cutoff = 1;
 
     // If true, the localizer will attempt to relocalize handles that have
     // been localized before.
