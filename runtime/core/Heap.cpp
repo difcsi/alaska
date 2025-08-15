@@ -33,6 +33,9 @@ namespace alaska {
 
     // Set the bump allocator to the start of the heap.
     this->bump = this->heap;
+    // round bump up to 2mb
+    this->bump =
+        (void *)(((uintptr_t)this->bump + alaska::page_size - 1) & ~(alaska::page_size - 1));
     this->end = (void *)((uintptr_t)this->heap + alaska::heap_size);
 
     // Initialize the free list w/ null, so the first allocation is a simple bump.
@@ -121,6 +124,7 @@ namespace alaska {
     // TODO: it would be smart to adjust this requirement dynamically based on the allocation
     // request.
     auto *p = this->find_or_alloc_page<SizedPage>(mag, owner, 1, [=](auto p) {
+      alaska::printf("Allocating sized page for class %d (%zu bytes)\n", cls, size);
       p->set_size_class(cls);
     });
     return p;
@@ -330,27 +334,12 @@ namespace alaska {
     // // printf("Utilizations:\n");
     // long total_wasted = 0;
     // long total_time = 0;
-    // locality_pages.foreach ([&](LocalityPage *lp) {
-    //   int compaction_iterations = 0;
-    //   auto start = alaska_timestamp();
-    //   if (lp->utilization() < 0.8) {
-    //     while (lp->compact() != 0) {
-    //       compaction_iterations++;
-    //     }
-    //   }
-    //   auto end = alaska_timestamp();
-    //   total_time += (end - start);
-
-    //   float u = lp->utilization();
-    //   size_t wasted = lp->heap_size() * (1 - u);
-    //   total_wasted += wasted;
-
-    //   // printf("%p - %8f   waste: %5lukb   %4d iters in %9luns\n", lp, u, wasted / 1024,
-    //   //     compaction_iterations, (end - start));
-    //   return true;
-    // });
-    // // printf("Total wastage: %lukb\n", total_wasted / 1024);
-    // // printf("Tool %fms\n", total_time / 1000.0 / 1000.0);
+    alaska::printf("Locality pages: %lu\n", locality_pages.size());
+    locality_pages.foreach ([&](LocalityPage *lp) {
+      alaska::printf(" - Locality page %p  avail:%zu, frag:%.2f%%\n", lp, lp->available(),
+          lp->fragmentation() * 100);
+      return true;
+    });
     return c;
   }
 
