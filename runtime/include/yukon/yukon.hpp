@@ -41,9 +41,6 @@ namespace yukon {
 
   void init(void);
 
-  alaska::ThreadCache *get_tc(void);
-  alaska::ThreadCache *get_dump_tc(void);
-
 
   void dump_alarm_handler(int sig);
 

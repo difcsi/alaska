@@ -30,6 +30,11 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <string.h>
+
+
+#define LTO_INLINE
+
+
 static void show_string(const char *msg) { write(1, msg, strlen(msg)); }
 
 
@@ -76,7 +81,7 @@ namespace alaska {
     inline void invalidate(void) {
 #ifdef __riscv
       // Fence *before* the handle invalidation.
-      __asm__ volatile("fence" ::: "memory");
+      // __asm__ volatile("fence" ::: "memory");
       __asm__ volatile("csrw 0xc4, %0" ::"rK"((uint64_t)handle_id()) : "memory");
 #endif
     }
@@ -98,6 +103,20 @@ namespace alaska {
     }
 
     bool is_free(void) const {
+      // A mapping is free if the pointer is NULL, or if the pointer points to a location within the
+      // same 2mb page as the mapping itself.
+
+      if (this->value == 0) return true;
+
+      // Check if the pointer is within the same 2mb page as the mapping itself
+      uintptr_t mapping_addr = (uintptr_t)this;
+      uintptr_t ptr_addr = (uintptr_t)this->value;
+      uintptr_t mapping_page = mapping_addr & ~(0x1fffff);  // 2MB page size
+      uintptr_t ptr_page = ptr_addr & ~(0x1fffff);          // 2MB page size
+      if (mapping_page == ptr_page) {
+        // The pointer is within the same 2mb page as the mapping itself
+        return true;
+      }
       // TODO:
       return false;
     }
@@ -180,8 +199,6 @@ namespace alaska {
     static ALASKA_INLINE bool is_handle(void *ptr) {
       return (int64_t)ptr < 0;  // This is quicker than shifting and masking :)
     }
-
-
   };
 
   static_assert(

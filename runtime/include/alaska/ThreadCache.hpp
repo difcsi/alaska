@@ -39,10 +39,6 @@ namespace alaska {
     // Just an id for this thread cache assigned by the runtime upon creation. It's mostly
     // meaningless, meant for debugging.
     int id;
-    // A lock which is used to control access to this heap page. Mostly used to control
-    // race conditions around barriers, as the rest of the heap can only be accessed through
-    // a locked thread cache as a mediator
-    ck::mutex lock;
     // A reference to the global runtime. This is here mainly to gain
     // access to the HandleTable and the Heap.
     alaska::Runtime &runtime;
@@ -63,6 +59,12 @@ namespace alaska {
 
 
    public:
+    // A lock which is used to control access to this heap page. Mostly used to control
+    // race conditions around barriers, as the rest of the heap can only be accessed through
+    // a locked thread cache as a mediator
+    ck::mutex lock;
+
+
     // Track allocation and free rates
     alaska::RateCounter allocation_rate;
     alaska::RateCounter free_rate;
@@ -79,9 +81,21 @@ namespace alaska {
    public:
     ThreadCache(int id, alaska::Runtime &rt);
 
+    // Handle allocation and deallocation routines.
     void *halloc(size_t size, bool zero = false);
     void *hrealloc(void *handle, size_t new_size);
     void hfree(void *handle);
+
+
+    // Non-handle allocation and deallocation routines.
+    //    These routines are for 'baseline' measurements with our allocator, and
+    //    shows the overhead of using handles with the same underlying
+    //    allocator.
+    // You SHOULD NOT use this function *and* the handle allocation routine
+    // in the same execution context, as it will likely cause bugs.
+    void *malloc(size_t size, bool zero = false);
+    void *realloc(void *ptr, size_t new_size);
+    void free(void *ptr);
 
     int get_id(void) const { return this->id; }
     size_t get_size(void *handle);
@@ -102,6 +116,7 @@ namespace alaska {
 
     // Allocate a new handle table mapping
     alaska::Mapping *new_mapping(void);
+    alaska::Mapping *new_mapping_slow_path(void);
     void free_mapping(alaska::Mapping *);
 
    private:
@@ -112,16 +127,28 @@ namespace alaska {
   };
 
 
+  inline alaska::Mapping *ThreadCache::new_mapping(void) {
+    auto m = handle_slab->alloc();
+    if (unlikely(m == nullptr)) {
+      m = new_mapping_slow_path();
+    }
+    return m;
+  }
+
+
+
 
   class LockedThreadCache final {
    public:
     LockedThreadCache(ThreadCache &tc)
         : tc(tc) {
-      tc.lock.lock();
+      // tc.lock.lock();
     }
 
 
-    ~LockedThreadCache(void) { tc.lock.unlock(); }
+    ~LockedThreadCache(void) {
+      // tc.lock.unlock();
+    }
 
     // Delete copy constructor and copy assignment operator
     LockedThreadCache(const LockedThreadCache &) = delete;
