@@ -21,6 +21,8 @@ class MockHeapPage : public alaska::HeapPage {
   MOCK_METHOD(bool, release_local, (const alaska::Mapping& m, void* ptr), (override));
 };
 
+char heap_memory[alaska::page_size];
+
 class MagazineTest : public ::testing::Test {
  public:
   void SetUp() override {
@@ -29,7 +31,7 @@ class MagazineTest : public ::testing::Test {
   }
   void TearDown() override {}
 
-  MockHeapPage* new_page(void) { return new MockHeapPage(nullptr); }
+  MockHeapPage* new_page(void) { return new MockHeapPage(heap_memory); }
 
   alaska::Magazine<MockHeapPage> mag;
 };

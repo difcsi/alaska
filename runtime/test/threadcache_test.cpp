@@ -175,3 +175,40 @@ TEST_F(ThreadCacheTest, HreallocHugeToHandle) {
   // The new object should be a handle
   ASSERT_NE(nullptr, alaska::Mapping::from_handle_safe(h2));
 }
+
+
+
+TEST_F(ThreadCacheTest, MallocWorks) {
+  void *p = t1->malloc(16);
+  ASSERT_NE(p, nullptr);
+}
+
+TEST_F(ThreadCacheTest, MallocUnique) {
+  void *p1 = t1->malloc(16);
+  void *p2 = t1->malloc(16);
+  ASSERT_NE(p1, p2);
+
+  printf("p1: %p, p2: %p\n", p1, p2);
+}
+
+TEST_F(ThreadCacheTest, MallocFree) {
+  void *p = t1->malloc(16);
+  ASSERT_NE(p, nullptr);
+  t1->free(p);
+
+  void *p2 = t1->malloc(16);
+  printf("p: %p, p2: %p\n", p, p2);
+}
+
+TEST_F(ThreadCacheTest, ReallocWorks) {
+  void *p = t1->malloc(16);
+  ASSERT_NE(p, nullptr);
+  void *p2 = t1->realloc(p, 32);
+  ASSERT_NE(p2, nullptr);
+  ASSERT_NE(p, p2); // realloc should return a new pointer
+  ASSERT_EQ(t1->get_size(p2), 32);
+
+  // Free the new pointer
+  t1->free(p2);
+}
+
