@@ -1,5 +1,8 @@
 # add_link_options("-fuse-ld=lld")
 
+
+# set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
+
 set(WARNINGS "-Wall -Werror -Wno-multichar -Wno-unused -Wno-unused-function -Wno-attributes ")
 
 # Compile the runtime with some special flags
