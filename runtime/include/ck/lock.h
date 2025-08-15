@@ -4,20 +4,26 @@
 
 namespace ck {
 
+
   class mutex {
    private:
-    pthread_mutex_t m_mutex;
+    int locked = 0;
 
    public:
-    mutex(void) { pthread_mutex_init(&m_mutex, NULL); }
+    mutex(void) = default;
 
-    void init(void) { pthread_mutex_init(&m_mutex, NULL); }
-    ~mutex(void) { pthread_mutex_destroy(&m_mutex); }
-    int try_lock(void) { return pthread_mutex_trylock(&m_mutex); }
+    void init(void) { locked = 0; }
+    ~mutex(void) = default;
 
+    int try_lock(void) { return !__atomic_test_and_set(&this->locked, __ATOMIC_ACQUIRE); }
 
-    void lock(void) { pthread_mutex_lock(&m_mutex); }
-    void unlock(void) { pthread_mutex_unlock(&m_mutex); }
+    void lock(void) {
+      while (__atomic_test_and_set(&this->locked, __ATOMIC_ACQUIRE)) {
+      }
+    }
+
+    void unlock(void) { __atomic_clear(&this->locked, __ATOMIC_RELEASE); }
+    
   };
 
 
