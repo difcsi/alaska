@@ -68,6 +68,7 @@ extern void alaska_htlb_sim_track(uintptr_t handle);
 
 extern "C" void do_handle_fault(void) { return; }
 
+
 #define ENABLE_HANDLE_FAULTS
 
 
@@ -99,12 +100,13 @@ retry_translation:
 #ifdef ENABLE_HANDLE_FAULTS
   if (unlikely(mapped_bits < 0)) {
     alaska::do_handle_fault(bits);
-    goto retry_translation;
+    // goto retry_translation;
+    mapped = m->get_pointer_fast();
   }
 #endif
-  // load from the address for some reason
-  uint8_t v;
-  v = *(volatile uint8_t *)mapped;
+  // // load from the address for some reason
+  // uint8_t v;
+  // v = *(volatile uint8_t *)mapped;
 
   // Apply the offset from the pointer
   void *result = APPLY_OFFSET(mapped, bits);

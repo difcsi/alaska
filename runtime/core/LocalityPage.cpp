@@ -38,6 +38,7 @@ namespace alaska {
     header->set_mapping(&m);
     header->set_object_size(size);
     header->localized = 1;
+    // header->placement_badness = -10000; // TUNE ME
 
     bump_next = (void *)((uintptr_t)bump_next + header->real_object_size());
 

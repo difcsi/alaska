@@ -45,7 +45,7 @@ namespace alaska {
   }
 
   PageManager::~PageManager() {
-    log_debug("PageManager: Deallocating heap at %p", this->heap);
+    log_debug("PageManager: Dellocating heap at %p", this->heap);
     munmap(this->heap, alaska::heap_size);
   }
 
@@ -124,7 +124,7 @@ namespace alaska {
     // TODO: it would be smart to adjust this requirement dynamically based on the allocation
     // request.
     auto *p = this->find_or_alloc_page<SizedPage>(mag, owner, 1, [=](auto p) {
-      alaska::printf("Allocating sized page for class %d (%zu bytes)\n", cls, size);
+      // alaska::printf("Allocating sized page for class %d (%zu bytes)\n", cls, size);
       p->set_size_class(cls);
     });
     return p;
@@ -157,112 +157,39 @@ namespace alaska {
   void Heap::dump(FILE *stream) {
     long i = 0;
 
-    alaska::TimeCache timecache;
-
-    long terminal_width;
-    // get the width of the terminal
-
-
-    size_t wasted_bytes = 0;
+    size_t total_committed = 0;
 
     for (auto &mag : size_classes) {
       if (mag.size() == 0) continue;
       auto size = alaska::class_to_size(i);
 
-      fprintf(stream, "%8zu,%-3zu: ", size, mag.size());
+      fprintf(stream, "SizePages<%zu>\n", size);
       i += 1;
 
       long page_index = 0;
-      mag.foreach ([&](SizedPage *sp) {
-        fprintf(stream, "%zu/%zu ", sp->available(), sp->object_capacity());
-        return true;
-        // if (page_index == 0) printf("(%8lu) ", sp->object_capacity());
-        bool color = sp->get_owner() != nullptr;
-        long avail = sp->available();
-        float avail_frac = avail / (float)sp->object_capacity();
-        float used = sp->object_capacity() - avail;
-        float used_frac = 1.0 - avail_frac;
-
-
-        float frag = sp->fragmentation();
-        wasted_bytes += frag * alaska::page_size;
-
-        int c = (1.0 - frag) * 255;
-        // fprintf(stream, "\033[48;2;255;%d;%dm \033[0m", c, c);
-        // return true;
-
-        // if (sp->get_owner() != nullptr) {
-        //   fprintf(stream, "\033[48;2;0;0;%dm", (int)(255 * used_frac));
-        // } else {
-        //   fprintf(stream, "\033[48;2;%d;0;0m", (int)(255 * used_frac));
-        // }
-
-        auto r = sp->get_rates(timecache);
-        auto pressure = r.pressure();
-
-        auto tend = r.tendancy();
-        auto tend_norm = (tend + 1.0) / 2.0;
-        int blue = (255 * tend_norm);
-        int red = 255 - blue;
-
-        fprintf(stream, "\033[48;2;%d;0;%dm", red, blue);
-        // fprintf(stream, "%7.2f%% ", 100.0 * used_frac);
-        fprintf(stream, "%8.2f/%7.2fkb ", avail * size / 1024.0, alaska::page_size / 1024.0);
-        // fprintf(stream, "%8.2fkb ", avail * size / 1024.0);
-        // fprintf(stream, "%8.2f/%7.2fkb ", avail * size / 1024.0, alaska::page_size / 1024.0);
-        // fprintf(stream, "%8.2fkb/%7.2fkb ", used * size / 1024.0, alaska::page_size / 1024.0);
-        // fprintf(stream, "%.3fu ", used_frac);
-        // fprintf(stream, "%+12.2fp ", pressure);
-        // fprintf(stream, "%+5.2ft ", tend);
-        // fprintf(stream, "%+12.0fΔ ", r.delta());
-        fprintf(stream, "%+12.2fΔ ", r.allocation_bytes_per_second - r.free_bytes_per_second);
-
-        fprintf(stream, "\e[0m ");
-
-        page_index++;
+      mag.foreach ([&](SizedPage *p) {
+        size_t committed = p->committed();
+        total_committed += committed;
+        fprintf(stream, "  - %p avail:%zu  commit:%zu  frag:%f\n", p, p->available(), committed,
+            p->fragmentation());
         return true;
       });
-      fprintf(stream, "\n");
     }
 
-    // printf("locality pages: %lu\n", locality_pages.size());
-    // long ind = 0;
-    // locality_pages.foreach ([&](LocalityPage *lp) {
-    //   float frag = lp->fragmentation();
 
-    //   int c = (1.0 - frag) * 255;
-    //   fprintf(stream, "\033[48;2;255;%d;%dm \033[0m", c, c);
-    //   // return true;
-    //   // iterate over the locality slab list
-    //   lp->for_each_slab([&](auto *slab) {
-    //     ind++;
-    //     float u = slab->utilization();
+    fprintf(stream, "LocalityPages\n");
+    locality_pages.foreach ([&](LocalityPage *p) {
+      size_t committed = p->committed();
+      total_committed += committed;
+      fprintf(stream, "  - %p avail:%zu  commit:%zu  frag:%f\n", p, p->available(), committed,
+          p->fragmentation());
+      return true;
+    });
 
-    //     int c = (1.0 - u) * 255;
-    //     fprintf(stream, "\033[48;2;255;%d;%dm %7.2f \033[0m", c, c, u * 100.0f);
+    fprintf(stream, "Total committed memory: %zu bytes (%fmb)\n", total_committed,
+        total_committed / (1024.0 * 1024.0));
 
-
-    //     // if (ind > 200) {
-    //     //   ind = 0;
-    //     //   fprintf(stream, "\n");
-    //     // }
-    //     // if (u == 0) {
-    //     //   fprintf(stream, "\e[31m");
-    //     // }
-    //     // fprintf(stream, "%3.0f ", 100.0 * u);
-
-    //     // fprintf(stream, "%8.2f/%7.2fkb ", lp->used() / 1024.0, lp->heap_size() / 1024.0);
-    //     // fprintf(stream, "%8.2fkb ", lp->used() / 1024.0);
-    //     // fprintf(stream, "%8.2f/%7.2fkb ", lp->used() / 1024.0, lp->heap_size() / 1024.0);
-    //     // fprintf(stream, "%8.2fkb/%7.2fkb ", lp->used() / 1024.0, lp->heap_size() / 1024.0);
-    //     // fprintf(stream, "\n");
-    //   });
-
-
-    //   return true;
-    // });
     fprintf(stream, "\n");
-    // fprintf(stream, "\n");
   }
 
 
@@ -314,7 +241,7 @@ namespace alaska {
     for (auto &mag : size_classes) {
       mag.foreach ([&](SizedPage *sp) {
         long z = 0, t = 0;
-        if (sp->fragmentation() > 0.15) {
+        if (true || sp->fragmentation() > 0.15) {
           zero_bytes += z;
           total_bytes += t;
           total_objects += t / sp->get_object_size();
@@ -330,14 +257,12 @@ namespace alaska {
   }
 
   long Heap::compact_locality_pages(void) {
+    return 0;
     long c = 0;
-    // // printf("Utilizations:\n");
-    // long total_wasted = 0;
-    // long total_time = 0;
     alaska::printf("Locality pages: %lu\n", locality_pages.size());
     locality_pages.foreach ([&](LocalityPage *lp) {
-      alaska::printf(" - Locality page %p  avail:%zu, frag:%.2f%%\n", lp, lp->available(),
-          lp->fragmentation() * 100);
+      alaska::printf(" - Locality page %p  commit:%zu, avail:%zu, frag:%.2f%%\n", lp,
+          lp->committed(), lp->available(), lp->fragmentation() * 100);
       return true;
     });
     return c;

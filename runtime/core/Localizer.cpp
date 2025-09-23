@@ -14,11 +14,19 @@
 #include <alaska/Runtime.hpp>
 #include <alaska/Localizer.hpp>
 #include <alaska/lphash_set.h>
-
+#include <limits.h>
 #define _GLIBCXX_INCLUDE_NEXT_C_HEADERS
 #include <math.h>
 
 namespace alaska {
+
+  // knobs
+  constexpr float GOOD_QUALITY = 0.5;
+  constexpr int64_t BADNESS_CUTOFF = 5000;
+  constexpr int64_t LOCALIZE_CUTOFF = 7500;
+  constexpr int64_t STEP = 2500;
+  constexpr int64_t LOCALIZATION_INTERVAL = 50;
+
 
 
 
@@ -27,6 +35,8 @@ namespace alaska {
     if (getenv("HOT_CUTOFF") != NULL) {
       knobs.hotness_cutoff = atoi(getenv("HOT_CUTOFF"));
     }
+
+    dump_handles.ensure_capacity(MAX_DUMP_HANDLES);
   }
 
   handle_id_t *Localizer::get_hotness_buffer(size_t count) {
@@ -47,47 +57,170 @@ namespace alaska {
   }
 
 
-  float Localizer::compute_quality(handle_id_t *hids, size_t count) {
+  static inline bool check_handle(void *p, alaska::Mapping *&m, void *&data) {
+    m = alaska::Mapping::from_handle_safe(p);
+    if (m == nullptr) return false;
+    data = m->get_pointer();
+    if (data == nullptr || m->is_free()) return false;
+    return true;
+  }
+
+  static inline bool check_handle(handle_id_t hid, alaska::Mapping *&m, void *&data) {
+    if (hid == 0) return false;
+    m = alaska::Mapping::from_handle_id(hid);
+    if (m == nullptr) return false;
+    data = m->get_pointer();
+    if (data == nullptr || m->is_free()) return false;
+    return true;
+  }
+
+
+
+  float Localizer::compute_quality(handle_id_t *hids, size_t count, float *out_ratio) {
+    /**
+     * \sum object_size / num_pages  * 4096
+     * \sum w_i object_size / num_pages  * 4096
+     * w_i = 1 if object_quality > threshold else 0.5
+     *
+     * 1/(used_bytes) \sum w_i object_size
+     */
+
+    // First, compute the number of pages used by these objects.
+    uintptr_t pages[count];
+    lphashset_init(pages, count);
+
+    size_t sum = 0;
+    size_t used_bytes = 0;
+
+    size_t good_objects = 0;
+    size_t bad_objects = 0;
+
+    for (size_t i = 0; i < count; i++) {
+      alaska::Mapping *m = nullptr;
+      void *data = nullptr;
+      if (!check_handle(hids[i], m, data)) continue;
+      auto *header = ObjectHeader::from(data);
+
+      // the object size here is the total size the object occupies, including header.
+      size_t object_size = header->real_object_size();
+
+      if (header->placement_badness > BADNESS_CUTOFF) {
+        bad_objects++;
+      } else {
+        good_objects++;
+      }
+
+      // If the object is currently bad enough that we consider it above a
+      // certain threshold, we count it as half weight.
+      sum += object_size >> (header->placement_badness > BADNESS_CUTOFF);
+
+      for (size_t j = 0; j < object_size; j += 0x1000) {
+        uintptr_t page = ((uintptr_t)data + j) >> 12;
+        if (lphashset_insert(pages, count, page)) {
+          used_bytes += 0x1000;
+        }
+      }
+    }
+
+    if (out_ratio) {
+      *out_ratio = (float)good_objects / (float)(good_objects + bad_objects);
+    }
+
+    float quality = ((float)sum / (float)used_bytes);
+    if (quality < 0) quality = 0;
+    return quality;
+
+    /*
     size_t bytes_needed = 0;
     size_t bytes_used = 0;
     uintptr_t pages[count];
     lphashset_init(pages, count);
 
     for (size_t i = 0; i < count; i++) {
-      if (hids[i] == 0) continue;
-      auto *m = Mapping::from_handle_id(hids[i]);
-      void *data = m->get_pointer();
-      if (data == nullptr) continue;
+      alaska::Mapping *m = nullptr;
+      void *data = nullptr;
+      if (!check_handle(hids[i], m, data)) continue;
+
       auto header = ObjectHeader::from(m);
       size_t object_size = header->object_size();
       // sizes.push(object_size);
       bytes_needed += object_size + sizeof(ObjectHeader);
 
-      if (lphashset_insert(pages, count, (uintptr_t)data >> 12)) {
-        bytes_used += 0x1000;
+      for (size_t j = 0; j < object_size; j += 0x1000) {
+        uintptr_t page = ((uintptr_t)data + j) >> 12;
+        if (lphashset_insert(pages, count, page)) {
+          bytes_used += 0x1000;
+        }
       }
     }
 
-    // Quality is a metric we utilize to determine if objects in a
-    // dump are at a good location or not.  It is based on the
-    // assumption that in order to have good locality, the first step
-    // is to minimize the number of pages used by a given set of
-    // objects. Therefore, we count quality as a number between 0 and
-    // 1, where 0 is bad quality, and 1 is good. If the quality is bad
-    // (say 0.1), that means a set of objects is using 10x the number
-    // of pages it should be. If the quality is good (0.9+), the
-    // objects are using near the minimal number of pages.  A set of
-    // objects with horrible quality should be more likley to be
-    // localized, as they were observed in a dump together, and we
-    // ought to optimize for that pattern happening again (assuming it
-    // does, anyways).
     float quality = ((float)bytes_needed / (float)bytes_used);
-    if (quality < 0) {
-      quality = 0;
-    }
+    if (quality < 0) quality = 0;
 
     return quality;
+    */
   }
+
+
+
+
+  bool Localizer::discover_reachable_handles(alaska::Mapping *m, size_t depth) {
+    if (depth > SEARCH_DEPTH) return true;
+
+
+
+    auto header = ObjectHeader::from(m);
+    if (!this->tc.runtime.heap.contains(header)) {
+      return true;
+    }
+
+
+
+    if (header->localized || header->marked) {
+      // already localized, no need to discover more
+      return true;
+    }
+    header->marked = true;
+
+
+    if (!add_dump_handle(m)) return false;
+
+    // for (size_t i = 0; i < depth; i++)
+    //   alaska::printf("  ");
+    // alaska::printf("%3d %p", depth, m->to_handle());
+    // alaska::printf(" %p", m->get_pointer());
+    // alaska::printf(" size=%zu", header->object_size());
+    // alaska::printf("\n");
+
+
+
+    auto data = header->data();
+
+    size_t size = header->object_size();
+
+    auto *ptr = (void **)header->data();
+    size_t scan_size = 128;
+    if (size < scan_size) scan_size = size;
+    auto *end = (void **)((char *)ptr + scan_size);
+    while (ptr < end) {
+      auto *p = *ptr;
+      if (p != nullptr) {
+        auto *mp = alaska::Mapping::from_handle_safe(p);
+        if (mp != nullptr) {
+          if (this->tc.runtime.handle_table.valid_handle(mp)) {
+            if (!discover_reachable_handles(mp, depth + 1)) {
+              return false;
+            }
+          }
+        }
+      }
+      ptr++;
+    }
+
+    return true;
+  }
+
+
 
   Localizer::ScanResult Localizer::feed_hotness_buffer(size_t count, handle_id_t *handle_ids) {
     ScanResult res = {0};
@@ -97,18 +230,18 @@ namespace alaska {
     auto &rt = alaska::Runtime::get();
 
 
-    alaska::printf("YUKON_DUMP: %zu", alaska_timestamp());
-    for (size_t i = 0; i < count; i++) {
-      if (handle_ids[i] == 0) continue;
+    // alaska::printf("YUKON_DUMP: %zu", alaska_timestamp());
+    // for (size_t i = 0; i < count; i++) {
+    //   if (handle_ids[i] == 0) continue;
 
-      // check if it is valid or not.
-      auto *m = Mapping::from_handle_id(handle_ids[i]);
-      void *data = m->get_pointer();
-      if (data == nullptr || m->is_free()) continue;
-      auto header = ObjectHeader::from(m);
-      alaska::printf(" %p:%zu", m->get_pointer(), header->object_size());
-    }
-    alaska::printf("\n");
+    //   // check if it is valid or not.
+    //   auto *m = Mapping::from_handle_id(handle_ids[i]);
+    //   void *data = m->get_pointer();
+    //   if (data == nullptr || m->is_free()) continue;
+    //   auto header = ObjectHeader::from(m);
+    //   alaska::printf(" %p:%zu", m->get_pointer(), header->object_size());
+    // }
+    // alaska::printf("\n");
 
     // // Push the buffer back to the queue of buffers
     // struct buffer *buf = reinterpret_cast<struct buffer *>(handle_ids);
@@ -119,52 +252,88 @@ namespace alaska {
 
 #if 1
 
-    float quality = compute_quality(handle_ids, count);
-    // alaska::printf("YUKON_QUALITY=%f\n", quality);
-    quality = 0;
+    // DumpQuality :: used_pages / needed_pages
+
+    float ratio = 0.0f;
+    float weighted_quality = compute_quality(handle_ids, count, &ratio);
+    // alaska::printf("YUKON_QUALITY=%f, %f\n", weighted_quality, ratio);
 
 
-    float quality_cutoff = 0.15;
-    int inc = (1 - (quality / quality_cutoff)) * 8;
-    inc = knobs.effort * 16;
+    bool good_dump = weighted_quality > GOOD_QUALITY;
 
-    this->last_quality = quality;
-
-    // TODO: can we sort by data address?
-
+    // Reset the dump handles vector back to zero.
+    dump_handles.reset_size();
 
     for (size_t i = 0; i < count; i++) {
-      // If the handle is 0, skip it. This means the HTLB entry was empty at the
-      // time of the dump (invalidation, etc)
-      if (handle_ids[i] == 0) continue;
-      auto *m = Mapping::from_handle_id(handle_ids[i]);
-      void *data = m->get_pointer();
-      if (data == nullptr || m->is_free()) continue;
-      auto header = ObjectHeader::from(m);
+      alaska::Mapping *m = nullptr;
+      void *data = nullptr;
+      if (!check_handle(handle_ids[i], m, data)) continue;
 
-      if (header->localized) {
-        // If the object is already localized, skip it.
+
+      // if (!discover_reachable_handles(m)) {
+      //   break;
+      // }
+      // continue;
+
+
+
+      auto header = ObjectHeader::from(m);
+      if (header->localized) continue;
+
+      // If the object is already determined to need localization, skip it.
+      // if (header->localized) continue;
+      if (header->placement_badness > LOCALIZE_CUTOFF) {
         continue;
       }
 
-      int hotness = header->hotness;
-      bool was_hot = hotness > knobs.hotness_cutoff;
-      hotness += 1;
-      bool is_hot = hotness > knobs.hotness_cutoff;
 
-      if (not was_hot and is_hot) {
-        saturated_bytes += header->object_size() + sizeof(ObjectHeader);
-        saturated_handles.push(m->handle_id());
+      bool was_good_object = header->placement_badness <= BADNESS_CUTOFF;
+
+      if (good_dump) {
+        if (was_good_object) {
+          // ... nothing.
+        } else {
+          // bad object.
+          header->placement_badness += STEP;
+        }
+      } else {
+        // bad dump.
+        if (was_good_object) {
+          // good object.
+          header->placement_badness += STEP * ratio;
+        } else {
+          // bad object.
+          header->placement_badness += STEP;
+        }
       }
 
-      header->hotness = hotness;
-      if (hotness > 0b111111) {
-        hotness = 0b111111;
+      header->marked = true;
+
+
+      if (header->placement_badness > LOCALIZE_CUTOFF) {
+        saturated_handles.push(handle_ids[i]);
       }
     }
 
+    // alaska::printf("Discovered %zu handles\n", dump_handles.size());
+    // for (auto *m : dump_handles) {
+    //   if (m == nullptr) continue;
+    //   auto header = ObjectHeader::from(m);
+    //   // header->placement_badness += STEP;
+    //   // if (header->placement_badness > LOCALIZE_CUTOFF) {
+    //   saturated_handles.push(m->handle_id());
+    //   // saturated_bytes += header->real_object_size();
+    //   // }
+    // }
+
+
+
+
+    /////////////
+
     bool should_localize = false;
     if (dumps_recorded > knobs.localization_interval) should_localize = true;
+    // should_localize = false;
 
 
 
@@ -176,7 +345,8 @@ namespace alaska {
 
       localize_saturated_handles();
 
-      rt.heap.compact_locality_pages();
+      // rt.heap.dump(stdout);
+      // rt.heap.compact_locality_pages();
       // rt.heap.compact_sizedpages();
 
       saturated_bytes = 0;
@@ -198,21 +368,41 @@ namespace alaska {
   void Localizer::localize_saturated_handles() {
     auto &rt = alaska::Runtime::get();
 
+
     bool did_localize = rt.with_barrier([&] {
+      float quality_before = compute_quality(saturated_handles.data(), saturated_handles.size());
       // iterate over our queue of saturated handles from start to end, and localize those which are
       // valid. NOTE: this does not clear the queue, just localizes them.
+
+      long num_localized = 0;
+
       for (auto &handle : saturated_handles) {
+        if (handle == 0) continue;
         auto *m = Mapping::from_handle_id(handle);
-        if (rt.handle_table.valid_handle(m)) {
-          auto headerBefore = ObjectHeader::from(m);
-          size_t objectSize = headerBefore->object_size();
-          // if the handle is valid, localize it
-          this->tc.localize(m, 0);
-          bytes_localized_counter.track(objectSize);
-          // printf("localized %p %zu \n", m, object_size);
-          localized_objects += objectSize;
-        }
+        void *data = m->get_pointer();
+        if (data == nullptr || m->is_free()) continue;
+        auto header = ObjectHeader::from(m);
+        auto headerBefore = ObjectHeader::from(m);
+        size_t objectSize = headerBefore->object_size();
+        // if the handle is valid, localize it
+        num_localized += this->tc.localize(m, 0);
+        bytes_localized_counter.track(objectSize);
+        // printf("localized %p %zu \n", m, object_size);
+        localized_objects += objectSize;
       }
+
+      alaska::printf("Localized %ld objects\n", num_localized);
+      // alaska::printf("LOCALIZING ");
+      // for (auto &handle : saturated_handles) {
+      //   if (handle == 0) continue;
+      //   alaska::printf("%lu ", handle);
+      // }
+      // alaska::printf("\n");
+
+      float quality_after = compute_quality(saturated_handles.data(), saturated_handles.size());
+
+      // alaska::printf("Localized %zu handles, quality before: %f, after: %f\n",
+      //     saturated_handles.size(), quality_before, quality_after);
     });
     if (!did_localize) {
       printf("Failed to localize\n");

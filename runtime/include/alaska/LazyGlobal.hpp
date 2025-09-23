@@ -19,7 +19,7 @@ namespace alaska {
     public:
     T &get() {
       if (m_instance == nullptr) {
-        alaska::printf("LazyGlobal: Initializing instance of type %s at %p\n", __PRETTY_FUNCTION__, m_storage);
+        // alaska::printf("LazyGlobal: Initializing instance of type %s at %p\n", __PRETTY_FUNCTION__, m_storage);
         m_instance = new (m_storage) T();
       }
       return *m_instance;

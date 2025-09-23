@@ -154,6 +154,11 @@ namespace ck {
       m_size = 0;
     }
 
+    // Reset the size of the vector to 0, but keep the capacity. (Don't call destructors.)
+    void reset_size() {
+      m_size = 0;
+    }
+
     bool operator==(const vec& other) const {
       if (m_size != other.m_size) return false;
       return typed_transfer<T>::compare(data(), other.data(), size());

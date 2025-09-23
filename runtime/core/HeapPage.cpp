@@ -13,6 +13,10 @@
 #include <alaska/AllocationRequest.hpp>
 #include <alaska/ThreadCache.hpp>
 
+#include <sys/mman.h>
+#include <errno.h>
+#include <signal.h>
+
 namespace alaska {
 
   HeapPage::~HeapPage() {}
@@ -20,6 +24,11 @@ namespace alaska {
   HeapPage::HeapPage(void *backing_memory)
       : memory(backing_memory) {
     snprintf(name, sizeof(name), "HeapPage");
+
+
+    if (mlock2(backing_memory, page_size, 0)) {
+      alaska::printf("HeapPage: Failed to lock memory at %p: %s\n", backing_memory, strerror(errno));
+    }
 
     // The first thing we do is store the back pointer to ourselves in the backing memory.
     header()->owner = this;

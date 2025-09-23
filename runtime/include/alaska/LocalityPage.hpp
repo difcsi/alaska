@@ -46,7 +46,7 @@ namespace alaska {
 
 
     // Fragmentation - How much of the committed memory was freed?
-    float fragmentation(void) override { return freed_bytes / committed(); }
+    float fragmentation(void) override { return (float)freed_bytes / (float)committed(); }
 
    private:
     size_t freed_bytes = 0;

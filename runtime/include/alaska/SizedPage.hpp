@@ -27,7 +27,7 @@ namespace alaska {
     ~SizedPage(void) override;
 
 
-    void *alloc(const alaska::Mapping &m, alaska::AlignedSize size) override;
+    void *alloc(const alaska::Mapping &m, alaska::AlignedSize size) override alaska_attr_malloc;
     bool release_local(const alaska::Mapping &m, void *ptr) override;
     bool release_remote(const alaska::Mapping &m, void *ptr) override;
     void set_size_class(int cls);
@@ -48,26 +48,9 @@ namespace alaska {
       return (float)num_free_in_free_list() / (float)object_extent();
     }
 
+
     // How many free slots are there? (We return an estimate!)
-    inline long available(void) {
-      // TODO:
-      return 0;
-    }
-    auto get_rates(TimeCache &tc) {
-      // TODO:
-      return AllocationRate();
-    }
-
-
-    inline void dump_live(void) {
-      for (int i = 0; i < capacity; i++) {
-        ObjectHeader *h = ind_to_header(i);
-        if (is_allocated(h)) {
-          printf("Object %d: %p, handle_id: %lu is live.\n", i, h, h->handle_id);
-        }
-      }
-    }
-
+    inline long available(void) { return num_free(); }
 
     inline long num_free(void) const {
       return num_free_in_free_list() + num_free_in_bump_allocator();
@@ -78,6 +61,10 @@ namespace alaska {
     inline long num_free_in_bump_allocator(void) const {
       return (((uintptr_t)objects_end - (uintptr_t)bump_next) / object_size);
     }
+
+    size_t committed(void) { return (uintptr_t)bump_next - (uintptr_t)objects_start; }
+
+    inline auto &get_freelist(void) { return freelist; }
 
    private:
     struct SizePageBlock {

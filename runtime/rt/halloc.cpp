@@ -43,10 +43,15 @@ alaska::LockedThreadCache get_tc(void) { return *get_tc_r(); }
 
 
 static void *_halloc(size_t sz, int zero) {
-  void *result = get_tc()->halloc(sz, zero);
+  void *result = get_tc()->halloc(sz);
 
   // This seems right...
   if (result == NULL) errno = ENOMEM;
+
+  if (zero) {
+    // handle translate.
+    alaska::handle_memset(result, 0, sz);
+  }
   return result;
 }
 

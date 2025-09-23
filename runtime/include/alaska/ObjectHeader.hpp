@@ -19,39 +19,36 @@ namespace alaska {
 
 
   struct ObjectHeader final {
+
+
     // The first 32 bits of the object header are the handle id. We use this
     // very often, so we want it to be fast as possible to access (without masks or anything)
     uint32_t handle_id;
-    // we track the size of the object in the header by counting the number of "blocks"
-    // that the object takes up. Really, this is the size over 8
-    // This is just to save bits here :)
-    uint16_t blocks;
+    uint32_t size; // The size of the object in bytes, not including the header.
+
+
+    int32_t placement_badness;
 
     // And then theres some metadata
     union {
       struct {
-        bool localized : 1;   // A marker to quickly indicate if the object is localized
-        uint8_t hotness : 6;  // saturating counter for how many times an object has been in a dump
+        bool localized;   // A marker to quickly indicate if the object is localized
+        bool marked;
       };
-      uint16_t __metadata : 16;  // don't use this manually. just here to ensure space
+      uint32_t __metadata : 16;  // don't use this manually. just here to ensure space
     };
 
-
-    uint32_t hit_count;
-    uint32_t __reserved;
-
-    inline size_t object_size(void) const { return this->blocks * 8; }
+    inline size_t object_size(void) const { return this->size; }
     inline size_t real_object_size(void) const { return object_size() + sizeof(ObjectHeader); }
 
     void set_object_size(size_t size_bytes) {
-      this->blocks = round_up(size_bytes, 8) / 8;
-      ALASKA_SANITY(this->blocks != 0, "object size must be greater than 0");
+      this->size = size_bytes;
     }
     void *data(void) { return (void *)((off_t)this + sizeof(ObjectHeader)); }
 
     inline void reset(void) {
       __metadata = 0;
-      hit_count = 0;
+      // placement_badness = 0;
     }
     alaska::Mapping *get_mapping(void) const { return alaska::Mapping::from_handle_id(handle_id); }
     // Passing null here means the object is not mapped.

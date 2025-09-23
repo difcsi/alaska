@@ -82,8 +82,7 @@ namespace alaska::sim {
     if (alaska::sim::HTLB::get() == nullptr) {
       abort();
     }
-    alaska::sim::handle_ptr<T> ptr =
-        (T*)alaska::sim::HTLB::get()->thread_cache->halloc(sizeof(T), true);
+    alaska::sim::handle_ptr<T> ptr = (T*)alaska::sim::HTLB::get()->thread_cache->halloc(sizeof(T));
 
     new (&*ptr) T(std::forward<Args>(args)...);
 

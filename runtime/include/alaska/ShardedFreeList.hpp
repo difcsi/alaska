@@ -33,14 +33,28 @@ namespace alaska {
   // and doesn't really care what the memory is, so long as it is at least 8 bytes big.
   template <typename Block = DefaultFreeListBlock>
   class ShardedFreeList final {
+   private:
+    Block *local_free = nullptr;
+    Block *remote_free = nullptr;
+
+    long num_local_free = 0;
+    long num_remote_free = 0;
+
    public:
+    inline Block *peek(void) const { return local_free; }
     // Pop from the local free list. Return null if the local free list is empty
-    inline Block *pop(void) {
-      auto *b = local_free;
+    inline Block *pop(void) { return pop(local_free); }
+    inline Block *pop(Block *b) {
       if (unlikely(b != nullptr)) {
-        num_local_free--;
+        // num_local_free--;
         local_free = local_free->next;
       }
+      b->markAllocated();
+      return b;
+    }
+
+    inline Block *pop_unchecked(Block *b) {
+      local_free = b->next;
       b->markAllocated();
       return b;
     }
@@ -78,8 +92,7 @@ namespace alaska {
       num_local_free++;
     }
 
-    __attribute__((noinline))
-    inline void free_remote(void *p) {
+    __attribute__((noinline)) inline void free_remote(void *p) {
       auto *block = (Block *)p;
       Block **list = &remote_free;
       // TODO: NOT SURE ABOUT THE CONSISTENCY OPTIONS HERE
@@ -98,14 +111,6 @@ namespace alaska {
       local_free = remote_free = NULL;
       num_local_free = num_remote_free = 0;
     }
-
-   private:
-    Block *local_free = nullptr;
-    Block *remote_free = nullptr;
-
-
-    long num_local_free = 0;
-    long num_remote_free = 0;
   };
 
 

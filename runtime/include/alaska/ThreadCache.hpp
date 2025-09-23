@@ -50,7 +50,8 @@ namespace alaska {
     // Each thread cache has a private heap page for each size class
     // it might allocate from. When a size class fills up, it is
     // returned to the global heap and another one is allocated.
-    alaska::SizedPage *size_classes[alaska::num_size_classes] = {nullptr};
+    alaska::SizedPage *size_classes[alaska::num_size_classes];
+
     // Each thread cache also has a private "Locality Page", which
     // objects can be relocated to according to some external
     // policy. This page is special because it can contain many
@@ -82,8 +83,11 @@ namespace alaska {
     ThreadCache(int id, alaska::Runtime &rt);
 
     // Handle allocation and deallocation routines.
-    void *halloc(size_t size, bool zero = false);
-    void *hrealloc(void *handle, size_t new_size);
+    void *halloc(size_t size) alaska_attr_malloc;
+    void *halloc_generic(size_t size) alaska_attr_malloc;
+
+
+    void *hrealloc(void *handle, size_t new_size) alaska_attr_malloc;
     void hfree(void *handle);
 
 
@@ -93,9 +97,11 @@ namespace alaska {
     //    allocator.
     // You SHOULD NOT use this function *and* the handle allocation routine
     // in the same execution context, as it will likely cause bugs.
-    void *malloc(size_t size, bool zero = false);
-    void *realloc(void *ptr, size_t new_size);
+    void *malloc_generic(size_t size) alaska_attr_malloc;
+    void *malloc(size_t size, bool zero = false) alaska_attr_malloc;
+    void *realloc(void *ptr, size_t new_size) alaska_attr_malloc;
     void free(void *ptr);
+
 
     int get_id(void) const { return this->id; }
     size_t get_size(void *handle);
@@ -120,6 +126,8 @@ namespace alaska {
     void free_mapping(alaska::Mapping *);
 
    private:
+    alaska::Mapping *reverse_lookup(void *heap_ptr);
+
     // Swap to a new sized page owned by this thread cache
     alaska::SizedPage *new_sized_page(int cls);
     // Swap to a new locality page owned by this thread cache
@@ -168,6 +176,47 @@ namespace alaska {
     ThreadCache &tc;
   };
 
+
+
+
+  // Inline definitions of hot threadcache methods.
+
+#define TC_ALIGNED(p) ((__typeof__(p))__builtin_assume_aligned((p), sizeof(uintptr_t)))
+
+  LTO_INLINE inline void *ThreadCache::halloc(size_t size) {
+    if (likely(size < alaska::max_small_size)) {
+      // Grab the sized page for this size class.
+      auto *sp = size_classes[alaska::size_to_class_small(size)];
+
+      if (likely(sp != NULL)) {
+        auto &htfl = handle_slab->get_freelist();
+        auto &spfl = sp->get_freelist();
+
+        // Peek at the handle table and size page free lists.
+        auto *m = TC_ALIGNED(htfl.peek());
+        auto *d = TC_ALIGNED(spfl.peek());
+
+        // If both had local free entries, we can take the fast path.
+        if (likely((!!m) & (!!d))) {
+          // Pop from both free lists.
+          htfl.pop_unchecked(m);
+          spfl.pop_unchecked(d);
+
+          // Setup the handle table mapping.
+          auto *mapping = (alaska::Mapping *)m;
+          auto *header = &d->header;
+          header->set_mapping(mapping);
+          header->set_object_size(size);
+          mapping->set_pointer(header->data());
+
+          return mapping->to_handle(0);
+        }
+      }
+    }
+
+    // Ope! Fallback to the slower generic path.
+    return halloc_generic(size);
+  }
 
 
 }  // namespace alaska

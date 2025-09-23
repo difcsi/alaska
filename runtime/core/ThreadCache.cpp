@@ -27,6 +27,9 @@ namespace alaska {
       : id(id)
       , runtime(rt)
       , localizer(rt.config, *this) {
+    for (size_class_t i = 0; i < alaska::num_size_classes; i++) {
+      size_classes[i] = nullptr;
+    }
     handle_table_churn++;
     handle_slab = runtime.handle_table.new_slab(this);
   }
@@ -44,6 +47,7 @@ namespace alaska {
 
     // Swap the heaps in the thread cache
     if (size_classes[cls] != nullptr) runtime.heap.put_page(size_classes[cls]);
+    alaska::printf("Thread %d got new sized page %p for class %d\n", id, heap, cls);
     size_classes[cls] = heap;
 
     ALASKA_ASSERT(heap->available() > 0, "New heap must have space");
@@ -64,40 +68,41 @@ namespace alaska {
     return lp;
   }
 
-  LTO_INLINE void *ThreadCache::halloc(size_t size, bool zero) {
+  // noinline
+  __attribute__((noinline)) void *ThreadCache::halloc_generic(size_t size) {
+    // Now, if we are being called here, it means either we are
+    // allocating a large object (size>1024) or one of the following
+    // checks failed in ::halloc.
     if (unlikely(size == 0)) return NULL;
-    // alaska::printf("ThreadCache::halloc size=%zu zero=%d\n", size, zero);
+    void *result = nullptr;
 
     if (unlikely(alaska::should_be_huge_object(size))) {
-      // Allocate the huge allocation.
-
-      void *p = alaska_internal_malloc(size);
-      if (zero) memset(p, 0, size);
-
-      return p;
+      result = alaska_internal_malloc(size);
     } else {
-      auto *m = this->new_mapping();
+      auto *mapping = this->new_mapping();
 
       int cls = alaska::size_to_class(size);
       void *ptr;
       SizedPage *page = size_classes[cls];
 
       if (unlikely(page == nullptr)) page = new_sized_page(cls);
-      ptr = page->alloc(*m, size);
+      ptr = page->alloc(*mapping, size);
       if (unlikely(ptr == nullptr)) {
         // OOM?
         page = new_sized_page(cls);
-        ptr = page->alloc(*m, size);
+        ptr = page->alloc(*mapping, size);
       }
 
-      if (zero) {
-        memset(ptr, 0, size);
-      }
 
-      m->set_pointer(ptr);
-      return m->to_handle(0);
+      mapping->set_pointer(ptr);
+
+      result = mapping->to_handle(0);
     }
+
+    // if (zero) memset(result, 0, size);
+    return result;
   }
+
 
 
 
@@ -109,7 +114,7 @@ namespace alaska {
 
     auto original_size = this->get_size(handle);
 
-    void *new_handle = this->halloc(new_size, true);
+    void *new_handle = this->halloc(new_size);
 
     // We should copy the minimum of the two sizes between the allocations.
     size_t copy_size = original_size > new_size ? new_size : original_size;
@@ -143,11 +148,6 @@ namespace alaska {
 
     auto *handle_slab = this->runtime.handle_table.get_slab(m);
     auto *heap_page = this->runtime.heap.pt.get_unaligned(ptr);
-
-    // alaska::printf("hfree: handle=%p, ptr=%p\n", handle, ptr);
-    // alaska::printf("  handle slab: %p\n", handle_slab);
-    // alaska::printf("  heap page: %p\n", heap_page);
-
     heap_page->release_local(*m, ptr);
     handle_slab->release_local(m);
 
@@ -159,7 +159,7 @@ namespace alaska {
     //   return;
     // }
 
-    // Now the slow path.
+    // // Now the slow path.
 
     // if (likely(heap_page->is_owned_by(this))) {
     //   heap_page->release_local(*m, ptr);
@@ -178,8 +178,16 @@ namespace alaska {
 
 #define STUB_ALLOCATES_HANDLES
 
+
+  LTO_INLINE alaska::Mapping *ThreadCache::reverse_lookup(void *heap_ptr) {
+    if (this->runtime.heap.contains(heap_ptr)) {
+      return ObjectHeader::from(heap_ptr)->get_mapping();
+    }
+    return nullptr;
+  }
+
   // -------------------------------------------------------------- //
-  LTO_INLINE void *ThreadCache::malloc(size_t size, bool zero) {
+  LTO_INLINE void *ThreadCache::malloc_generic(size_t size) {
     void *ptr;
     if (unlikely(alaska::should_be_huge_object(size))) {
       // Allocate the huge allocation.
@@ -208,8 +216,58 @@ namespace alaska {
       m->set_pointer(ptr);
     }
 
-    if (zero) memset(ptr, 0, size);
     return ptr;
+  }
+
+
+  LTO_INLINE void *ThreadCache::malloc(size_t size, bool zero_ignored) {
+    if (likely(size < alaska::max_small_size)) {
+      // int cls = alaska::size_to_class(size);
+      auto *sp = size_classes[alaska::size_to_class_small(size)];
+
+      // alaska::printf("sp=%p\n", sp);
+
+      if (likely(sp != NULL)) {
+        auto &htfl = handle_slab->get_freelist();
+        auto &spfl = sp->get_freelist();
+// Note: we cram an ALIGNED here because the RISCV compiler
+// can't figure it out, and emits four loads and four stores
+// to avoid alignment problems. If we tell the compiler it is
+// aligned, things get much faster (It should be aligned anyways)
+#ifdef STUB_ALLOCATES_HANDLES
+        auto *m = TC_ALIGNED(htfl.peek());  // peek at the handle table
+#else
+        // Stub mapping
+        alaska::Mapping m_p{};
+        auto *m = &m_p;
+#endif
+        auto *d = TC_ALIGNED(spfl.peek());  // peek at the size page
+        // alaska::printf("m=%p, d=%p\n", m, d);
+
+        // If both had local free entries, we can take the fast path.
+        if (likely(m and d)) {
+// Pop from both free lists.
+#ifdef STUB_ALLOCATES_HANDLES
+          htfl.pop(m);
+#endif
+          spfl.pop(d);
+
+
+          // Setup the handle table mapping.
+          auto *mapping = (alaska::Mapping *)m;
+          auto *header = &d->header;
+          header->set_mapping(mapping);
+          header->set_object_size(size);
+          void *data = header->data();
+          mapping->set_pointer(data);
+
+          return data;
+        }
+      }
+    }
+
+    // Ope! Fallback to the slower generic path.
+    return malloc_generic(size);
   }
 
 
@@ -223,8 +281,9 @@ namespace alaska {
     return new_ptr;
   }
 
+
+
   LTO_INLINE void ThreadCache::free(void *ptr) {
-    alaska::Mapping *m;
     if (this->runtime.heap.contains(ptr)) {
       auto *heap_page = this->runtime.heap.pt.get_unaligned(ptr);
 
@@ -242,7 +301,7 @@ namespace alaska {
 #else
       // Stub mapping
       alaska::Mapping m_p{};
-      m = &m_p;
+      auto *m = &m_p;
 #endif
 
       heap_page->release_local(*m, ptr);
@@ -295,6 +354,7 @@ namespace alaska {
   void ThreadCache::free_mapping(alaska::Mapping *m) { this->runtime.handle_table.put(m, this); }
 
 
+
   long ThreadCache::localize(alaska::Mapping *m, long allowed_depth) {
     // alaska::printf("Localizing mapping %p\n", m);
     long moved_count = 0;
@@ -309,6 +369,7 @@ namespace alaska {
     }
 
     auto header = alaska::ObjectHeader::from(ptr);
+
 
     // Ask the page for the size of the pointer
     auto size = header->object_size();
@@ -328,12 +389,32 @@ namespace alaska {
       }
     }
 
-    // hotness_hist[header->hotness]--;
     // Now for the actual localization
     memcpy(new_location, ptr, size);       // Copy the data
     source_page->release_remote(*m, ptr);  // Release the old location
     m->set_pointer(new_location);          // Write the new location
     moved_count += 1;
+
+
+    // TODO: localize one level of pointers?
+    // if (allowed_depth > 0) {
+    //   auto *ptr = (void **)new_location;
+    //   size_t scan_size = 128;
+    //   if (size < scan_size) scan_size = size;
+    //   auto *end = (void **)((char *)ptr + scan_size);
+    //   while (ptr < end) {
+    //     auto *p = *ptr;
+    //     if (p != nullptr) {
+    //       auto *m = alaska::Mapping::from_handle_safe(p);
+    //       if (m != nullptr) {
+    //         if (this->runtime.handle_table.valid_handle(m)) {
+    //           moved_count += localize(m, allowed_depth - 1);
+    //         }
+    //       }
+    //     }
+    //     ptr++;
+    //   }
+    // }
 
     return moved_count;
   }
@@ -343,18 +424,18 @@ namespace alaska {
     void *data = m->get_pointer();
     if (data == nullptr) return 0;
 
-    auto header = ObjectHeader::from(m);
+    // auto header = ObjectHeader::from(m);
 
-    // An already localized object should not be double localized (yet)
-    if (header->localized) return 0;
+    // // An already localized object should not be double localized (yet)
+    // if (header->localized) return 0;
 
-    if (header->hotness < 0b111'111) {
-      if (header->hotness != 0) {
-        hotness_hist[header->hotness]--;
-      }
-      header->hotness++;
-      hotness_hist[header->hotness]++;
-    }
+    // if (header->hotness < 0b111'111) {
+    //   if (header->hotness != 0) {
+    //     hotness_hist[header->hotness]--;
+    //   }
+    //   header->hotness++;
+    //   hotness_hist[header->hotness]++;
+    // }
 
     return 1;
   }
@@ -364,23 +445,26 @@ namespace alaska {
     res.count = 0;  // We haven't localized anything yet.
     long seen = 0;
 
-    uintptr_t pages[count];
-    lphashset_init(pages, count);
+    alaska::printf("ThreadCache::localize: hids=%p, count=%zu\n", hids, count);
+    abort();
+
+    // uintptr_t pages[count];
+    // lphashset_init(pages, count);
 
 
-    long invalid_found = 0;
-    for (size_t i = 0; i < count; i++) {
-      if (hids[i] == 0) continue;
-      auto *m = Mapping::from_handle_id(hids[i]);
+    // long invalid_found = 0;
+    // for (size_t i = 0; i < count; i++) {
+    //   if (hids[i] == 0) continue;
+    //   auto *m = Mapping::from_handle_id(hids[i]);
 
-      auto *ptr = m->get_pointer();
-      if (ptr != nullptr) {
-        lphashset_insert(pages, count, (uintptr_t)m->get_pointer() >> 12);
-      }
-      record_hotness(m, hotness_hist, 0);
-    }
+    //   auto *ptr = m->get_pointer();
+    //   if (ptr != nullptr) {
+    //     lphashset_insert(pages, count, (uintptr_t)m->get_pointer() >> 12);
+    //   }
+    //   record_hotness(m, hotness_hist, 0);
+    // }
 
-    localization_epoch++;
+    // localization_epoch++;
 
 
 

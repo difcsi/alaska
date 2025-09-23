@@ -30,9 +30,9 @@ namespace alaska {
 
 
   struct LocalizerKnobs {
-    float effort = 1.0; // NOT USED
+    float effort = 1.0;  // NOT USED
     // What is the maximum time allowed between dumps? (microseconds)
-    long dump_interval_us = 100; // 1000000;
+    long dump_interval_us = 100;  // 1000000;
 
     // How often do we act on dumps? (number of dumps)
     long localization_interval = 250;  // (50 * 1000) / dump_interval_us;
@@ -104,10 +104,25 @@ namespace alaska {
     size_t saturated_bytes = 0;              // how many bytes are referenced by the handles in...
     ck::vec<handle_id_t> saturated_handles;  // ... the queue of hids which have saturated hotness.
 
-    float compute_quality(handle_id_t *hids, size_t count);
+    float compute_quality(handle_id_t *hids, size_t count, float *out_ratio = nullptr);
+
 
 
    public:
+    // This is the set of handles that we gather in this dump
+    constexpr static size_t MAX_DUMP_HANDLES = 4096;
+    ck::vec<alaska::Mapping *> dump_handles;
+
+
+    inline bool add_dump_handle(alaska::Mapping *m) {
+      if (dump_handles.size() >= (int)MAX_DUMP_HANDLES) return false;  // cannot add more handles
+      dump_handles.push(m);
+      return true;
+    }
+
+    constexpr static size_t SEARCH_DEPTH = 16;
+    bool discover_reachable_handles(alaska::Mapping *m, size_t depth = 0);
+
     size_t localized_objects = 0;
     float last_quality = 0;
     LocalizerKnobs knobs;

@@ -135,6 +135,26 @@ namespace alaska {
       return true;
     }
 
+
+    template <typename Fn>
+    void walk_handles(alaska::Mapping *m, Fn &&cb) {
+      // assume m is valid, call `cb` for each handle we see in the data of m.
+      void **data = (void **)m->get_pointer();
+      auto *header = alaska::ObjectHeader::from(data);
+      size_t count = header->object_size() / sizeof(void *);
+      for (size_t i = 0; i < count; i++) {
+        void *p = data[i];
+        if (p == nullptr) continue;
+
+        auto *mp = alaska::Mapping::from_handle_safe(p);
+        if (mp != nullptr) {
+          if (handle_table.valid_handle(mp)) {
+            cb(mp);
+          }
+        }
+      }
+    }
+
    private:
     int next_thread_cache_id = 0;
 

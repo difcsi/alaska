@@ -71,13 +71,13 @@ namespace alaska {
     if (dev_alaska_fd > 0) {
       m_table = (Mapping *)mmap((void *)table_start, m_capacity * HandleTable::slab_size,
           PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED, dev_alaska_fd, 0);
-      alaska::printf("Yukon: allocated handle table to %p with the kernel module!\n", m_table);
+      // alaska::printf("Yukon: allocated handle table to %p with the kernel module!\n", m_table);
     } else {
       // Attempt to allocate the initial memory for the table.
       m_table = (Mapping *)mmap((void *)table_start, m_capacity * HandleTable::slab_size,
           PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
 
-      alaska::printf("Allocated handle table to %p with anon mmap\n", m_table);
+      // alaska::printf("Allocated handle table to %p with anon mmap\n", m_table);
     }
 
 

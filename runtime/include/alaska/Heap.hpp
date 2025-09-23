@@ -97,19 +97,6 @@ namespace alaska {
   // free pages allocated by mmap_alloc
   void mmap_free(void *ptr, size_t bytes);
 
-  // how many bits are needed to manage page table lookups.
-  static constexpr long pt_bits = heap_size_shift_factor - page_shift_factor;
-  static constexpr long pt_levels = 2;  // This is only used for math. The structure is 2 levels.
-  static_assert(pt_levels == 2, "We require 2 levels of page table");
-  static constexpr long bits_per_pt_level = pt_bits / pt_levels;
-  static_assert(
-      bits_per_pt_level * pt_levels == pt_bits, "bits_per_pt_level * pt_levels != pt_bits");
-  static constexpr long pt_level_mask = (1 << bits_per_pt_level) - 1;
-
-  // The HeapPageTable maps the virtual addresses of pages allocated by the PageManager to their
-  // managing HeapPage instances. Internally, it operates very similar to a virtual memory page
-  // table (a radix tree).
-  //
   // TODO: THREAD SAFETY! THREAD SAFETY! THREAD SAFETY!
   class HeapPageTable {
    public:

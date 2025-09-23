@@ -38,6 +38,9 @@
 static void show_string(const char *msg) { write(1, msg, strlen(msg)); }
 
 
+
+
+#define alaska_attr_malloc __attribute__((malloc))
 #define HANDLE_ADDRSPACE __attribute__((address_space(1)))
 
 // Fwd decl stuff
@@ -213,6 +216,11 @@ namespace alaska {
     void *src_data = alaska::Mapping::translate(src);
     void *dst_data = alaska::Mapping::translate(dst);
     memcpy(dst_data, src_data, size);
+  }
+
+  inline void handle_memset(void *dst, int value, size_t size) {
+    void *dst_data = alaska::Mapping::translate(dst);
+    memset(dst_data, value, size);
   }
 
 

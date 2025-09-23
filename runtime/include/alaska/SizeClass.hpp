@@ -16,35 +16,59 @@
 
 namespace alaska {
 
+  static constexpr uint64_t alignment = 16;
 
-  // ...
-  static constexpr long alignment = 16;     // Byte alignment for size classes
-  static constexpr long max_overhead = 20;  // percent internal fragmentation
-  // static constexpr long max_object_size = (1LU << 30);
-  static constexpr long max_object_size = (alaska::page_size / 2);
+  static constexpr uint64_t small_word_size = alignment;
+  static constexpr uint64_t large_word_size = alignment * 4;
 
-  // Maximum number of size classes. (spaced exponentially in 12.5% increments)
-  // static constexpr long num_size_classes = 72;
-  static constexpr long num_size_classes = 59;
-  static constexpr long class_huge = num_size_classes;
 
-  // Returns size of the memory block that will be allcoated if you ask for `sz` bytes.
-  size_t round_up_size(size_t sz);
+  static constexpr uint64_t max_small_size = 1024;  // small objects are < 1024 bytes
+  static constexpr uint64_t max_large_size = alaska::huge_object_thresh;
 
-  int size_to_class(size_t sz);
-  size_t class_to_size(int cls);
+
+  static constexpr uint64_t num_small_classes = max_small_size / small_word_size;
+  static constexpr uint64_t num_large_classes = (max_large_size - max_small_size) / large_word_size;
+
+  static constexpr uint64_t num_size_classes = num_small_classes + num_large_classes;
+
+
+
+  using size_class_t = uint64_t;
+
+  inline size_class_t size_to_class_small(size_t sz) {
+    return (sz + small_word_size - 1) / small_word_size;
+  }
+
+  inline size_class_t size_to_class_large(size_t sz) {
+
+    size_t large_offset = sz - max_small_size;
+    return ((large_offset + large_word_size - 1) / large_word_size) + num_small_classes;
+  }
+
+  inline size_class_t size_to_class(size_t size) {
+    if (size < max_small_size) return size_to_class_small(size);
+    return size_to_class_large(size);
+  }
+
+
+
+  inline size_t class_to_size(size_class_t cls) {
+    if (cls < num_small_classes) {
+      return cls * small_word_size;
+    }
+    return (cls - num_small_classes) * large_word_size + max_small_size;
+  }
+
 
   inline bool should_be_huge_object(size_t size) {
-#ifdef ALASKA_YUKON
-    // For yukon, huge objects are anything over 4KiB
-    if (size >= 4096) {
-      return true;
-    }
-#endif
+    //
+    return size >= max_large_size;
+  }
 
 
-    if (size >= 0xFFFF) return true;
-    return false;
+  inline size_t round_up_size(size_t size) {
+    if (should_be_huge_object(size)) return size;
+    return class_to_size(size_to_class(size));
   }
 
 }  // namespace alaska

@@ -27,9 +27,9 @@ namespace alaska {
    * policies. For example, one page might only allocate objects of a fixed size,
    * and another might allocate objects of varying sizes.
    */
-  static constexpr uint64_t page_shift_factor = 21;
+  static constexpr uint64_t page_shift_factor = 18; // 21; // 16
   static constexpr size_t page_size = 1LU << page_shift_factor;
-  static constexpr size_t huge_object_thresh = 0xFFFF;
+  static constexpr size_t huge_object_thresh = 4096;
 
   // Forward Declaration
   template <typename T>
@@ -44,7 +44,7 @@ namespace alaska {
   };
 
 
-  // A super simple type-level indicator that a size is aligned to the heap's alignment
+  // A super simple type-level indicator tat a size is aligned to the heap's alignment
   class AlignedSize final {
     size_t size;
 
@@ -88,7 +88,7 @@ namespace alaska {
 
     // The size argument is already aligned and rounded up to a multiple of the rounding size.
     // Returns the data allocated, or NULL if it couldn't be.
-    virtual void* alloc(const Mapping& m, AlignedSize size);
+    virtual void* alloc(const Mapping& m, AlignedSize size) alaska_attr_malloc;
     virtual bool release_local(const Mapping& m, void* ptr) = 0;
     virtual bool release_remote(const Mapping& m, void* ptr) { return release_local(m, ptr); }
     virtual bool should_localize_from(uint64_t current_epoch) const { return true; }

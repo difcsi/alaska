@@ -260,7 +260,8 @@ if(ALASKA_YUKON)
   set_target_properties(yukon PROPERTIES LINKER_LANGUAGE C)
   set_target_properties(yukon PROPERTIES SOVERSION ${ALASKA_VERSION})
   target_link_libraries(yukon PRIVATE dl pthread ${LIBUNWIND_LIBRARIES})
-  target_compile_options(yukon PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-nostdlib++ -nostdinc++>)
+  # target_compile_options(yukon PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-nostdlib++ -nostdinc++>)
+  target_compile_options(yukon PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-nostdlib -nostdinc++>)
 
   # if(CMAKE_BUILD_TYPE MATCHES "Release")
   #   add_custom_command(TARGET yukon POST_BUILD
@@ -282,7 +283,8 @@ if(ALASKA_YUKON)
   set_target_properties(yukon_stub PROPERTIES LINKER_LANGUAGE C)
   set_target_properties(yukon_stub PROPERTIES SOVERSION ${ALASKA_VERSION})
   target_link_libraries(yukon_stub PRIVATE dl pthread ${LIBUNWIND_LIBRARIES})
-  target_compile_options(yukon_stub PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-nostdlib++ -nostdinc++>)
+  # target_compile_options(yukon_stub PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-nostdlib++ -nostdinc++>)
+  target_compile_options(yukon_stub PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-nostdlib -nostdinc++>)
   target_compile_options(yukon_stub PRIVATE -Wl,-Bsymbolic-functions)
 
 

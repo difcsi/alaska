@@ -10,6 +10,7 @@
  * and modify it as specified in the file "LICENSE".
  */
 
+#include <alaska/Runtime.hpp>
 #include <alaska/SizedPage.hpp>
 #include <alaska/SizeClass.hpp>
 #include <alaska/Logger.hpp>
@@ -43,7 +44,7 @@ namespace alaska {
   void *
   SizedPage::alloc_slow(const alaska::Mapping &m, alaska::AlignedSize size) {
 #if 1
-    long extended_count = extend(64);
+    long extended_count = extend(256);
     // 1. If we managed to extend the list, return one of the blocks from it.
     if (extended_count > 0) {
       // Fall back into the alloc function to do the heavy lifting of actually allocating
@@ -51,16 +52,17 @@ namespace alaska {
       return alloc(m, size);
     }
 #else
-    // 1. attempt to extend the free list.
-    size_t real_size = this->object_size + sizeof(objectheader);
-    if ((uintptr_t)bump_next + real_size <= (uintptr_t)end()) {
-      // printf("sizedpage<%lu>.alloc_slow: extending free list by one object of size %zu\n",
-      // object_size, real_size);
-      sizepageblock *p = (sizepageblock *)bump_next;
-      p->header.set_mapping(&m);
-      p->header.set_object_size(size);
-      bump_next = (void *)((uintptr_t)bump_next + real_size);
-      return p;
+    // 1. Attempt to bump allocate
+    if (bump_next < objects_end) {
+      auto *p = (SizePageBlock *)bump_next;
+      bump_next = (void *)((uintptr_t)bump_next + object_size + sizeof(ObjectHeader));
+
+      auto &header = p->header;
+      header.set_mapping(&m);
+      header.set_object_size(size);
+      header.placement_badness = 0;
+
+      return p->header.data();
     }
 #endif
 
@@ -81,9 +83,10 @@ namespace alaska {
       return alloc_slow(m, size);
     }
 
-
-    p->header.set_mapping(&m);
-    p->header.set_object_size(size);
+    auto &header = p->header;
+    header.set_mapping(&m);
+    header.set_object_size(size);
+    header.placement_badness = 0;
 
     return p->header.data();
   }
@@ -125,11 +128,13 @@ namespace alaska {
     // the number of objects in this array
     this->objects_end = (void *)((uintptr_t)objects + (capacity * real_size));
 
-    // alaska::printf("SizedPage<%lu> created with %zu objects of size %zu  (%p)\n", this->object_size, this->capacity, real_size, this);
-    // alaska::printf("   %016lx to %016lx\n", memory_start(), this->memory_end());
-    // alaska::printf("   %016lx to %016lx\n", (uintptr_t)this->objects_start, (uintptr_t)this->objects_end);
+    // alaska::printf("SizedPage<%lu> created with %zu objects of size %zu  (%p)\n",
+    // this->object_size, this->capacity, real_size, this); alaska::printf("   %016lx to %016lx\n",
+    // memory_start(), this->memory_end()); alaska::printf("   %016lx to %016lx\n",
+    // (uintptr_t)this->objects_start, (uintptr_t)this->objects_end);
 
-    // alaska::printf("  header: %016lx, owned by %016lx, this: %p\n", (uintptr_t)this->header(), this->header()->owner, this);
+    // alaska::printf("  header: %016lx, owned by %016lx, this: %p\n", (uintptr_t)this->header(),
+    // this->header()->owner, this);
 
 
     freelist = ShardedFreeList<SizePageBlock>();
@@ -160,6 +165,51 @@ namespace alaska {
   //
   // This function then returns how many objects it moved
   long SizedPage::compact(void) {
+    // --------------------------------------------------------------------------------- //
+    // TEMP :: NOT LOCALIZING. HACKING THIS FUNCTION FOR ANALYSIS
+    /*
+    size_t real_object_size = this->object_size + sizeof(ObjectHeader);
+    auto &rt = alaska::Runtime::get();
+    if (real_object_size > 256) return 0;
+
+
+
+    for (void *p = (void *)this->memory_start(); p < this->bump_next;
+         p = (void *)((uintptr_t)p + real_object_size)) {
+
+
+      auto obj = (ObjectHeader *)p;
+      auto m = obj->get_mapping();
+      if (m == nullptr) continue;
+
+      size_t num_pointees = 0;
+      rt.walk_handles(m, [&](alaska::Mapping *pointee) {
+        num_pointees++;
+      });
+      if (num_pointees == 0) continue;
+
+
+      alaska::printf("YUKON_EDGES %lu %d [", m->handle_id(), obj->marked);
+
+      void *ptr = obj->data();
+
+      rt.walk_handles(m, [&](alaska::Mapping *pointee) {
+        alaska::printf(" %lu", pointee->handle_id());
+      });
+
+      alaska::printf("]\n");
+    }
+
+    // alaska::printf("SizedPage%lu analysis: out_pointers:%zu, extra_page:%zu, total:%zu\n",
+    //     this->object_size, out_pointers, extra_page_pointers, total_pointers);
+    // --------------------------------------------------------------------------------- //
+
+    */
+    return 0;
+
+
+
+
     // The return value - how many objects this function has moved.
     long moved_objects = 0;
 
@@ -170,6 +220,9 @@ namespace alaska {
 
 
     freelist.reset();
+
+
+
 
     // This algorithm is a two-finger walk. We have two pointers, one
     // pointing to the left (destination) and one pointing to the right

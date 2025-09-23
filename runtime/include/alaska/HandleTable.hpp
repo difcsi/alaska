@@ -42,11 +42,11 @@ namespace alaska {
   struct HandleSlab final : public alaska::OwnedBy<alaska::ThreadCache>,
                             public alaska::PersistentAllocation {
    private:
+    alaska::ShardedFreeList<DefaultFreeListBlock> free_list;  // A free list for tracking releases
     alaska::Mapping *start;
     alaska::Mapping *end;
     alaska::Mapping *next_free;  // Bump allocator.
 
-    alaska::ShardedFreeList<DefaultFreeListBlock> free_list;  // A free list for tracking releases
 
    public:
     slabidx_t idx;                           // Which slab is this?
@@ -80,8 +80,10 @@ namespace alaska {
       if (contains((alaska::Mapping *)ptr)) {
         return false;
       }
-      return true;
+      return !m->is_free();
     }
+
+
 
     // Implmented in HandleTable.cpp, this function cannot be inlined and is meant
     // to be used when the local free list is empty.
@@ -89,6 +91,8 @@ namespace alaska {
 
     size_t num_free(void) const { return free_list.num_free() + (end - next_free); }
     size_t capacity(void) const { return end - start; }
+
+    inline auto &get_freelist(void) { return free_list; }
   };
 
 
