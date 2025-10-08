@@ -436,7 +436,7 @@ class HTLBTraceRunner : public TraceRunner {
 
     // if (frag_file != NULL) {
     //   // dump fragmentation info!
-    //   auto &table = rt.heap.pt.get_table();
+    //   auto &table = rt.heap.get_page_table();
     //   int id = 0;
     //   for (auto *heap : table) {
     //     fprintf(frag_file, "%zu,%s-%d,%f\n", cycle, heap->name, id, heap->fragmentation());
@@ -636,4 +636,3 @@ int main(int argc, char **argv) {
 
   return 0;
 }
-

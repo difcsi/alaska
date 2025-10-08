@@ -94,23 +94,10 @@ namespace alaska {
     alloc_count--;
   }
 
-
-
-
-  ////////////////////////////////////
-
-  HeapPageTable::HeapPageTable(void *heap_start)
-      : heap_start(heap_start) {}
-
-  HeapPageTable::~HeapPageTable() {}
-
-
-
-
   ////////////////////////////////////
   Heap::Heap(alaska::Configuration &config)
       : pm()
-      , pt(pm.get_start()) {
+      , heap_start(pm.get_start()) {
     log_debug("Heap: Initialized heap");
   }
 
@@ -214,7 +201,7 @@ namespace alaska {
   void Heap::dump_json(FILE *stream) {
     fprintf(stream, "{\"pages\": [");
     for (off_t i = 0; true; i++) {
-      auto page = pt.get(pm.get_page(i));
+      auto page = get_page(pm.get_page(i));
       if (page == NULL) break;
       if (i != 0) fprintf(stream, ",");
       page->dump_json(stream);

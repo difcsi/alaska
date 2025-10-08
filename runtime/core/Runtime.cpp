@@ -196,7 +196,7 @@ namespace alaska {
       uint64_t out_pointers = 0;
     };
 
-    SizeclassStats size_class_histogram[alaska::num_size_classes] = {0};
+    SizeclassStats size_class_histogram[alaska::num_size_classes] = {};
 
     handle_table.for_each_handle([&](alaska::Mapping *m) {
       void *p = m->get_pointer();

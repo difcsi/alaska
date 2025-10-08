@@ -42,8 +42,8 @@ bool localize_structure(uint64_t ptr);
 int main() {
   long start, end;
   printf("localized,walk_time\n");
-  node_t *n = make_tree(18);
   for (int trial = 0; trial < 4000; trial++) {
+    node_t *n = make_tree(21);
     bool localized = false;
 
 
@@ -57,8 +57,8 @@ int main() {
     uint64_t walk_time = end - start;
     printf("%d,%f\n", localized, walk_time / 200.0);
     // printf("Node count: %d\n", c);
+    free_tree(n);
   }
-  free_tree(n);
 
   return EXIT_SUCCESS;
 }

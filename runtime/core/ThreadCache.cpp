@@ -236,7 +236,7 @@ namespace alaska {
     // auto *header = alaska::ObjectHeader::from(ptr);
 
     auto *handle_slab = this->runtime.handle_table.get_slab(m);
-    auto *heap_page = this->runtime.heap.pt.get_unaligned(ptr);
+    auto *heap_page = this->runtime.heap.get_page_unaligned(ptr);
     heap_page->release_local(*m, ptr);
     handle_slab->release_local(m);
 
@@ -374,7 +374,7 @@ namespace alaska {
 
   LTO_INLINE void ThreadCache::free(void *ptr) {
     if (this->runtime.heap.contains(ptr)) {
-      auto *heap_page = this->runtime.heap.pt.get_unaligned(ptr);
+      auto *heap_page = this->runtime.heap.get_page_unaligned(ptr);
 
 
 #ifdef STUB_ALLOCATES_HANDLES
@@ -470,7 +470,7 @@ namespace alaska {
     void *ptr = m->get_pointer();
     if (ptr == nullptr || m->is_free() || m->is_pinned()) return 0;
 
-    auto *source_page = this->runtime.heap.pt.get_unaligned(ptr);
+    auto *source_page = this->runtime.heap.get_page_unaligned(ptr);
     auto header = alaska::ObjectHeader::from(ptr);
 
 

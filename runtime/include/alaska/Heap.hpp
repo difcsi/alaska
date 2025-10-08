@@ -97,71 +97,9 @@ namespace alaska {
   // free pages allocated by mmap_alloc
   void mmap_free(void *ptr, size_t bytes);
 
-  // TODO: THREAD SAFETY! THREAD SAFETY! THREAD SAFETY!
-  class HeapPageTable {
-   public:
-    HeapPageTable(void *heap_start);
-    ~HeapPageTable(void);
-    alaska::HeapPage *get(void *page);            // Get the HeapPage given an aligned address
-    alaska::HeapPage *get_unaligned(void *page);  // Get the HeapPage given an unaligned address
-    void set(void *page, alaska::HeapPage *heap_page);
-
-
-    const ck::vec<alaska::HeapPage *> &get_table(void) const { return table; }
-
-   private:
-    // A pointer to the start of the heap. This is used to compute the page number in the heap.
-    void *heap_start;
-    alaska::HeapPage **walk(void *page, bool ensure = false);
-
-    ck::mutex lock;  // TODO: reader/writer lock!
-    ck::vec<alaska::HeapPage *> table;
-  };
-
-
-
-  inline alaska::HeapPage *HeapPageTable::get(void *page) {
-    auto *p = walk(page, false);
-    if (p == nullptr) return nullptr;
-    return *p;
-  }
-
-
-  inline alaska::HeapPage *HeapPageTable::get_unaligned(void *addr) {
-    HeapPageHeader *h = (HeapPageHeader *)((uintptr_t)addr & ~(alaska::page_size - 1));
-    return h->owner;
-  }
-
-  inline void HeapPageTable::set(void *page, alaska::HeapPage *hp) { *walk(page, true) = hp; }
-
-
-  inline alaska::HeapPage **HeapPageTable::walk(void *vpage, bool ensure) {
-    // ck::scoped_lock lk(this->lock);  // TODO: reader/writer lock
-
-    // `page` here means the offset from the start of the heap.
-    uintptr_t page_off = (uintptr_t)vpage - (uintptr_t)heap_start;
-    // Extrac the page number (just an index into the page table structure)
-    off_t page_number = page_off >> alaska::page_shift_factor;
-    // printf("vpage: %p, heap_start: %p, page_off: %lu, page_number: %lu\n", vpage, heap_start,
-    //     page_off, page_number);
-
-
-    if (page_number >= table.size()) {
-      if (!ensure) {
-        return nullptr;
-      }
-      // If the page number is greater than the size of the table, we need to grow the table.
-      table.resize(page_number + 1);
-    }
-
-    return &table[page_number];
-  }
-
-
   class Heap final {
    public:
     PageManager pm;
-    HeapPageTable pt;
 
 
     Heap(alaska::Configuration &config);
@@ -196,6 +134,9 @@ namespace alaska {
 
     inline bool contains(void *ptr) { return this->pm.contains(ptr); }
 
+    alaska::HeapPage *get_page(void *page);
+    alaska::HeapPage *get_page_unaligned(void *addr);
+    const ck::vec<alaska::HeapPage *> &get_page_table(void) const { return page_table; }
 
     template <typename Fn>
     void for_each_page(Fn fn) {
@@ -217,12 +158,47 @@ namespace alaska {
     T *find_or_alloc_page(
         alaska::Magazine<T> &mag, ThreadCache *owner, size_t avail_requirement, Fn &&init);
 
+    void register_page(void *page, alaska::HeapPage *hp);
+    alaska::HeapPage **walk_page_table(void *page, bool ensure = false);
+
     // This lock is taken whenever global state in the heap is changed by a thread cache.
     ck::mutex lock;
+    void *heap_start;
+    ck::vec<alaska::HeapPage *> page_table;
     alaska::Magazine<alaska::SizedPage> size_classes[alaska::num_size_classes];
     alaska::Magazine<alaska::LocalityPage> locality_pages;
   };
 
+
+  inline alaska::HeapPage *Heap::get_page(void *page) {
+    auto *p = walk_page_table(page, false);
+    if (p == nullptr) return nullptr;
+    return *p;
+  }
+
+  inline alaska::HeapPage *Heap::get_page_unaligned(void *addr) {
+    HeapPageHeader *h = (HeapPageHeader *)((uintptr_t)addr & ~(alaska::page_size - 1));
+    return h->owner;
+  }
+
+  inline void Heap::register_page(void *page, alaska::HeapPage *hp) {
+    auto **entry = walk_page_table(page, true);
+    *entry = hp;
+  }
+
+  inline alaska::HeapPage **Heap::walk_page_table(void *vpage, bool ensure) {
+    uintptr_t page_off = (uintptr_t)vpage - (uintptr_t)heap_start;
+    off_t page_number = page_off >> alaska::page_shift_factor;
+
+    if (page_number >= page_table.size()) {
+      if (!ensure) {
+        return nullptr;
+      }
+      page_table.resize(page_number + 1);
+    }
+
+    return &page_table[page_number];
+  }
 
 
   template <typename T, typename Fn>
@@ -261,7 +237,7 @@ namespace alaska {
     void *memory = this->pm.alloc_page();
     T *p = new T(memory);
     // Map it in the page table for fast lookup
-    pt.set(memory, p);
+    register_page(memory, p);
     mag.add(p);
     p->set_owner(owner);
 

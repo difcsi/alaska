@@ -158,7 +158,6 @@ namespace alaska {
     sl->set_owner(new_owner);
 
     last_mapping = sl->get_end() + 1;
-    alaska::printf("Updated last_mapping to %p\n", last_mapping);
 
     // printf("Allocated new slab %p at idx %d (%zu free)\n", sl, idx, sl->num_free());
 
