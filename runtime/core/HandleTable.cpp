@@ -13,6 +13,8 @@
 #include "alaska/utils.h"
 #endif
 
+#include <execinfo.h>
+
 
 #include <alaska/HandleTable.hpp>
 #include <alaska/ThreadCache.hpp>
@@ -48,6 +50,7 @@ static int dev_alaska_fd = -1;
 
 namespace alaska {
 
+  alaska::Mapping *last_mapping;
 
   int HandleTable::get_ht_fd(void) { return dev_alaska_fd; }
 
@@ -69,12 +72,12 @@ namespace alaska {
     }
 
     if (dev_alaska_fd > 0) {
-      m_table = (Mapping *)mmap((void *)table_start, m_capacity * HandleTable::slab_size,
+      m_table = (Mapping *)mmap((void *)table_start, m_capacity * HandleTable::map_granularity,
           PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED, dev_alaska_fd, 0);
       // alaska::printf("Yukon: allocated handle table to %p with the kernel module!\n", m_table);
     } else {
       // Attempt to allocate the initial memory for the table.
-      m_table = (Mapping *)mmap((void *)table_start, m_capacity * HandleTable::slab_size,
+      m_table = (Mapping *)mmap((void *)table_start, m_capacity * HandleTable::map_granularity,
           PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
 
       // alaska::printf("Allocated handle table to %p with anon mmap\n", m_table);
@@ -109,12 +112,20 @@ namespace alaska {
 
   void HandleTable::grow() {
     auto new_cap = m_capacity * HandleTable::growth_factor;
+    alaska::printf("Growing handle table from %lu to %lu\n", m_capacity, new_cap);
     // Scale the capacity of the handle table
     log_debug("Growing handle table. New capacity: %lu, old: %lu", new_cap, m_capacity);
 
+
+
+    void *array[50];
+    size_t size = backtrace(array, 50);
+    backtrace_symbols_fd(array, size, STDOUT_FILENO);
+
+
     // Grow the mmap region
-    m_table = (alaska::Mapping *)mremap(
-        m_table, m_capacity * HandleTable::slab_size, new_cap * HandleTable::slab_size, 0, m_table);
+    m_table = (alaska::Mapping *)mremap(m_table, m_capacity * HandleTable::map_granularity,
+        new_cap * HandleTable::map_granularity, 0, m_table);
 
     m_capacity = new_cap;
 
@@ -131,7 +142,10 @@ namespace alaska {
     slabidx_t idx = m_slabs.size();
     log_trace("Allocating a new slab at idx %d", idx);
 
-    if (idx >= this->capacity()) {
+    // m_capacity is measured in map_granularity units
+    // compute slab_capacity
+    size_t capacity_in_slabs = (m_capacity * HandleTable::map_granularity) / HandleTable::slab_size;
+    if (idx >= capacity_in_slabs) {
       log_debug("New slab requires more capacity in the table");
       grow();
       ALASKA_ASSERT(idx < this->capacity(), "failed to grow handle table");
@@ -140,19 +154,16 @@ namespace alaska {
     // Allocate a new slab using the system allocator.
     // auto *sl = alaska::make_object<HandleSlab>(*this, idx);
     auto *sl = new HandleSlab(*this, idx);
-    if (do_mlock) sl->mlock();
+    // if (do_mlock) sl->mlock();
     sl->set_owner(new_owner);
+
+    last_mapping = sl->get_end() + 1;
+    alaska::printf("Updated last_mapping to %p\n", last_mapping);
+
+    // printf("Allocated new slab %p at idx %d (%zu free)\n", sl, idx, sl->num_free());
 
     // Add the slab to the list of slabs and return it
     m_slabs.push(sl);
-
-    // // Skip slab 0 for various reasons. We really need to figure out a better
-    // // way to handle "invalid" handle IDs such as handle 0.
-    // if (idx == 0) {
-    //   printf("Skipping slab 0\n");
-    //   return fresh_slab(new_owner);
-    // }
-
     return sl;
   }
 
@@ -161,19 +172,24 @@ namespace alaska {
     {
       ck::scoped_lock lk(this->lock);
 
-
-      // printf("new slab %p\n", new_owner);
-      // dump(stderr);
-
+      HandleSlab *found_slab = nullptr;
       // TODO: PERFORMANCE BAD HERE. POP FROM A LIST!
+      int tries = 0;
       for (auto *slab : m_slabs) {
-        log_trace("Attempting to allocate from slab %p (idx %lu)", slab, slab->idx);
-        // if (slab->idx == 0) continue;
+        tries++;
         if ((slab->get_owner() == nullptr || slab->get_owner() == new_owner) &&
-            slab->num_free() > 0) {
+            slab->has_any_free()) {
           slab->set_owner(new_owner);
-          return slab;
+          found_slab = slab;
+          break;
         }
+      }
+
+      if (found_slab != nullptr) {
+        // printf("Checked %d slabs to find a free one\n", tries);
+        return found_slab;
+      } else {
+        // printf("Checked %d slabs, and didn't find one\n", tries);
       }
     }
 
@@ -282,10 +298,11 @@ namespace alaska {
       , idx(idx) {
     void *memory = table.get_slab_start(idx);
     // assert that memory is aligned to page size
-    if ((((uintptr_t)memory % alaska::page_size) != 0)) {
+    if ((((uintptr_t)memory % HandleTable::slab_size) != 0)) {
       log_fatal(
           "Handle slab memory is not aligned to page size. "
-          "This is a bug in the Alaska runtime. Please report this bug to the Alaska developers.");
+          "This is a bug in the Alaska runtime. Please report this bug to the Alaska "
+          "developers.");
       abort();
     }
 
@@ -295,6 +312,7 @@ namespace alaska {
 
     // Finally, set the end pointer to the end of the slab
     this->end = (alaska::Mapping *)memory + HandleTable::slab_capacity;
+    // alaska::printf("Allocated new handle slab %p at idx %d (%p - %p)\n", this, idx, start, end);
   }
 
 
@@ -314,8 +332,8 @@ namespace alaska {
 
 
   void HandleSlab::mlock(void) {
-    auto start = table.get_slab_start(idx);
-    ::mlock((void *)start, sizeof(alaska::Mapping) * HandleTable::slab_capacity);
+    // auto start = table.get_slab_start(idx);
+    // ::mlock((void *)start, sizeof(alaska::Mapping) * HandleTable::slab_capacity);
   }
 
 
@@ -328,5 +346,26 @@ namespace alaska {
     log_info("owner: %4d | ", owner ? owner->get_id() : -1);
     log_info("free %4zu | ", num_free());
     log_info("\n");
+  }
+
+
+
+  bool check_mapping(void *ptr, alaska::Mapping *&out_m, void *&out_data) {
+
+    alaska::Mapping *m;
+    void *data;
+    
+    m = alaska::Mapping::from_handle_safe(ptr);
+    if (m == nullptr || m > last_mapping) return false;
+    // if m is not aligned to 8 (any of the low 3 bits are set to 1), skip it.
+    if (not IS_WORD_ALIGNED(m)) return false;
+    // If it is free, skip it.
+    if (m->is_free()) return false;
+    data = m->get_pointer();
+    // if (data == nullptr) return false;
+
+    out_m = m;
+    out_data = data;
+    return true;
   }
 }  // namespace alaska

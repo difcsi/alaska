@@ -48,6 +48,8 @@ static void *_halloc(size_t sz, int zero) {
   // This seems right...
   if (result == NULL) errno = ENOMEM;
 
+
+
   if (zero) {
     // handle translate.
     alaska::handle_memset(result, 0, sz);
@@ -171,8 +173,10 @@ static size_t get_page_count_for_structure(void *ptr, size_t max_depth) {
 
 extern "C" bool localize_structure(void *ptr) {
   auto &rt = alaska::Runtime::get();
+
+
   rt.with_barrier([&]() {
-    printf("yerp\n");
+    alaska::Runtime::HeapReport grade = rt.grade_heap();
   });
 
   return false;

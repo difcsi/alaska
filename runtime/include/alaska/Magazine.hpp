@@ -47,7 +47,7 @@ namespace alaska {
 
 
     template <typename Fn>
-    void foreach (Fn f) {
+    void for_each(Fn f) {
       T *entry = nullptr;
       list_for_each_entry(entry, &this->list, mag_list) {
         if (!f(entry)) break;

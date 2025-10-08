@@ -29,7 +29,6 @@ namespace alaska {
    public:
     LocalityPage(void *backing_memory)
         : alaska::HeapPage(backing_memory) {
-      snprintf(this->name, sizeof(this->name), "Locality");
       bump_next = (void *)this->memory_start();
     }
 

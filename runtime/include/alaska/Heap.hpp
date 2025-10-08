@@ -129,16 +129,7 @@ namespace alaska {
 
   inline alaska::HeapPage *HeapPageTable::get_unaligned(void *addr) {
     HeapPageHeader *h = (HeapPageHeader *)((uintptr_t)addr & ~(alaska::page_size - 1));
-    // alaska::printf("get_unaligned: addr=%p, header=%p, owner=%p\n", addr, h, h->owner);
     return h->owner;
-
-    // uintptr_t heap_offset = (uintptr_t)addr - (uintptr_t)heap_start;
-    // uintptr_t page_ind = heap_offset / alaska::page_size;
-    // void *page = (void *)((uintptr_t)heap_start + page_ind * alaska::page_size);
-
-    // auto *p = walk(page, false);
-    // if (p == nullptr) return nullptr;
-    // return *p;
   }
 
   inline void HeapPageTable::set(void *page, alaska::HeapPage *hp) { *walk(page, true) = hp; }
@@ -205,6 +196,22 @@ namespace alaska {
 
     inline bool contains(void *ptr) { return this->pm.contains(ptr); }
 
+
+    template <typename Fn>
+    void for_each_page(Fn fn) {
+      for (size_t i = 0; i < alaska::num_size_classes; i++) {
+        size_classes[i].for_each([=](auto *p) {
+          fn((alaska::HeapPage *)p);
+          return true;
+        });
+      }
+      locality_pages.for_each([=](auto *p) {
+        fn((alaska::HeapPage *)p);
+        return true;
+      });
+    }
+
+
    private:
     template <typename T, typename Fn>
     T *find_or_alloc_page(
@@ -223,7 +230,8 @@ namespace alaska {
       alaska::Magazine<T> &mag, ThreadCache *owner, size_t avail_requirement, Fn &&init_fn) {
     if (mag.size() != 0) {
       T *best = nullptr;
-      mag.foreach ([&](T *p) {
+      // alaska::printf("Searching for page with at least %zu available\n", avail_requirement);
+      mag.for_each([&](T *p) {
         size_t avail = p->available();
         if ((size_t)avail >= (size_t)avail_requirement and p->get_owner() == nullptr) {
           // best = p;

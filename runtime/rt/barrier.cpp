@@ -246,7 +246,7 @@ void alaska::barrier::get_pinned_handles(bool pin) {
     unw_get_reg(&cursor, UNW_REG_IP, &pc);
     unw_get_reg(&cursor, UNW_REG_SP, &sp);
     char** bt = backtrace_symbols((void**)&pc, 1);
-    printf("pc:%12lx sp:%lx ", pc, sp);
+    // printf("pc:%12lx sp:%lx ", pc, sp);
 
     ::free(bt);
     auto it = pin_map.find(pc);
@@ -263,7 +263,7 @@ void alaska::barrier::get_pinned_handles(bool pin) {
         void *p = localSet[i];
         if (rt.is_valid_handle(p)) {
           auto *m = alaska::Mapping::from_handle(p);
-          printf(" (%zx)", m->handle_id());
+          // printf(" (%zx)", m->handle_id());
           m->set_pinned(pin);
         } else {
           printf(" !!!");
@@ -283,15 +283,15 @@ void alaska::barrier::get_pinned_handles(bool pin) {
         }
       }
 
-      if (closest_dist < 0xffff) {
-        printf(" closest = %zx (+-%zu)", closest, closest_dist);
-      } else {
-        printf(" tfa");
-      }
+      // if (closest_dist < 0xffff) {
+      //   printf(" closest = %zx (+-%zu)", closest, closest_dist);
+      // } else {
+      //   printf(" tfa");
+      // }
     }
-    printf("\n");
+    // printf("\n");
   }
-  printf("\n");
+  // printf("\n");
   dump_lock.unlock();
 }
 

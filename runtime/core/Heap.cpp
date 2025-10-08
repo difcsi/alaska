@@ -167,7 +167,7 @@ namespace alaska {
       i += 1;
 
       long page_index = 0;
-      mag.foreach ([&](SizedPage *p) {
+      mag.for_each([&](SizedPage *p) {
         size_t committed = p->committed();
         total_committed += committed;
         fprintf(stream, "  - %p avail:%zu  commit:%zu  frag:%f\n", p, p->available(), committed,
@@ -178,7 +178,7 @@ namespace alaska {
 
 
     fprintf(stream, "LocalityPages\n");
-    locality_pages.foreach ([&](LocalityPage *p) {
+    locality_pages.for_each([&](LocalityPage *p) {
       size_t committed = p->committed();
       total_committed += committed;
       fprintf(stream, "  - %p avail:%zu  commit:%zu  frag:%f\n", p, p->available(), committed,
@@ -205,9 +205,9 @@ namespace alaska {
       return true;
     };
 
-    locality_pages.foreach (dump_page);
+    locality_pages.for_each(dump_page);
     // for (auto &mag : size_classes)
-    //   mag.foreach (dump_page);
+    //   mag.for_each (dump_page);
   }
 
 
@@ -239,7 +239,7 @@ namespace alaska {
     size_t bytes_saved = 0;
     long c = 0;
     for (auto &mag : size_classes) {
-      mag.foreach ([&](SizedPage *sp) {
+      mag.for_each([&](SizedPage *sp) {
         long z = 0, t = 0;
         if (true || sp->fragmentation() > 0.15) {
           zero_bytes += z;
@@ -260,7 +260,7 @@ namespace alaska {
     return 0;
     long c = 0;
     alaska::printf("Locality pages: %lu\n", locality_pages.size());
-    locality_pages.foreach ([&](LocalityPage *lp) {
+    locality_pages.for_each([&](LocalityPage *lp) {
       alaska::printf(" - Locality page %p  commit:%zu, avail:%zu, frag:%.2f%%\n", lp,
           lp->committed(), lp->available(), lp->fragmentation() * 100);
       return true;

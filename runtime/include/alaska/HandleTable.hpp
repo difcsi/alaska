@@ -36,6 +36,7 @@ namespace alaska {
   };
 
 
+
   // A handle slab is a slice of the handle table that is used to allocate
   // mappings. It is a fixed size, and no two threads will allocate from the
   // same slab at the same time.
@@ -70,6 +71,17 @@ namespace alaska {
     void mlock(void);                         // `mlock` the memory behind this slab
 
 
+    inline alaska::Mapping *get_end(void) const { return end; }
+
+
+    template <typename Fn>
+    inline void for_each(Fn fn) {
+      for (alaska::Mapping *m = start; m < end; m++) {
+        if (not m->is_free()) fn(m);
+      }
+    }
+
+
     bool contains(alaska::Mapping *m) const {
       // Check if the mapping is within the bounds of this slab
       return (m >= start && m < end);
@@ -91,6 +103,7 @@ namespace alaska {
 
     size_t num_free(void) const { return free_list.num_free() + (end - next_free); }
     size_t capacity(void) const { return end - start; }
+    bool has_any_free(void) const { return free_list.has_any_free() || (next_free < end); }
 
     inline auto &get_freelist(void) { return free_list; }
   };
@@ -119,10 +132,12 @@ namespace alaska {
   // In the actual runtime implementation, there will be a global instance of this class.
   class HandleTable final {
    public:
-    static constexpr size_t slab_size = 1 << 21;  // 2MB
+    static constexpr size_t slab_size = 1 << 18;  // 21
     static constexpr size_t slab_capacity = slab_size / sizeof(alaska::Mapping);
-    static constexpr size_t initial_capacity = 512;
+    static constexpr size_t initial_capacity = 64;
     static constexpr size_t handle_count = (1UL << (63 - ALASKA_SIZE_BITS)) - 1;
+
+    static constexpr size_t map_granularity = 1UL << 21;  // 2MB is the minimum mapping size.
 
     static constexpr size_t max_slab_count = handle_count / slab_capacity;
 
@@ -146,7 +161,7 @@ namespace alaska {
 
 
     inline alaska::HandleSlab *get_slab(alaska::Mapping *m) {
-      alaska::HandleSlab *slab = *(alaska::HandleSlab **)((uintptr_t)m & ~(alaska::page_size - 1));
+      alaska::HandleSlab *slab = *(alaska::HandleSlab **)((uintptr_t)m & ~(slab_size - 1));
       return slab;
     }
 
@@ -169,6 +184,14 @@ namespace alaska {
     const ck::vec<alaska::HandleSlab *> &get_slabs(void) const { return m_slabs; }
 
     static int get_ht_fd(void);  // only valid on riscv under yukon
+
+
+    // For each handle.
+    template <typename Fn>
+    inline void for_each_handle(Fn fn) {
+      for (auto *slab : m_slabs)
+        slab->for_each(fn);
+    }
 
    protected:
     friend HandleSlab;
@@ -233,4 +256,14 @@ namespace alaska {
 
   inline void HandleSlab::release_remote(Mapping *m) { free_list.free_remote((void *)m); }
   inline void HandleSlab::release_local(Mapping *m) { free_list.free_local((void *)m); }
+
+
+
+  // The last valid mapping in the handle table currently. This is set by the HandleTable whenever
+  // it grows (since we can only have one of them anyways)
+  extern alaska::Mapping *last_mapping;
+
+
+  bool check_mapping(void *ptr, alaska::Mapping *&out_m, void *&out_data);
+
 }  // namespace alaska

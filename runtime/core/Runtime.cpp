@@ -50,7 +50,7 @@ namespace alaska {
 
   Runtime::~Runtime() {
     log_debug("Destroying Alaska Runtime");
-    // Unset the global instance so another runtime can be allocated
+    // Unset the global instance so anoruntime can be allocated
     atomic_set(g_runtime, nullptr);
   }
 
@@ -182,6 +182,133 @@ namespace alaska {
 
 
   bool is_initialized(void) { return atomic_get(runtime_initialized); }
+
+
+  Runtime::HeapReport Runtime::grade_heap(void) {
+    auto start_time = alaska_timestamp();
+    HeapReport report{0};
+
+
+
+    struct SizeclassStats {
+      size_t count = 0;
+      uint64_t in_pointers = 0;
+      uint64_t out_pointers = 0;
+    };
+
+    SizeclassStats size_class_histogram[alaska::num_size_classes] = {0};
+
+    handle_table.for_each_handle([&](alaska::Mapping *m) {
+      void *p = m->get_pointer();
+      if (p == nullptr) return;
+      auto header = alaska::ObjectHeader::from(p);
+      if (!header) return;
+
+      size_t obj_size = header->object_size();
+
+      size_t sc = alaska::size_to_class(obj_size);
+      if (sc >= alaska::num_size_classes) {
+        return;  // continue, ignore invalid size classes
+      }
+      size_class_histogram[sc].count++;
+
+      report.total_handles++;
+      report.object_bytes += obj_size;
+
+      uintptr_t object_page = (uintptr_t)p >> 12;
+      uintptr_t handle_page = (uintptr_t)m >> 12;
+
+      // alaska::printf("Walking object %p (size=%zu, data=%p)\n", m, obj_size, header->data());
+      // Walk the mapping to count in/out pointers.
+      header->walk([&](alaska::Mapping *om, alaska::ObjectHeader *oheader) {
+        void *p = oheader->data();
+        uintptr_t opage = (uintptr_t)p >> 12;
+        if (opage != object_page) {
+          size_class_histogram[sc].out_pointers++;
+          report.out_pointers++;
+        } else {
+          size_class_histogram[sc].in_pointers++;
+          report.in_pointers++;
+        }
+
+        uintptr_t hpage = (uintptr_t)om >> 12;
+        if (hpage != handle_page) {
+          report.out_handles++;
+        } else {
+          report.in_handles++;
+        }
+      });
+    });
+
+
+    // Walk over every heap page to count committed bytes.
+    heap.for_each_page([&](alaska::HeapPage *page) {
+      report.committed_bytes += page->committed_bytes();
+    });
+
+
+    auto end_time = alaska_timestamp();
+
+    // TODO: remove this dumping when done debugging.
+    alaska::printf("-- HEAP GRADE REPORT --\n");
+    alaska::printf("Graded heap in %.3f ms\n", (end_time - start_time) / 1e6f);
+    alaska::printf("Total committed bytes:      %zu\n", report.committed_bytes);
+    alaska::printf("Total handles:              %zu\n", report.total_handles);
+    alaska::printf(
+        "Handle table bytes:         %zu\n", report.total_handles * sizeof(alaska::Mapping));
+    alaska::printf("Total object bytes:         %zu\n", report.object_bytes);
+    alaska::printf("Average Size:               %.1f\n",
+        report.total_handles == 0 ? 0.0
+                                  : (double)report.object_bytes / (double)report.total_handles);
+    alaska::printf("Heap Utilization:           %.2f%%\n",
+        report.committed_bytes == 0
+            ? 0.0
+            : 100.0 * (double)report.object_bytes / (double)report.committed_bytes);
+
+    // in/out pointers
+    if (report.in_pointers + report.out_pointers > 0) {
+      alaska::printf("Pointer Locality:           %.2f%%\n",
+          100.0 * (double)report.in_pointers / (double)(report.in_pointers + report.out_pointers));
+    } else {
+      alaska::printf("Pointer Locality:           N/A\n");
+    }
+    alaska::printf("    In-Pointers:            %zu\n", report.in_pointers);
+    alaska::printf("    Out-Pointers:           %zu\n", report.out_pointers);
+
+
+    // in/out handles
+    if (report.in_handles + report.out_handles > 0) {
+      alaska::printf("Handle Locality:            %.2f%%\n",
+          100.0 * (double)report.in_handles / (double)(report.in_handles + report.out_handles));
+    } else {
+      alaska::printf("Handle Locality:            N/A\n");
+    }
+    alaska::printf("    In-Handles:             %zu\n", report.in_handles);
+    alaska::printf("    Out-Handles:            %zu\n", report.out_handles);
+
+    alaska::printf("\nSize Class Histogram:\n");
+    alaska::printf(" Size Class | Size |  Count  |  In Ptrs  | Out Ptrs |  Locality \n");
+    alaska::printf("-------------------------------------------------------------\n");
+    for (size_t i = 0; i < alaska::num_size_classes; i++) {
+      size_t count = size_class_histogram[i].count;
+      if (count == 0) continue;
+      uint64_t in_ptrs = size_class_histogram[i].in_pointers;
+      uint64_t out_ptrs = size_class_histogram[i].out_pointers;
+      double locality =
+          in_ptrs + out_ptrs == 0 ? 0.0 : 100.0 * (double)in_ptrs / (double)(in_ptrs + out_ptrs);
+      alaska::printf(" %10zu | %4zu | %7zu | %9zu | %8zu | %8.2f%% \n", i, alaska::class_to_size(i),
+          count, in_ptrs, out_ptrs, locality);
+    }
+
+
+
+
+    alaska::printf("-----------------------\n");
+
+
+
+    return report;
+  }
 
 }  // namespace alaska
 

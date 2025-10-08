@@ -155,6 +155,25 @@ namespace alaska {
       }
     }
 
+
+    struct HeapReport {
+      size_t committed_bytes = 0;  // How many bytes are committed?
+      size_t total_handles = 0;    // The number of objects in the heap (handle table).
+      size_t object_bytes = 0;     // How many bytes are used by objects?
+
+
+      // These stats count pointers between objects in the heap.
+      // The main thing I am interested in is how many pointers point out of the page vs. in.
+      size_t out_pointers = 0;
+      size_t in_pointers = 0;
+      // This is similar, but counts the handle table entries instead of
+      // pointers (measures the locality of the handle table, which we *can not*
+      // improve)
+      size_t out_handles = 0;
+      size_t in_handles = 0;
+    };
+    HeapReport grade_heap(void);
+
    private:
     int next_thread_cache_id = 0;
 
