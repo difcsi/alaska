@@ -23,7 +23,7 @@ namespace alaska {
   // knobs
   constexpr float GOOD_QUALITY = 0.5;
   constexpr int64_t BADNESS_CUTOFF = 5000;
-  constexpr int64_t LOCALIZE_CUTOFF = 7500;
+  constexpr int64_t LOCALIZE_CUTOFF = 5000;
   constexpr int64_t STEP = 2500;
   constexpr int64_t LOCALIZATION_INTERVAL = 50;
 
@@ -257,8 +257,6 @@ namespace alaska {
     float ratio = 0.0f;
     float weighted_quality = compute_quality(handle_ids, count, &ratio);
     // alaska::printf("YUKON_QUALITY=%f, %f\n", weighted_quality, ratio);
-
-
     bool good_dump = weighted_quality > GOOD_QUALITY;
 
     // Reset the dump handles vector back to zero.
@@ -270,18 +268,21 @@ namespace alaska {
       if (!check_handle(handle_ids[i], m, data)) continue;
 
 
+
+      // tc.localize(m, 4);  // Localize to a depth of four.
+
+
       // if (!discover_reachable_handles(m)) {
       //   break;
       // }
-      // continue;
-
-
 
       auto header = ObjectHeader::from(m);
+      header->marked = true;
+      continue;
+#if 0
       if (header->localized) continue;
 
       // If the object is already determined to need localization, skip it.
-      // if (header->localized) continue;
       if (header->placement_badness > LOCALIZE_CUTOFF) {
         continue;
       }
@@ -313,9 +314,10 @@ namespace alaska {
       if (header->placement_badness > LOCALIZE_CUTOFF) {
         saturated_handles.push(handle_ids[i]);
       }
+#endif
     }
 
-    // alaska::printf("Discovered %zu handles\n", dump_handles.size());
+    // // alaska::printf("Discovered %zu handles\n", dump_handles.size());
     // for (auto *m : dump_handles) {
     //   if (m == nullptr) continue;
     //   auto header = ObjectHeader::from(m);
@@ -331,14 +333,16 @@ namespace alaska {
 
     /////////////
 
+#if 0
     bool should_localize = false;
-    if (dumps_recorded > knobs.localization_interval) should_localize = true;
+    // if (dumps_recorded > knobs.localization_interval) should_localize = true;
+    if (saturated_handles.size() > 256) should_localize = true;
     // should_localize = false;
 
 
 
     if (should_localize) {
-      alaska::printf("Localizing! %zu in queue\n", saturated_handles.size());
+      // alaska::printf("Localizing! %zu in queue\n", saturated_handles.size());
       uint64_t scanned_hot = 0;
       dumps_recorded = 0;
       res.localized = true;
@@ -352,6 +356,7 @@ namespace alaska {
       saturated_bytes = 0;
       saturated_handles.clear();
     }
+#endif
 
 
     // Push the buffer back to the queue of buffers
@@ -382,6 +387,7 @@ namespace alaska {
         void *data = m->get_pointer();
         if (data == nullptr || m->is_free()) continue;
         auto header = ObjectHeader::from(m);
+        if (!header->marked) continue;
         auto headerBefore = ObjectHeader::from(m);
         size_t objectSize = headerBefore->object_size();
         // if the handle is valid, localize it

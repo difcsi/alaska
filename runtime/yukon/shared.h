@@ -3,10 +3,12 @@
 // The main thing it does it optimize the acces to the runtime and thread cache.
 
 
+#define _GLIBCXX_INCLUDE_NEXT_C_HEADERS
 
 #include <alaska/ThreadCache.hpp>
 #include <alaska/Runtime.hpp>
 #include <sys/ioctl.h>
+#include <math.h>
 
 #define CONSTRUCTOR __attribute__((constructor))
 #define DESTRUCTOR __attribute__((destructor))
@@ -92,7 +94,6 @@ struct InstructionTracker {
 
 
 
-//]
 static inline alaska::Runtime *the_runtime;
 static inline alaska::ThreadCache *the_tc;
 
@@ -105,6 +106,8 @@ static inline alaska::ThreadCache *yukon_get_tc() {
   if (unlikely(the_tc == nullptr)) yukon_init_runtime_and_tc();
   return the_tc;
 }
+
+static inline alaska::ThreadCache *yukon_get_tc_unchecked() { return the_tc; }
 
 
 
@@ -125,8 +128,8 @@ struct yukon_schedule_arg {
 #define YUKON_IOCTL_SCHEDULE _IOR(YUKON_IOCTL_MAGIC, 0, struct yukon_schedule_arg *)
 #define YUKON_IOCTL_RETURN _IO(YUKON_IOCTL_MAGIC, 1)
 
-static volatile long localization_latch_depth = 0;
-static uint64_t yukon_mean_dump_interval = 5000;  // measured in microseconds.
+static volatile long localization_latch = 0;
+static uint64_t yukon_mean_dump_interval = 25'000;  // measured in microseconds.
 
 // This is true if localization is enabled in the system.
 // There are a few ways to disble localization, such as environment variables and the user-facing
@@ -147,13 +150,26 @@ static LocalizationState localization_state = LS_DISABLED;
 static void localizer_state_transition(LocalizationState new_state) {
   // alaska::printf("YUKON: localization state transition: %10s -> %10s   depth=%3d\n",
   //     localization_state_names[localization_state], localization_state_names[new_state],
-  //     localization_latch_depth);
+  //     localization_latch);
 
   localization_state = new_state;
 }
 
 
 static void yukon_dump_alarm_handler(int sig);
+
+static unsigned int seed;
+
+// Box-Muller transform to generate Gaussian random numbers
+static float yukon_gaussian_random(float mean, float stddev) {
+  // Generate two uniform random numbers
+  float u1 = ((float)rand_r(&seed) + 1.0) / ((float)RAND_MAX + 1.0);
+  float u2 = ((float)rand_r(&seed) + 1.0) / ((float)RAND_MAX + 1.0);
+
+  // Box-Muller transformation
+  float mag = stddev * sqrt(-2.0 * log(u1));
+  return mag * sin(2.0 * M_PI * u2) + mean;
+}
 
 static void schedule_localization_interrupt(uint64_t interval_override = 0) {
   if (localization_state == LS_PENDING) {
@@ -168,6 +184,10 @@ static void schedule_localization_interrupt(uint64_t interval_override = 0) {
   }
 
   localizer_state_transition(LS_SCHEDULING);
+
+  // uint64_t interval = interval_override != 0 ? interval_override
+  //                                            : yukon_gaussian_random(yukon_mean_dump_interval,
+  //                                                  yukon_mean_dump_interval / 3);
 
   uint64_t interval = interval_override != 0 ? interval_override : yukon_mean_dump_interval;
 
@@ -193,35 +213,64 @@ static void schedule_localization_interrupt(uint64_t interval_override = 0) {
 }
 
 
+constexpr size_t DUMP_SIZE = 16 + 512;
+
+static int dump_htlb_into(alaska::ThreadCache *tc, alaska::handle_id_t *space) {
+  auto fd = alaska::HandleTable::get_ht_fd();
+  memset(space, 0, DUMP_SIZE * sizeof(alaska::handle_id_t));  // This memset is gross!
+  int r = read(fd, space, DUMP_SIZE * sizeof(alaska::handle_id_t));
+  return r;
+}
+
 static void dump_htlb(alaska::ThreadCache *tc) {
+  // return;
   auto fd = alaska::HandleTable::get_ht_fd();
   auto &rt = alaska::Runtime::get();
 
-  // The size of the HTLB
-  constexpr size_t size = 16 + 512;
-  auto *space = tc->localizer.get_hotness_buffer(size);
-  memset(space, 0, size * sizeof(alaska::handle_id_t));  // This memset is gross!
-  int r = read(fd, space, size * sizeof(alaska::handle_id_t));
-  // alaska::printf("YUKON: read %d bytes from HTLB\n", r);
-  tc->localizer.feed_hotness_buffer(size, space);
+  auto *space = tc->localizer.get_hotness_buffer(DUMP_SIZE);
+  // alaska::handle_id_t space[DUMP_SIZE];
+  dump_htlb_into(tc, space);
+  // tc->localize(space, DUMP_SIZE);
+  tc->localizer.feed_hotness_buffer(DUMP_SIZE, space);
 }
 
 // This method attempts to localize by feeding the localizer with new dump data.
 // It returns true if anything was able to be done, and false if it should try again later.
 __attribute__((noinline)) static bool attempt_localization(void) {
   localizer_state_transition(LS_LOCALIZING);
-  if (localization_latch_depth > 0) {
+  if (localization_latch) {
     return false;
   }
-  auto *tc = yukon_get_tc();
-  dump_htlb(tc);
+
+  dump_htlb(yukon_get_tc());
 
   return true;
 }
 
 
+static int num_localization_interrupts = 0;
+static uint64_t total_localization_cycles = 0;
+static uint64_t start_cycles = 0;
+
 static void yukon_dump_alarm_handler(int sig) {
+  auto start = read_cycles();
   bool localized = attempt_localization();
+  auto end = read_cycles();
+
+  total_localization_cycles += (end - start);
+  if (start_cycles == 0) {
+    start_cycles = start;
+  }
+
+
+  num_localization_interrupts++;
+  auto total_cycles = end - start_cycles;
+
+  if (num_localization_interrupts == 25) {
+    float percent = (float)total_localization_cycles / (float)total_cycles * 100.0f;
+    alaska::printf("localization %f%% of runtime\n", percent);
+    num_localization_interrupts = 0;
+  }
 
   if (localized) {
     // Successfully localized! Schedule the next one!
@@ -236,19 +285,22 @@ static void yukon_dump_alarm_handler(int sig) {
 
 struct LocalizationLatch {
   LocalizationLatch() {
-    // localization_latch_depth++;
+    localization_latch = 1;
+    // localization_latch++;
   }
   ~LocalizationLatch() {
-    // localization_latch_depth--;
-    // if (localization_state == LS_DEFERRED) {
-    //   yukon_dump_alarm_handler(SIGPROF);
-    // }
+    localization_latch = 0;
+    // localization_latch--;
+    if (localization_state == LS_DEFERRED) {
+      yukon_dump_alarm_handler(SIGPROF);
+    }
   }
 };
 
 
 
 void CONSTRUCTOR alaska_init(void) {
+  seed = rand();
   // Setup the output buffers for stdout and stderr so they don't invoke our allocator.
   // This is important because we want to avoid recursion in the allocator.
   setvbuf(stdout, stdout_buf, _IOLBF, BUFSIZ);
@@ -258,7 +310,9 @@ void CONSTRUCTOR alaska_init(void) {
   unsetenv("LD_PRELOAD");
 
   // Make sure the runtime and thread cache are initialized.
-  yukon_get_tc();
+  alaska::handle_id_t t[DUMP_SIZE];
+  auto *tc = yukon_get_tc();
+  dump_htlb_into(tc, t);
 }
 
 

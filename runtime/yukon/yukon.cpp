@@ -20,6 +20,11 @@
 
 #include "./shared.h"
 
+
+static bool enable_printing = false;
+extern "C" void yukon_enable_printing(int enable) { enable_printing = enable; }
+
+
 static bool localization_blocked_by_environment = false;
 
 extern "C" void yukon_enable_localization(int enable) {
@@ -28,16 +33,36 @@ extern "C" void yukon_enable_localization(int enable) {
     enable = 0;
   }
 
+  the_runtime->with_barrier([&]() {
+    alaska::printf("YUKON: Grading the heap...\n");
+    the_runtime->grade_heap();
+    alaska::printf("YUKON: Done grading the heap.\n");
+  });
+
+  // -------------------------------------------- //
+  // if (enable_localization && !enable) {
+
+  //   // the_runtime->heap.compact_sizedpages();
+  //   exit(0);
+  //   return;
+  // }
+  // ------------------------------------------- //
+
 
   enable_localization = enable;
   alaska::printf("YUKON: localization %s\n", enable ? "enabled" : "disabled");
   if (enable_localization) {
     schedule_localization_interrupt();
   }
-
-  the_runtime->dump(stdout);
 }
 
+
+
+// Signal handler for segmentation faults
+static void yukon_segfault_handler(int sig, siginfo_t *si, void *uc) {
+  alaska::printf("YUKON: Segmentation fault at address: %p\n", si->si_addr);
+  exit(-1);
+}
 
 
 
@@ -54,11 +79,27 @@ static void CONSTRUCTOR yukon_init(void) {
 
   yukon_enable_localization(false);
 
-  printf("Setting up handles to bypass the TLB when they're cached!\n");
-  uint64_t value;
-  read_csr(CSR_HTBASE, value);
-  value |= (1LU << 63);
-  write_csr(CSR_HTBASE, value);
+  // Register segmentation fault handler
+  // struct sigaction sa;
+  // sa.sa_sigaction = yukon_segfault_handler;
+  // sigemptyset(&sa.sa_mask);
+  // sa.sa_flags = SA_SIGINFO;
+  // sigaction(SIGSEGV, &sa, NULL);
+
+
+  if (getenv("YUKON_PHYS") != NULL) {
+    alaska::printf("Setting up handles to bypass the TLB when they're cached!\n");
+    uint64_t value;
+    read_csr(CSR_HTBASE, value);
+    alaska::printf("  HTBASE was 0x%lx\n", value);
+
+    value |= (1LU << 63);
+    alaska::printf("  Setting HTBASE to 0x%lx\n", value);
+    write_csr(CSR_HTBASE, value);
+
+    read_csr(CSR_HTBASE, value);
+    alaska::printf("  Reading it back gave 0x%lx\n", value);
+  }
 }
 
 
@@ -72,9 +113,16 @@ static void CONSTRUCTOR yukon_init(void) {
 static void *_halloc(size_t sz, int zero) {
   void *result = NULL;
 
+
   alaska::LockedThreadCache tc = *yukon_get_tc();
-  result = tc->halloc(sz, zero);
-  if (result == NULL) errno = ENOMEM;
+  result = tc->halloc(sz);
+  if (zero) {
+    // NOTE: we can just memset here, no need to software translate!
+    memset(result, 0, sz);
+  }
+
+
+  // if (enable_printing) alaska::printf("HALLOC %p\n", result);
   return result;
 }
 
@@ -106,6 +154,7 @@ extern "C" void *hrealloc(void *ptr, size_t new_size) {
   INSTRUCTION_TRACKER(INSTCOUNT_REALLOC);
   LocalizationLatch loc_latch;
   alaska::LockedThreadCache tc = *yukon_get_tc();
+  // if (enable_printing) alaska::printf("REALLOC %p\n", ptr);
   return tc->hrealloc(ptr, new_size);
 }
 
@@ -117,14 +166,17 @@ extern "C" void hfree(void *ptr) {
   // AutoFencer fencer;
   // no-op if NULL is passed
   if (unlikely(ptr == NULL)) return;
-  alaska::LockedThreadCache tc = *yukon_get_tc();
+  alaska::LockedThreadCache tc = *yukon_get_tc_unchecked();
+
+
+  // if (enable_printing) alaska::printf("HFREE %p\n", ptr);
   tc->hfree(ptr);
 }
 
 
 extern "C" size_t halloc_usable_size(void *ptr) {
   INSTRUCTION_TRACKER(INSTCOUNT_GETSIZE);
-  auto tc = yukon_get_tc();
+  auto tc = yukon_get_tc_unchecked();
   return tc->get_size(ptr);
 }
 

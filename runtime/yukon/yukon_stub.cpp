@@ -22,8 +22,7 @@
 
 
 
-extern "C" void yukon_enable_localization(int enable) {
-}
+extern "C" void yukon_enable_localization(int enable) {}
 
 // -------------------------------------------------------------- //
 //                     Allocation Interface                       //
@@ -35,8 +34,8 @@ static void *_halloc(size_t sz, int zero) {
   void *result = NULL;
 
   alaska::LockedThreadCache tc = *yukon_get_tc();
-  result = tc->malloc(sz, zero);
-  if (result == NULL) errno = ENOMEM;
+  result = tc->malloc(sz);
+  if (zero && result) memset(result, 0, sz);
   return result;
 }
 
@@ -79,14 +78,14 @@ extern "C" void hfree(void *ptr) {
   // AutoFencer fencer;
   // no-op if NULL is passed
   if (unlikely(ptr == NULL)) return;
-  alaska::LockedThreadCache tc = *yukon_get_tc();
+  alaska::LockedThreadCache tc = *yukon_get_tc_unchecked();
   tc->free(ptr);
 }
 
 
 extern "C" size_t halloc_usable_size(void *ptr) {
   INSTRUCTION_TRACKER(INSTCOUNT_GETSIZE);
-  auto tc = yukon_get_tc();
+  auto tc = yukon_get_tc_unchecked();
   return tc->get_size(ptr);
 }
 
