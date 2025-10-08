@@ -346,7 +346,6 @@ if (ALASKA_ENABLE_TESTING)
 	add_executable(
 		alaska_test
 		test/runtime_test.cpp
-		test/pagemanager_test.cpp
 		test/heap_test.cpp
 		test/sizeclass_test.cpp
 		test/magazine_test.cpp

@@ -30,8 +30,8 @@ namespace alaska {
   static constexpr size_t gigabyte = 1024 * megabyte;
 
 
-  // For now, the heap is a fixed size, large contiguious
-  // block of memory managed by the PageManager. Eventually,
+  // For now, the heap is a fixed size, large contiguous
+  // block of memory reserved from the operating system. Eventually,
   // we will split it up into different mmap regions, but that's
   // just a problem solved by another layer of allocators.
 
@@ -49,49 +49,6 @@ namespace alaska {
 
 
 
-  // The PageManager is responsible for managing the memory backing the heap, and subdividing it
-  // into pages which are handed to HeapPage instances. The main interface here is to allocate a
-  // page of size alaska::page_size, and allow it to be freed again. Fundamentally, the PageManager
-  // is a trivial bump allocator that uses a free-list to manage reuse.
-  //
-  // The methods behind this structure are currently behind a lock.
-  class PageManager final {
-   public:
-    PageManager();
-    ~PageManager();
-
-
-    void *alloc_page(void);
-    void free_page(void *page);
-    void *get_start(void) const { return heap; }
-
-    inline bool contains(void *ptr) { return (ptr >= heap && ptr < end); }
-
-
-    double get_usage_frac(void) const {
-      return 100.0 * (alloc_count / (double)(heap_size / page_size));
-    }
-
-    inline void *get_page(off_t i) { return (void *)((off_t)heap + (i * page_size)); }
-    inline uint64_t get_allocated_page_count(void) const { return alloc_count; }
-
-   private:
-    struct FreePage {
-      FreePage *next;
-    };
-
-    // This is the memory backing the heap. It is `alaska::heap_size` bytes long.
-    void *heap;
-    void *end;   // the end of the heap. If bump == end, we are OOM. make heap_size bigger!
-    void *bump;  // the current bump pointer
-    uint64_t alloc_count = 0;  // How many pages are currently in use
-    ck::mutex lock;            // Just a lock.
-
-    alaska::PageManager::FreePage *free_list;
-  };
-
-
-
   // allocate pages to fit `bytes` bytes from the kernel.
   void *mmap_alloc(size_t bytes);
   // free pages allocated by mmap_alloc
@@ -99,9 +56,6 @@ namespace alaska {
 
   class Heap final {
    public:
-    PageManager pm;
-
-
     Heap(alaska::Configuration &config);
     ~Heap(void);
 
@@ -132,7 +86,10 @@ namespace alaska {
     long compact_sizedpages(void);
     long compact_locality_pages(void);
 
-    inline bool contains(void *ptr) { return this->pm.contains(ptr); }
+    inline bool contains(void *ptr) {
+      auto addr = (uintptr_t)ptr;
+      return addr >= (uintptr_t)heap_start && addr < (uintptr_t)heap_end;
+    }
 
     alaska::HeapPage *get_page(void *page);
     alaska::HeapPage *get_page_unaligned(void *addr);
@@ -160,10 +117,13 @@ namespace alaska {
 
     void register_page(void *page, alaska::HeapPage *hp);
     alaska::HeapPage **walk_page_table(void *page, bool ensure = false);
+    void *alloc_heap_page();
 
     // This lock is taken whenever global state in the heap is changed by a thread cache.
     ck::mutex lock;
     void *heap_start;
+    void *heap_end;
+    void *heap_bump;
     ck::vec<alaska::HeapPage *> page_table;
     alaska::Magazine<alaska::SizedPage> size_classes[alaska::num_size_classes];
     alaska::Magazine<alaska::LocalityPage> locality_pages;
@@ -234,7 +194,7 @@ namespace alaska {
 
 
     // Allocate a new sized page
-    void *memory = this->pm.alloc_page();
+    void *memory = alloc_heap_page();
     T *p = new T(memory);
     // Map it in the page table for fast lookup
     register_page(memory, p);

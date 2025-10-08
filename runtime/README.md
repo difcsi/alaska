@@ -66,11 +66,8 @@ graph LR;
     Runtime-->ThreadCache;
 
 
-    Heap-->PageManager;
-    Heap-->HeapPageTable;
-
-    HeapPageTable-->HeapPage;
-    PageManager-->heap_backing_memory;
+    Heap-->HeapPage;
+    Heap-->heap_backing_memory;
     HeapPage-->heap_backing_memory;
 
 

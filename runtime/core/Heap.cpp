@@ -22,86 +22,39 @@
 
 
 namespace alaska {
-
-
-  PageManager::PageManager(void) {
-    auto prot = PROT_READ | PROT_WRITE;
-    auto flags = MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE;
-    this->heap = mmap(NULL, alaska::heap_size, prot, flags, -1, 0);
-    ALASKA_ASSERT(
-        this->heap != MAP_FAILED, "Failed to allocate the heap's backing memory. Aborting.");
-
-    // Set the bump allocator to the start of the heap.
-    this->bump = this->heap;
-    // round bump up to 2mb
-    this->bump =
-        (void *)(((uintptr_t)this->bump + alaska::page_size - 1) & ~(alaska::page_size - 1));
-    this->end = (void *)((uintptr_t)this->heap + alaska::heap_size);
-
-    // Initialize the free list w/ null, so the first allocation is a simple bump.
-    this->free_list = nullptr;
-
-    log_debug("PageManager: Heap allocated at %p", this->heap);
-  }
-
-  PageManager::~PageManager() {
-    log_debug("PageManager: Dellocating heap at %p", this->heap);
-    munmap(this->heap, alaska::heap_size);
-  }
-
-
-  void *PageManager::alloc_page(void) {
-    ck::scoped_lock lk(this->lock);  // TODO: don't lock.
-
-
-    if (this->free_list != nullptr) {
-      // If we have a free page, pop it off the free list and return it.
-      FreePage *fp = this->free_list;
-      this->free_list = fp->next;
-      log_trace("PageManager: reusing free page at %p", fp);
-      alloc_count++;
-      return (void *)fp;
-    }
-
-    // If we don't have a free page, we need to allocate a new one with the bump allocator.
-    void *page = this->bump;
-    this->bump = (void *)((uintptr_t)this->bump + alaska::page_size);
-
-    log_trace("PageManager: end = %p", this->end);
-
-    // TODO: this is *so unlikely* to happen. This check is likely expensive and not needed.
-    ALASKA_ASSERT(page < this->end, "Out of memory in the page manager.");
-    alloc_count++;
-
-    return page;
-  }
-
-  void PageManager::free_page(void *page) {
-    // check that the pointer is within the heap and early return if it is not
-    if (unlikely(page < this->heap || page >= this->end)) {
-      return;
-    }
-
-    ck::scoped_lock lk(this->lock);  // TODO: don't lock.
-
-    // cast the page to a FreePage to store metadata in.
-    FreePage *fp = (FreePage *)page;
-
-    // Super simple: push to the free list.
-    fp->next = this->free_list;
-    this->free_list = fp;
-
-    alloc_count--;
-  }
-
   ////////////////////////////////////
   Heap::Heap(alaska::Configuration &config)
-      : pm()
-      , heap_start(pm.get_start()) {
-    log_debug("Heap: Initialized heap");
+      : heap_start(nullptr)
+      , heap_end(nullptr)
+      , heap_bump(nullptr) {
+    auto prot = PROT_READ | PROT_WRITE;
+    auto flags = MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE;
+    heap_start = mmap(NULL, alaska::heap_size, prot, flags, -1, 0);
+    ALASKA_ASSERT(
+        heap_start != MAP_FAILED, "Failed to allocate the heap's backing memory. Aborting.");
+
+    heap_bump = heap_start;
+    heap_bump =
+        (void *)(((uintptr_t)heap_bump + alaska::page_size - 1) & ~(alaska::page_size - 1));
+    heap_end = (void *)((uintptr_t)heap_start + alaska::heap_size);
+
+    log_debug("Heap: Backing memory allocated at %p", heap_start);
   }
 
-  Heap::~Heap(void) {}
+  Heap::~Heap(void) {
+    if (heap_start != nullptr) {
+      log_debug("Heap: Deallocating backing memory at %p", heap_start);
+      munmap(heap_start, alaska::heap_size);
+    }
+  }
+
+  void *Heap::alloc_heap_page() {
+    void *page = heap_bump;
+    heap_bump = (void *)((uintptr_t)heap_bump + alaska::page_size);
+
+    ALASKA_ASSERT(page < heap_end, "Out of memory in heap backing store.");
+    return page;
+  }
 
   SizedPage *Heap::get_sizedpage(size_t size, ThreadCache *owner) {
     ck::scoped_lock lk(this->lock);  // TODO: don't lock.
@@ -201,7 +154,9 @@ namespace alaska {
   void Heap::dump_json(FILE *stream) {
     fprintf(stream, "{\"pages\": [");
     for (off_t i = 0; true; i++) {
-      auto page = get_page(pm.get_page(i));
+      void *page_addr = (void *)((uintptr_t)heap_start + (i * alaska::page_size));
+      if (page_addr >= heap_end) break;
+      auto page = get_page(page_addr);
       if (page == NULL) break;
       if (i != 0) fprintf(stream, ",");
       page->dump_json(stream);
