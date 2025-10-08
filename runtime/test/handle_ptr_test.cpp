@@ -22,7 +22,7 @@ class HandlePtrTest : public ::testing::Test {
 
   template <typename T>
   alaska::sim::handle_ptr<T> alloc(void) {
-    return (T *)tc->halloc(sizeof(T), true);
+    return (T *)tc->halloc(sizeof(T));
   }
 
 

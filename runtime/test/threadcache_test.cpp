@@ -146,7 +146,7 @@ TEST_F(ThreadCacheTest, HreallocHandleToHandle) {
 }
 TEST_F(ThreadCacheTest, HreallocHandleToHuge) {
   void *h = t1->halloc(16);
-  void *h2 = t1->hrealloc(h, alaska::huge_object_thresh);
+  void *h2 = t1->hrealloc(h, alaska::huge_object_thresh + 1);
   // The values should not be the same
   ASSERT_NE(h, h2);
   // The new object should be a huge object (not a handle)
@@ -205,10 +205,9 @@ TEST_F(ThreadCacheTest, ReallocWorks) {
   ASSERT_NE(p, nullptr);
   void *p2 = t1->realloc(p, 32);
   ASSERT_NE(p2, nullptr);
-  ASSERT_NE(p, p2); // realloc should return a new pointer
+  ASSERT_NE(p, p2);  // realloc should return a new pointer
   ASSERT_EQ(t1->get_size(p2), 32);
 
   // Free the new pointer
   t1->free(p2);
 }
-

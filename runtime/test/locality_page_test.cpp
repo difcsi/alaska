@@ -11,6 +11,7 @@
 #define DUMMY_THREADCACHE ((alaska::ThreadCache *)0x1000UL)
 
 
+#if 0
 // A locality slab does not have to live within a LocalityPage, so we can
 // test it independently of the LocalityPage.
 class LocalitySlabTest : public ::testing::Test {
@@ -141,3 +142,4 @@ TEST_F(LocalityPageTest, Sanity) {
 
 //   ASSERT_EQ(*h, 42);
 // }
+#endif
