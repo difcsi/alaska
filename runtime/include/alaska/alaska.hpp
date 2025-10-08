@@ -42,7 +42,11 @@ static void show_string(const char *msg) { write(1, msg, strlen(msg)); }
 
 #define alaska_attr_malloc __attribute__((malloc))
 #define HANDLE_ADDRSPACE __attribute__((address_space(1)))
-
+#define WORD_ALIGNED(x) (decltype(x))__builtin_assume_aligned(x, sizeof(void *))
+// #define WORD_ALIGNED(x) (x)
+// check if a pointer is word aligned.
+#define IS_WORD_ALIGNED(x) \
+  ((((uintptr_t)__builtin_assume_aligned((x), 1)) & (sizeof(void *) - 1)) == 0)
 // Fwd decl stuff
 namespace alaska {
   class Mapping;
@@ -178,7 +182,12 @@ namespace alaska {
     // perform any checking, and will blindly translate any pointer regardless of if it really
     // contains a handle internally.
     static ALASKA_INLINE alaska::Mapping *from_handle(void *handle) {
-      return (alaska::Mapping *)((uint64_t)handle >> (ALASKA_SIZE_BITS - ALASKA_SQUEEZE_BITS));
+      return WORD_ALIGNED(
+          (alaska::Mapping *)((uint64_t)handle >> (ALASKA_SIZE_BITS - ALASKA_SQUEEZE_BITS)));
+    }
+
+    static ALASKA_INLINE uint64_t offset_from_handle(void *handle) {
+      return (uint64_t)handle & ((1UL << ALASKA_SIZE_BITS) - 1);
     }
 
     static ALASKA_INLINE bool is_handle_slow(void *ptr) { return ((uint64_t)ptr >> 62) == 0b10; }
@@ -187,7 +196,7 @@ namespace alaska {
     // return null.
     static ALASKA_INLINE alaska::Mapping *from_handle_safe(void *ptr) {
       if (alaska::Mapping::is_handle_slow(ptr)) {
-        return (alaska::Mapping *)(alaska::Mapping::from_handle(ptr));
+        return (alaska::Mapping *)((uint64_t)ptr >> (ALASKA_SIZE_BITS - ALASKA_SQUEEZE_BITS));
       }
       // Return null if the pointer is not really a handle
       return nullptr;

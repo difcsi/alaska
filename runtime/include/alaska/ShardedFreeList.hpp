@@ -46,7 +46,7 @@ namespace alaska {
     inline Block *pop(void) { return pop(local_free); }
     inline Block *pop(Block *b) {
       if (unlikely(b != nullptr)) {
-        // num_local_free--;
+        num_local_free--;
         local_free = local_free->next;
       }
       b->markAllocated();
@@ -55,6 +55,7 @@ namespace alaska {
 
     inline Block *pop_unchecked(Block *b) {
       local_free = b->next;
+      num_local_free--;
       b->markAllocated();
       return b;
     }
@@ -63,6 +64,8 @@ namespace alaska {
     inline bool has_local_free(void) const { return local_free != nullptr; }
     // WEAK ORDERING!
     inline bool has_remote_free(void) const { return remote_free != nullptr; }
+
+    inline bool has_any_free(void) const { return has_local_free() || has_remote_free(); }
 
 
     inline long num_free(void) const {

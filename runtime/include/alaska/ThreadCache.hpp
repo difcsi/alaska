@@ -138,6 +138,7 @@ namespace alaska {
   inline alaska::Mapping *ThreadCache::new_mapping(void) {
     auto m = handle_slab->alloc();
     if (unlikely(m == nullptr)) {
+      // alaska::printf("ThreadCache %d: Handle slab %p is full, allocating new slab\n", id, handle_slab);
       m = new_mapping_slow_path();
     }
     return m;
@@ -176,47 +177,6 @@ namespace alaska {
     ThreadCache &tc;
   };
 
-
-
-
-  // Inline definitions of hot threadcache methods.
-
-#define TC_ALIGNED(p) ((__typeof__(p))__builtin_assume_aligned((p), sizeof(uintptr_t)))
-
-  LTO_INLINE inline void *ThreadCache::halloc(size_t size) {
-    if (likely(size < alaska::max_small_size)) {
-      // Grab the sized page for this size class.
-      auto *sp = size_classes[alaska::size_to_class_small(size)];
-
-      if (likely(sp != NULL)) {
-        auto &htfl = handle_slab->get_freelist();
-        auto &spfl = sp->get_freelist();
-
-        // Peek at the handle table and size page free lists.
-        auto *m = TC_ALIGNED(htfl.peek());
-        auto *d = TC_ALIGNED(spfl.peek());
-
-        // If both had local free entries, we can take the fast path.
-        if (likely((!!m) & (!!d))) {
-          // Pop from both free lists.
-          htfl.pop_unchecked(m);
-          spfl.pop_unchecked(d);
-
-          // Setup the handle table mapping.
-          auto *mapping = (alaska::Mapping *)m;
-          auto *header = &d->header;
-          header->set_mapping(mapping);
-          header->set_object_size(size);
-          mapping->set_pointer(header->data());
-
-          return mapping->to_handle(0);
-        }
-      }
-    }
-
-    // Ope! Fallback to the slower generic path.
-    return halloc_generic(size);
-  }
 
 
 }  // namespace alaska

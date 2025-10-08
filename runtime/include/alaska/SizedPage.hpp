@@ -30,6 +30,8 @@ namespace alaska {
     void *alloc(const alaska::Mapping &m, alaska::AlignedSize size) override alaska_attr_malloc;
     bool release_local(const alaska::Mapping &m, void *ptr) override;
     bool release_remote(const alaska::Mapping &m, void *ptr) override;
+    size_t committed_bytes(void) override { return committed(); }
+
     void set_size_class(int cls);
     int get_size_class(void) const { return size_class; }
     size_t get_object_size(void) const { return object_size; }

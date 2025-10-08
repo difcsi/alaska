@@ -119,8 +119,6 @@ namespace alaska {
     size_t byte_capacity = memory_end() - memory_start();
     this->capacity = byte_capacity / real_size;
 
-    snprintf(name, sizeof(name), "Sized(%zu)", this->object_size);
-
     void *objects = (void *)this->memory_start();
 
 
@@ -167,7 +165,6 @@ namespace alaska {
   long SizedPage::compact(void) {
     // --------------------------------------------------------------------------------- //
     // TEMP :: NOT LOCALIZING. HACKING THIS FUNCTION FOR ANALYSIS
-    /*
     size_t real_object_size = this->object_size + sizeof(ObjectHeader);
     auto &rt = alaska::Runtime::get();
     if (real_object_size > 256) return 0;
@@ -204,7 +201,6 @@ namespace alaska {
     //     this->object_size, out_pointers, extra_page_pointers, total_pointers);
     // --------------------------------------------------------------------------------- //
 
-    */
     return 0;
 
 
