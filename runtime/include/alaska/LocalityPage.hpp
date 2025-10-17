@@ -18,37 +18,81 @@
 #include <alaska/Logger.hpp>
 #include <alaska/HeapPage.hpp>
 #include <alaska/SizedAllocator.hpp>
-
+#include <alaska/ObjectHeader.hpp>
 namespace alaska {
 
-  // A locality page is meant to strictly bump allocate objects of variable size in order
-  // of their expected access pattern in the future. It's optimized for moving objects into
-  // this page, and the expected lifetimes of these objects is long enough that we don't really
-  // care about freeing or re-using the memory occupied by them when they are gone.
+  /**
+   * Heap page specialization that groups long-lived objects by locality using a
+   * simple bump allocator. Objects are migrated into the page in the order they
+   * are expected to be accessed, and memory is never reclaimed piecemeal, only
+   * when the page is destroyed.
+   */
   class LocalityPage final : public alaska::HeapPage {
    public:
+    /**
+     * Construct a locality page backed by the provided page-sized memory
+     * region. The bump pointer starts at the first usable byte in the page.
+     */
     LocalityPage(void *backing_memory)
         : alaska::HeapPage(backing_memory) {
       bump_next = (void *)this->memory_start();
     }
 
-    // Available - The memory which can be allocated
-    size_t available(void) { return memory_end() - (uintptr_t)bump_next; }
-    // Committed - The memory which has been allocated.
+    /** Bytes still available for allocation within this page. */
+    size_t available(void) override { return memory_end() - (uintptr_t)bump_next; }
+
+    /** Bytes that have been committed to objects through bump allocation. */
     size_t committed(void) { return (uintptr_t)bump_next - memory_start(); }
 
     ~LocalityPage() override;
 
-    // the main interface
+    /**
+     * Allocate storage for an object described by the mapping using the
+     * locality page's bump pointer. Returns the object's data pointer or
+     * nullptr when the page is exhausted.
+     */
     void *alloc(const alaska::Mapping &m, alaska::AlignedSize size) override;
+
+    /**
+     * Release an object whose lifetime ended on this page by marking the header
+     * as unmapped and tracking the freed payload size for fragmentation stats.
+     */
     bool release_local(const alaska::Mapping &m, void *ptr) override;
 
+    /**
+     * Migrate an existing mapping's payload into this locality page, updating
+     * the mapping to point at the newly allocated storage.
+     */
+    bool localize(alaska::Mapping &m);
 
-    // Fragmentation - How much of the committed memory was freed?
+
+    /** Ratio of bytes freed through release_local to total committed bytes. */
     float fragmentation(void) override { return (float)freed_bytes / (float)committed(); }
 
    private:
     size_t freed_bytes = 0;
     void *bump_next;
   };
+
+  inline void *LocalityPage::alloc(const alaska::Mapping &m, alaska::AlignedSize size) {
+    size_t real_size = size + sizeof(alaska::ObjectHeader);
+
+    auto bump_after = (uintptr_t)bump_next + real_size;
+    if (unlikely(bump_after >= memory_end())) {
+      // alaska::printf("LocalityPage: out of memory trying to allocate %zu bytes\n", real_size);
+      return nullptr;
+    }
+
+    // Bump allocate!
+    alaska::ObjectHeader *header =
+        (alaska::ObjectHeader *)__builtin_assume_aligned((void *)bump_next, 8);
+
+    header->set_mapping(&m);
+    header->set_object_size(size);
+    header->localized = 1;
+
+    bump_next = (void *)bump_after;
+    return header->data();
+  }
+
 };  // namespace alaska

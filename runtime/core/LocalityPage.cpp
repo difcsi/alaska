@@ -18,39 +18,42 @@ namespace alaska {
 
   LocalityPage::~LocalityPage() {}
 
-  void *LocalityPage::alloc(const alaska::Mapping &m, alaska::AlignedSize size) {
-    size_t real_size = size + sizeof(alaska::ObjectHeader);
-    if (unlikely(real_size >= available())) {
-      // alaska::printf(
-      //     "Locality page could not allocated %zu bytes (only %zu available, %zu committed, %zu "
-      //     "freed)\n",
-      //     size, available(), committed(), freed_bytes);
-      return nullptr;
-    }
-
-    // alaska::printf(
-    //     "Locality page %p allocating %zu bytes (of %zu available, %zu committed, %zu freed)\n",
-    //     this, size, available(), committed(), freed_bytes);
-
-    // Bump allocate!
-    alaska::ObjectHeader *header =
-        (alaska::ObjectHeader *)__builtin_assume_aligned((void *)bump_next, 16);
-    header->set_mapping(&m);
-    header->set_object_size(size);
-    header->localized = 1;
-    // header->placement_badness = -10000; // TUNE ME
-
-    bump_next = (void *)((uintptr_t)bump_next + header->real_object_size());
-
-    return header->data();
-  }
 
   // TODO:
   bool LocalityPage::release_local(const alaska::Mapping &m, void *ptr) {
     auto *header = alaska::ObjectHeader::from(ptr);
-    this->freed_bytes += header->real_object_size();
+    atomic_inc(this->freed_bytes, header->real_object_size());
 
     header->set_mapping(nullptr);  // This is how we free.
+    return true;
+  }
+
+
+  bool LocalityPage::localize(alaska::Mapping &m) {
+    // Gonna assume the mapping is valid.
+    void *old_location = m.get_pointer();
+    auto *old_header = alaska::ObjectHeader::from(old_location);
+    auto old_page = alaska::Heap::get_page(old_location);
+    size_t object_size = old_header->object_size();
+
+    // alaska::printf(
+    //     "Localizing object %p of size %zu from page %p\n", old_location, object_size, old_page);
+
+    // Bump allocate a new location.
+    void *new_location = this->alloc(m, object_size);
+
+    // Did we fail to allocate?
+    if (new_location == nullptr) return false;
+
+    // Copy the object over.
+    memcpy(new_location, old_location, object_size);
+
+    // Update the mapping to point to the new location.
+    m.set_pointer(new_location);
+
+    // Release the old mapping (TODO: does this need to be remote?)
+    old_page->release_remote(m, old_location);
+
     return true;
   }
 
