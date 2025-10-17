@@ -159,8 +159,6 @@ namespace alaska {
 
     last_mapping = sl->get_end() + 1;
 
-    // printf("Allocated new slab %p at idx %d (%zu free)\n", sl, idx, sl->num_free());
-
     // Add the slab to the list of slabs and return it
     m_slabs.push(sl);
     return sl;
@@ -349,19 +347,27 @@ namespace alaska {
 
 
 
-  bool check_mapping(void *ptr, alaska::Mapping *&out_m, void *&out_data) {
+  bool check_mapping(handle_id_t hid, alaska::Mapping *&out_m, void *&out_data) {
+    void *handle = alaska::Mapping::handle_from_hid(hid);
+    return alaska::check_mapping(handle, out_m, out_data);
+  }
 
+  bool check_mapping(void *ptr, alaska::Mapping *&out_m, void *&out_data) {
     alaska::Mapping *m;
     void *data;
-    
+
     m = alaska::Mapping::from_handle_safe(ptr);
     if (m == nullptr || m > last_mapping) return false;
     // if m is not aligned to 8 (any of the low 3 bits are set to 1), skip it.
     if (not IS_WORD_ALIGNED(m)) return false;
     // If it is free, skip it.
     if (m->is_free()) return false;
+
     data = m->get_pointer();
-    // if (data == nullptr) return false;
+    // okay, check the page is valid.
+    if (!alaska::Heap::get_page(data)) {
+      return false;
+    }
 
     out_m = m;
     out_data = data;

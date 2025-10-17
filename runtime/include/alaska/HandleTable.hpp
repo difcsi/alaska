@@ -264,6 +264,7 @@ namespace alaska {
   extern alaska::Mapping *last_mapping;
 
 
+  bool check_mapping(handle_id_t hid, alaska::Mapping *&out_m, void *&out_data);
   bool check_mapping(void *ptr, alaska::Mapping *&out_m, void *&out_data);
 
 }  // namespace alaska

@@ -202,6 +202,11 @@ namespace alaska {
       return nullptr;
     }
 
+    static void *handle_from_hid(handle_id_t id) {
+      uint64_t handle = (1UL << 63) | ((uint64_t)id << ALASKA_SIZE_BITS);
+      return (void *)handle;
+    }
+
     static ALASKA_INLINE alaska::Mapping *from_handle_id(handle_id_t id) {
       uint64_t handle = (1UL << 63) | ((uint64_t)id << ALASKA_SIZE_BITS);
       return from_handle((void *)handle);
