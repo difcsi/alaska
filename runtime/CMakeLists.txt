@@ -74,6 +74,7 @@ set(CORE_SOURCES
   core/SizedPage.cpp
   core/LocalityPage.cpp
   core/Localizer.cpp
+  core/ObjectHeader.cpp
 
   core/Utils.cpp
 

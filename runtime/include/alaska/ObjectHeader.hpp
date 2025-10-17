@@ -13,7 +13,7 @@
 
 #include <stdint.h>
 #include <alaska/alaska.hpp>
-#include <alaska/HandleTable.hpp> // for alaska::last_mapping
+#include <alaska/HandleTable.hpp>  // for alaska::last_mapping
 
 namespace alaska {
 
@@ -23,19 +23,19 @@ namespace alaska {
     // The first 32 bits of the object header are the handle id. We use this
     // very often, so we want it to be fast as possible to access (without masks or anything)
     uint32_t handle_id;
-    uint32_t size;  // The size of the object in bytes, not including the header.
+    uint16_t size;  // The size of the object in bytes, not including the header.
 
 
-    int32_t placement_badness;
 
     // And then theres some metadata
     union {
       struct {
-        bool localized;  // A marker to quickly indicate if the object is localized
-        bool marked;
+        bool localized : 1;  // A marker to quickly indicate if the object is localized
+        bool marked : 1;
       };
-      uint32_t __metadata : 16;  // don't use this manually. just here to ensure space
+      uint8_t __metadata : 8;  // don't use this manually. just here to ensure space
     };
+    int8_t placement_badness;
 
     inline size_t object_size(void) const { return this->size; }
     inline size_t real_object_size(void) const { return object_size() + sizeof(ObjectHeader); }
@@ -67,58 +67,47 @@ namespace alaska {
     static ObjectHeader *from(alaska::Mapping &m) { return from(m.get_pointer()); }
     static ObjectHeader *from(alaska::Mapping *m) { return from(m->get_pointer()); }
     static ObjectHeader *from(void *ptr) {
-      // return (ObjectHeader *)__builtin_assume_aligned((ObjectHeader *)((off_t)ptr -
-      // sizeof(ObjectHeader)), sizeof(ObjectHeader));
       return WORD_ALIGNED((ObjectHeader *)((off_t)ptr - sizeof(ObjectHeader)));
     }
 
-
-    void dump() {
-      printf("<Object hid=%5zu size=%5zu ", (unsigned long)handle_id, object_size());
-      printf("misc=%c", localized ? 'L' : ' ');
-      // printf(" data=");
-      // auto data = (uint8_t *)this->data();
-      // for (size_t i = 0; i < object_size(); i++) {
-      //   printf("%02x ", data[i]);
-      // }
-      printf(">");
-    }
-
-
+    
 
     template <typename Fn>
-    void walk(Fn fn, size_t max_walk = 0) {
-      // alaska::printf("Walking header %p\n", this);
+
+    void walk(Fn fn) {
       size_t size = object_size();
-      if (max_walk == 0 || max_walk > size) max_walk = size;
+      // alaska::printf("Walking header %p, %p, %zu\n", this, get_mapping(), size);
 
-      void **ptr = (void **)data();
-      void **end = (void **)((uintptr_t)ptr + max_walk);
+      uint64_t *start = (uint64_t *)data();
+      uint64_t *end = (uint64_t *)((char *)start + size);
       uintptr_t offset = 0;
-      for (void **ptr = (void **)data(); ptr < end; ptr++, offset++) {
-        // Grab the pointer
-        void *p = *ptr;
 
-        // alaska::printf(" [%zu] ptr=%p -> %p\n", offset, ptr, p);
+
+      for (uint64_t *ptr = start; ptr < end; ptr++, offset++) {
+        // Grab the pointer
+        uint64_t value = *ptr;
 
         void *pointee_data;
         alaska::Mapping *pointee_handle = nullptr;
-        if (!alaska::check_mapping(p, pointee_handle, pointee_data)) continue;
+        // Check if it is a valid handle.
+        if (!alaska::check_mapping((void *)value, pointee_handle, pointee_data)) continue;
         alaska::ObjectHeader *header = alaska::ObjectHeader::from(pointee_data);
-        // alaska::printf("    handle=%p, data=%p, header=%p\n", pointee_handle, pointee_data, header);
-
-        auto handle_offset = alaska::Mapping::offset_from_handle(p);
-        if (handle_offset > header->object_size()) {
-          continue;
-        }
+        // Skip if the handle is invalid because the offset into it is out of range/too large
+        // auto handle_offset = alaska::Mapping::offset_from_handle(p);
+        // if (handle_offset > header->object_size()) continue;
 
         // Check that the offset is valid.
         fn(pointee_handle, header);
       }
     }
 
+    // Print a hex dump of the object for debugging.
+    void hexdump(void);
+
 
   } __attribute__((packed));
 
-  static_assert(sizeof(ObjectHeader) == 16, "ObjectHeader must be 8 bytes");
+  static constexpr size_t OBJECT_HEADER_SIZE = sizeof(ObjectHeader);
+  // static_assert(sizeof(ObjectHeader) == 16, "ObjectHeader is not the right size!");
+  static_assert(sizeof(ObjectHeader) == 8, "ObjectHeader is not the right size!");
 }  // namespace alaska
