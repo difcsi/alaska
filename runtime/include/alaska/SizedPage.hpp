@@ -52,7 +52,7 @@ namespace alaska {
 
 
     // How many free slots are there? (We return an estimate!)
-    inline long available(void) { return num_free(); }
+    inline size_t available(void) override { return num_free() * object_size; }
 
     inline long num_free(void) const {
       return num_free_in_free_list() + num_free_in_bump_allocator();
