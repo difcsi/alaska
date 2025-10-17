@@ -163,6 +163,7 @@ namespace alaska {
   //
   // This function then returns how many objects it moved
   long SizedPage::compact(void) {
+#if 0
     // --------------------------------------------------------------------------------- //
     // TEMP :: NOT LOCALIZING. HACKING THIS FUNCTION FOR ANALYSIS
     size_t real_object_size = this->object_size + sizeof(ObjectHeader);
@@ -202,6 +203,7 @@ namespace alaska {
     // --------------------------------------------------------------------------------- //
 
     return 0;
+#endif
 
 
 
