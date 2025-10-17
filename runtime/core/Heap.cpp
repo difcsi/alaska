@@ -34,8 +34,7 @@ namespace alaska {
         heap_start != MAP_FAILED, "Failed to allocate the heap's backing memory. Aborting.");
 
     heap_bump = heap_start;
-    heap_bump =
-        (void *)(((uintptr_t)heap_bump + alaska::page_size - 1) & ~(alaska::page_size - 1));
+    heap_bump = (void *)(((uintptr_t)heap_bump + alaska::page_size - 1) & ~(alaska::page_size - 1));
     heap_end = (void *)((uintptr_t)heap_start + alaska::heap_size);
 
     log_debug("Heap: Backing memory allocated at %p", heap_start);
@@ -84,6 +83,7 @@ namespace alaska {
     // Return a SizedPage back to the global (unowned) heap.
     ck::scoped_lock lk(this->lock);  // TODO: don't lock.
     page->set_owner(nullptr);
+    if (page->magazine) page->magazine->rebalance(page);
   }
 
 
@@ -91,6 +91,7 @@ namespace alaska {
     // Return a SizedPage back to the global (unowned) heap.
     ck::scoped_lock lk(this->lock);  // TODO: don't lock.
     page->set_owner(nullptr);
+    if (page->magazine) page->magazine->rebalance(page);
   }
 
 
@@ -210,6 +211,16 @@ namespace alaska {
     return c;
   }
 
+  void Heap::collect(ThreadCache *tc, int sc) {
+    // ck::scoped_lock lk(this->lock);
+    auto &mag = this->size_classes[sc];
+    // printf("Collecting size class %d\n", sc);
+    // mag.collect();
+    for (auto &mag : size_classes) {
+      mag.collect();
+    }
+  }
+
 
 
   void *mmap_alloc(size_t bytes) {
@@ -227,6 +238,7 @@ namespace alaska {
     bytes = (bytes + 4095) & ~4095;
     munmap(ptr, bytes);
   }
+
 
 
 
