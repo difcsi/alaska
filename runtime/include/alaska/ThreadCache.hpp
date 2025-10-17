@@ -58,6 +58,10 @@ namespace alaska {
     // objects of many different sizes.
     alaska::LocalityPage *locality_page = nullptr;
 
+    // How many calls to the generic allocator have we had since the last 'collection'?
+    long generic_count = 0;
+    long generic_collect_count = 0;
+
 
    public:
     // A lock which is used to control access to this heap page. Mostly used to control
@@ -118,7 +122,8 @@ namespace alaska {
     static constexpr uint64_t hotness_hist_size = 1 << 6;
     uint64_t localization_epoch = 0;
     uint64_t hotness_hist[hotness_hist_size] = {0};
-    long localize(alaska::Mapping *mapping, long allowed_depth = 0);
+    long localize(alaska::Mapping *mapping, long allowed_depth = 0, long depth = 0);
+    long localize_one(alaska::Mapping *mapping);
 
     // Allocate a new handle table mapping
     alaska::Mapping *new_mapping(void);

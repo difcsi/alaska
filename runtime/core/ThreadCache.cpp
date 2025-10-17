@@ -38,6 +38,7 @@ namespace alaska {
 
 
   SizedPage *ThreadCache::new_sized_page(int cls) {
+    // alaska::printf("Thread %d needs new sized page for class %d\n", id, cls);
     heap_churn++;
     // Get a new heap
     auto *heap = runtime.heap.get_sizedpage(alaska::class_to_size(cls), this);
@@ -80,6 +81,25 @@ namespace alaska {
     // checks failed in ::halloc.
     if (unlikely(size == 0)) return NULL;
     void *result = nullptr;
+
+    if (++this->generic_count >= 100) {
+      // Minor collect!
+
+      this->generic_collect_count += this->generic_count;
+      this->generic_count = 0;
+
+      // Collect every once in a while
+      constexpr long generic_collect = 1'000;
+      if (this->generic_collect_count >= generic_collect) {
+        // Major collect!
+        this->generic_collect_count = 0;
+
+        int sc = alaska::size_to_class(size);
+        // printf("Major collect on thread %d, sc=%d, size=%zu\n", this->id, sc, size);
+        runtime.heap.collect(this, sc);
+        // runtime.grade_heap();
+      }
+    }
 
     if (likely(size >= alaska::max_large_size)) {
       // alaska::printf("ThreadCache::halloc_generic: huge alloc %zu\n", size);
@@ -236,36 +256,36 @@ namespace alaska {
     // auto *header = alaska::ObjectHeader::from(ptr);
 
     auto *handle_slab = this->runtime.handle_table.get_slab(m);
-    auto *heap_page = this->runtime.heap.get_page_unaligned(ptr);
-    heap_page->release_local(*m, ptr);
-    handle_slab->release_local(m);
+    auto *heap_page = alaska::Heap::get_page(ptr);
+    // heap_page->release_local(*m, ptr);
+    // handle_slab->release_local(m);
 
-    // bool handle_owned = handle_slab->is_owned_by(this);
-    // bool heap_owned = heap_page->is_owned_by(this);
+    bool handle_owned = handle_slab->is_owned_by(this);
+    bool heap_owned = heap_page->is_owned_by(this);
     // if (likely(heap_owned and handle_owned)) {
     //   heap_page->release_local(*m, ptr);
     //   handle_slab->release_local(m);
     //   return;
     // }
 
-    // // Now the slow path.
+    // Now the slow path.
 
-    // if (likely(heap_page->is_owned_by(this))) {
-    //   heap_page->release_local(*m, ptr);
-    // } else {
-    //   heap_page->release_remote(*m, ptr);
-    // }
+    if (likely(heap_owned)) {
+      heap_page->release_local(*m, ptr);
+    } else {
+      heap_page->release_remote(*m, ptr);
+    }
 
 
-    // if (likely(handle_slab->is_owned_by(this))) {
-    //   handle_slab->release_local(m);
-    // } else {
-    //   handle_slab->release_remote(m);
-    // }
+    if (likely(handle_owned)) {
+      handle_slab->release_local(m);
+    } else {
+      handle_slab->release_remote(m);
+    }
     return;
   }
 
-// #define STUB_ALLOCATES_HANDLES
+  // #define STUB_ALLOCATES_HANDLES
 
 
   LTO_INLINE alaska::Mapping *ThreadCache::reverse_lookup(void *heap_ptr) {
@@ -374,7 +394,7 @@ namespace alaska {
 
   LTO_INLINE void ThreadCache::free(void *ptr) {
     if (this->runtime.heap.contains(ptr)) {
-      auto *heap_page = this->runtime.heap.get_page_unaligned(ptr);
+      auto *heap_page = alaska::Heap::get_page(ptr);
 
 
 #ifdef STUB_ALLOCATES_HANDLES
@@ -445,102 +465,105 @@ namespace alaska {
 
 
 
-  static inline bool check_handle(void *p, alaska::Mapping *&m, void *&data) {
-    m = alaska::Mapping::from_handle_safe(p);
-    if (m == nullptr) return false;
-    data = m->get_pointer();
-    if (data == nullptr || m->is_free()) return false;
-    return true;
+  constexpr long required_size_for_new_locality_page = 4096;
+  long ThreadCache::localize_one(alaska::Mapping *m) {
+    bool localized = locality_page->localize(*m);
+
+    if (!localized) {
+      // We failed to localize, so we need a new locality page.
+      locality_page =
+          new_locality_page(required_size_for_new_locality_page);  // Make it big enough for a page.
+      localized = locality_page->localize(*m);
+    }
+    return localized ? 1 : 0;
   }
 
-  static inline bool check_handle(handle_id_t hid, alaska::Mapping *&m, void *&data) {
-    if (hid == 0) return false;
-    m = alaska::Mapping::from_handle_id(hid);
-    if (m == nullptr) return false;
-    data = m->get_pointer();
-    if (data == nullptr || m->is_free()) return false;
-    return true;
-  }
+  long ThreadCache::localize(alaska::Mapping *m, long allowed_depth, long depth) {
+    if (m->is_free() || m->is_pinned()) return 0;
+
+    if (unlikely(locality_page == nullptr))
+      locality_page = new_locality_page(required_size_for_new_locality_page);
+
+    void *old_data = m->get_pointer();
+    auto *old_header = alaska::ObjectHeader::from(old_data);
 
 
-  long ThreadCache::localize(alaska::Mapping *m, long allowed_depth) {
-    constexpr long max_object_size = 256;
-    long moved_count = 0;
-    // alaska::printf("Localizing mapping %p -> %p\n", m, m->get_pointer());
-    void *ptr = m->get_pointer();
-    if (ptr == nullptr || m->is_free() || m->is_pinned()) return 0;
+    size_t object_size = old_header->object_size();
 
-    auto *source_page = this->runtime.heap.get_page_unaligned(ptr);
-    auto header = alaska::ObjectHeader::from(ptr);
-
-
-    // Ask the page for the size of the pointer
-    auto size = header->object_size();
-    if (size > max_object_size) return 0;
-
-    if (locality_page == nullptr) {
-      alaska::printf("locality_page is null, creating a new one\n");
-      locality_page = new_locality_page(size + 32);
+    if (object_size > 512 || old_header->localized) {
+      return 0;
     }
 
-    void *new_location = locality_page->alloc(*m, size);
-    if (unlikely(new_location == nullptr)) {
-      alaska::printf("  Locality page %p cannot allocate %zu bytes\n", locality_page, size);
-      locality_page = new_locality_page(size + 32);
-      new_location = locality_page->alloc(*m, size);
-      if (new_location == nullptr) {
-        return 0;
-      }
-    }
+    bool localized = false;
+    localized += localize_one(m);
 
-    // Now for the actual localization
-    memcpy(new_location, ptr, size);  // Copy the data
-    if (source_page->is_owned_by(this))
-      source_page->release_local(*m, ptr);  // Release the old location
-    else
-      source_page->release_remote(*m, ptr);  // Release the old location
+    if (allowed_depth == 1) return localized;
 
-    m->set_pointer(new_location);  // Write the new location
-    moved_count += 1;
+    long num_recursed = 0;
+    auto header = alaska::ObjectHeader::from(m);
 
-#if 0
-    // TODO: localize one level of pointers?
-    if (allowed_depth > 0) {
-      auto *ptr = (void **)new_location;
-      size_t scan_size = 128;
-      if (size < scan_size) scan_size = size;
-      auto *end = (void **)((char *)ptr + scan_size);
+    // alaska::Mapping *to_walk[object_size / sizeof(void *)];
+    // long walk_top = 0;
 
-      while (ptr < end) {
-        auto *p = *ptr;
 
-        alaska::Mapping *mp;
-        void *data;
-        if (check_handle(p, mp, data)) {
-          auto header = alaska::ObjectHeader::from(data);
-          if (not header->localized && header->object_size() <= max_object_size) {
-            moved_count += localize(m, allowed_depth - 1);
-          }
-        }
-        ptr++;
-      }
-    }
-#endif
-    return moved_count;
+    header->walk([&](alaska::Mapping *om, alaska::ObjectHeader *oheader) {
+      // to_walk[walk_top++] = om;
+      localized += localize_one(om);
+      num_recursed += this->localize(om, allowed_depth - 1, depth + 1);
+    });
+
+    // for (long i = 0; i < walk_top; i++) {
+    //   num_recursed += this->localize(to_walk[i], allowed_depth - 1, depth + 1);
+    // }
+
+
+    return (localized ? 1 : 0) + num_recursed;
   }
 
   ThreadCache::LocalizationResult ThreadCache::localize(alaska::handle_id_t *hids, size_t count) {
+    static int dump_number = 0;
+    int dump = dump_number++;
     LocalizationResult res;
     res.count = 0;  // We haven't localized anything yet.
 
+
     runtime.with_barrier([&]() {
+      LocalityReport report;
       long localizedHandles = 0;
-      for (size_t i = 0; i < count; i++) {
+
+      size_t walk_distance = 1;
+      walk_distance = count;
+      int num_duplicates = 0;
+
+      for (size_t i = 0; i < walk_distance; i++) {
         alaska::Mapping *m = nullptr;
         void *data = nullptr;
-        if (!check_handle(hids[i], m, data)) continue;
-        localizedHandles += localize(m, 0);  // Localize to a depth of four.
+
+        auto hid = hids[i];
+        if (hid == 0) continue;
+        if (!alaska::check_mapping(hid, m, data)) continue;
+
+        // check that the handle is unique in the hids list.
+        // bool unique = true;
+        // for (size_t j = 0; j < i; j++) {
+        //   if (hids[j] == hid) {
+        //     unique = false;
+        //     num_duplicates++;
+        //     break;
+        //   }
+        // }
+        // if (!unique) continue;
+        constexpr int depth = 16;
+
+        // alaska::grade_locality(*m, depth, report);
+        localizedHandles += localize(m, depth);
       }
+      // alaska::printf("dump %d had %d duplicate handles\n", dump, num_duplicates);
+
+      // report.dump();
+      // alaska::printf("YUKON_LOCALITY: %6.2f%%, %zuB %fMB, %ld localized\n",
+      //     report.locality() * 100.0f, report.object_bytes,
+      //     report.object_bytes / (1024.0f * 1024.0f), localizedHandles);
 
       res.count = localizedHandles;
     });
