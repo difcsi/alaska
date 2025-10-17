@@ -27,21 +27,14 @@ namespace alaska {
    * policies. For example, one page might only allocate objects of a fixed size,
    * and another might allocate objects of varying sizes.
    */
-  static constexpr uint64_t page_shift_factor = 13;  // 21; // 16
+  static constexpr uint64_t page_shift_factor = 18;  // 21; // 16
   static constexpr size_t page_size = 1LU << page_shift_factor;
   static constexpr size_t huge_object_thresh = 4096;
 
   // Forward Declaration
-  template <typename T>
-  class Magazine;
+  class MagazineBase;
   class ThreadCache;
   class HeapPage;
-
-
-  // used for linked lists in HeapPage instances
-  struct Block final {
-    Block* next;
-  };
 
 
   // A super simple type-level indicator tat a size is aligned to the heap's alignment
@@ -59,11 +52,14 @@ namespace alaska {
 
   // This structure is placed at the start of each heap page in memory to identify the owner.
   struct HeapPageHeader {
+    static constexpr uint64_t expected_magic = 0xDEADBEEFDEADBEEF;
     HeapPage* owner;
+    uint64_t magic = expected_magic;
+    uint64_t __padding;
     char* end;      // End of the usable memory in this page.
     char start[0];  // Start of the usable memory in this page.
   };
-  static_assert(sizeof(HeapPageHeader) <= 16, "HeapPageHeader must be 16 bytes");
+  static_assert(alignof(HeapPageHeader) != 16, "HeapPageHeader must be 16 bytes");
 
 
 
@@ -93,6 +89,7 @@ namespace alaska {
     inline bool contains(void* ptr) const;
     virtual float fragmentation(void) { return 0.0f; /*placeholder*/ }
     virtual size_t committed_bytes(void) { return header()->end - header()->start; }
+    virtual size_t available(void) = 0; // how many bytes are available for allocation?
 
 
     void* start(void) const { return memory; }
@@ -113,7 +110,10 @@ namespace alaska {
 
    public:
     // Intrusive linked list for magazine membership
+
+    alaska::MagazineBase* magazine = nullptr;
     struct list_head mag_list;
+    bool was_full = false;
   };
 
 

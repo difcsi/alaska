@@ -19,6 +19,9 @@ class MockHeapPage : public alaska::HeapPage {
   ~MockHeapPage(void) override {}
   MOCK_METHOD(void*, alloc, (const alaska::Mapping& m, alaska::AlignedSize size), (override));
   MOCK_METHOD(bool, release_local, (const alaska::Mapping& m, void* ptr), (override));
+
+  size_t available(void) override { return mock_avail; }
+  size_t mock_avail = 1;
 };
 
 char heap_memory[alaska::page_size];

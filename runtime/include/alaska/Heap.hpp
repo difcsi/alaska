@@ -91,9 +91,11 @@ namespace alaska {
       return addr >= (uintptr_t)heap_start && addr < (uintptr_t)heap_end;
     }
 
-    alaska::HeapPage *get_page(void *page);
-    alaska::HeapPage *get_page_unaligned(void *addr);
     const ck::vec<alaska::HeapPage *> &get_page_table(void) const { return page_table; }
+
+
+    // get the page containing some object.
+    static alaska::HeapPage *get_page(void *object);
 
     template <typename Fn>
     void for_each_page(Fn fn) {
@@ -108,6 +110,8 @@ namespace alaska {
         return true;
       });
     }
+
+    void collect(ThreadCache *tc, int sc);
 
 
    private:
@@ -130,14 +134,9 @@ namespace alaska {
   };
 
 
-  inline alaska::HeapPage *Heap::get_page(void *page) {
-    auto *p = walk_page_table(page, false);
-    if (p == nullptr) return nullptr;
-    return *p;
-  }
-
-  inline alaska::HeapPage *Heap::get_page_unaligned(void *addr) {
-    HeapPageHeader *h = (HeapPageHeader *)((uintptr_t)addr & ~(alaska::page_size - 1));
+  inline alaska::HeapPage *Heap::get_page(void *object) {
+    HeapPageHeader *h = (HeapPageHeader *)((uintptr_t)object & ~(alaska::page_size - 1));
+    if (h->magic != HeapPageHeader::expected_magic) return nullptr;
     return h->owner;
   }
 
@@ -164,11 +163,33 @@ namespace alaska {
   template <typename T, typename Fn>
   T *Heap::find_or_alloc_page(
       alaska::Magazine<T> &mag, ThreadCache *owner, size_t avail_requirement, Fn &&init_fn) {
+    long num_full = 0;
+    long num_found = 0;
     if (mag.size() != 0) {
       T *best = nullptr;
       // alaska::printf("Searching for page with at least %zu available\n", avail_requirement);
       mag.for_each([&](T *p) {
         size_t avail = p->available();
+        if (avail == 0) num_full++;
+
+        num_found++;
+        if (avail >= avail_requirement && p->get_owner() == nullptr) {
+          best = p;
+          return false;
+        }
+
+        return true;
+
+
+
+        // if (avail == 0) {
+        //   num_full++;
+        //   return true;
+        // } else {
+        //   best = p;
+        //   return false;
+        // }
+
         if ((size_t)avail >= (size_t)avail_requirement and p->get_owner() == nullptr) {
           // best = p;
           if (best == nullptr) {
@@ -185,6 +206,10 @@ namespace alaska {
         }
         return true;
       });
+
+      // printf("Find or alloc page. looked at %8ld pages, %8ld full (%.2f%%)\n", num_found,
+      // num_full,
+      //     (float)num_full / (float)num_found * 100.0f);
 
       if (best != NULL) {
         best->set_owner(owner);
