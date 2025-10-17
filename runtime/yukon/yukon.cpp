@@ -41,7 +41,6 @@ extern "C" void yukon_enable_localization(int enable) {
 
   // -------------------------------------------- //
   // if (enable_localization && !enable) {
-
   //   // the_runtime->heap.compact_sizedpages();
   //   exit(0);
   //   return;
@@ -53,6 +52,8 @@ extern "C" void yukon_enable_localization(int enable) {
   alaska::printf("YUKON: localization %s\n", enable ? "enabled" : "disabled");
   if (enable_localization) {
     schedule_localization_interrupt();
+    // the_runtime->brute_force_localization(*yukon_get_tc());
+    // the_runtime->heap.compact_sizedpages();
   }
 }
 

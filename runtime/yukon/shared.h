@@ -129,7 +129,7 @@ struct yukon_schedule_arg {
 #define YUKON_IOCTL_RETURN _IO(YUKON_IOCTL_MAGIC, 1)
 
 static volatile long localization_latch = 0;
-static uint64_t yukon_mean_dump_interval = 25'000;  // measured in microseconds.
+static uint64_t yukon_mean_dump_interval = 1000'000;  // measured in microseconds.
 
 // This is true if localization is enabled in the system.
 // There are a few ways to disble localization, such as environment variables and the user-facing
@@ -227,11 +227,19 @@ static void dump_htlb(alaska::ThreadCache *tc) {
   auto fd = alaska::HandleTable::get_ht_fd();
   auto &rt = alaska::Runtime::get();
 
-  auto *space = tc->localizer.get_hotness_buffer(DUMP_SIZE);
-  // alaska::handle_id_t space[DUMP_SIZE];
+  // rt.with_barrier([&]() {
+  //   alaska::printf("YUKON: Grading the heap...\n");
+  //   rt.grade_heap();
+  //   alaska::printf("YUKON: Done grading the heap.\n");
+  // });
+
+  return;
+
+  // auto *space = tc->localizer.get_hotness_buffer(DUMP_SIZE);
+  alaska::handle_id_t space[DUMP_SIZE];
   dump_htlb_into(tc, space);
-  // tc->localize(space, DUMP_SIZE);
-  tc->localizer.feed_hotness_buffer(DUMP_SIZE, space);
+  tc->localize(space, DUMP_SIZE);
+  // tc->localizer.feed_hotness_buffer(DUMP_SIZE, space);
 }
 
 // This method attempts to localize by feeding the localizer with new dump data.
