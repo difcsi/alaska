@@ -22,9 +22,9 @@ namespace alaska {
 
   // knobs
   constexpr float GOOD_QUALITY = 0.5;
-  constexpr int64_t BADNESS_CUTOFF = 5000;
-  constexpr int64_t LOCALIZE_CUTOFF = 5000;
-  constexpr int64_t STEP = 2500;
+  constexpr int64_t BADNESS_CUTOFF = 5;
+  constexpr int64_t LOCALIZE_CUTOFF = 5;
+  constexpr int64_t STEP = 1;
   constexpr int64_t LOCALIZATION_INTERVAL = 50;
 
 
@@ -262,11 +262,18 @@ namespace alaska {
     // Reset the dump handles vector back to zero.
     dump_handles.reset_size();
 
+    LocalityReport report;
+
     for (size_t i = 0; i < count; i++) {
       alaska::Mapping *m = nullptr;
       void *data = nullptr;
       if (!check_handle(handle_ids[i], m, data)) continue;
 
+
+      //alaska::printf("GRADING: %p, %p\n", m, m->get_pointer());
+      alaska::grade_locality(*m, 15, report);
+      report.dump();
+      // alaska::printf("    DONE GRADING: %p\n", m);
 
 
       // tc.localize(m, 4);  // Localize to a depth of four.
@@ -276,8 +283,10 @@ namespace alaska {
       //   break;
       // }
 
-      auto header = ObjectHeader::from(m);
-      header->marked = true;
+
+
+      // auto header = ObjectHeader::from(m);
+      // header->marked = true;
       continue;
 #if 0
       if (header->localized) continue;
@@ -316,6 +325,8 @@ namespace alaska {
       }
 #endif
     }
+
+    report.dump();
 
     // // alaska::printf("Discovered %zu handles\n", dump_handles.size());
     // for (auto *m : dump_handles) {

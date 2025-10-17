@@ -171,8 +171,15 @@ namespace alaska {
       // improve)
       size_t out_handles = 0;
       size_t in_handles = 0;
+
+      // How many objects are localized
+      size_t total_localized = 0;
     };
     HeapReport grade_heap(void);
+
+    void brute_force_localization(alaska::ThreadCache &tc);
+
+
 
    private:
     int next_thread_cache_id = 0;
@@ -195,4 +202,20 @@ namespace alaska {
 
   // called from translate.cpp
   int do_handle_fault(uint64_t handle);
+
+  struct LocalityReport {
+    size_t out_pointers = 0;  // How many pointers point out of the block?
+    size_t in_pointers = 0;   // How many pointers point into the same block?
+    size_t object_bytes = 0;  // How many bytes are used by objects?
+    void dump();
+    float locality() {
+      size_t total = out_pointers + in_pointers;
+      if (total == 0) return 1.0f;
+      return (float)in_pointers / (float)total;
+    }
+  };
+
+  // Grade the locality of an object graph starting at `root`. Not sure how to deal with cycles yet.
+  LocalityReport grade_locality(alaska::Mapping &root, int max_depth = 15);
+  void grade_locality(alaska::Mapping &root, int max_depth, LocalityReport &report);
 }  // namespace alaska

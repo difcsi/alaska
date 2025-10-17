@@ -184,6 +184,32 @@ namespace alaska {
   bool is_initialized(void) { return atomic_get(runtime_initialized); }
 
 
+
+  void Runtime::brute_force_localization(alaska::ThreadCache &tc) {
+    long localized = 0;
+    constexpr long depth = 6;
+    constexpr float skip_threshold = 0.9f;
+    long skipped = 0;
+    long not_skipped = 0;
+    handle_table.for_each_handle([&](alaska::Mapping *m) {
+      // LocalityReport report = grade_locality(*m, depth);
+      // if (report.locality() > skip_threshold) {
+      //   skipped++;
+      //   return;
+      // }
+      not_skipped++;
+
+      localized += tc.localize(m, depth);
+    });
+    alaska::printf("Brute-force localized %ld objects\n", localized);
+    alaska::printf("   Skipped %f%%\n", skipped * 100.0f / (float)(skipped + not_skipped));
+  }
+
+  //  6 -   64b (cache line)
+  // 10 - 1024b
+  // 12 - 4096b (page)
+  static constexpr int grade_page_shift = 12;  // 12 for page, 6 for cache line
+
   Runtime::HeapReport Runtime::grade_heap(void) {
     auto start_time = alaska_timestamp();
     HeapReport report{0};
@@ -204,6 +230,8 @@ namespace alaska {
       auto header = alaska::ObjectHeader::from(p);
       if (!header) return;
 
+      if (header->localized) report.total_localized++;
+
       size_t obj_size = header->object_size();
 
       size_t sc = alaska::size_to_class(obj_size);
@@ -215,14 +243,14 @@ namespace alaska {
       report.total_handles++;
       report.object_bytes += obj_size;
 
-      uintptr_t object_page = (uintptr_t)p >> 12;
-      uintptr_t handle_page = (uintptr_t)m >> 12;
+      uintptr_t object_page = (uintptr_t)p >> grade_page_shift;
+      uintptr_t handle_page = (uintptr_t)m >> grade_page_shift;
 
       // alaska::printf("Walking object %p (size=%zu, data=%p)\n", m, obj_size, header->data());
       // Walk the mapping to count in/out pointers.
       header->walk([&](alaska::Mapping *om, alaska::ObjectHeader *oheader) {
         void *p = oheader->data();
-        uintptr_t opage = (uintptr_t)p >> 12;
+        uintptr_t opage = (uintptr_t)p >> grade_page_shift;
         if (opage != object_page) {
           size_class_histogram[sc].out_pointers++;
           report.out_pointers++;
@@ -231,7 +259,7 @@ namespace alaska {
           report.in_pointers++;
         }
 
-        uintptr_t hpage = (uintptr_t)om >> 12;
+        uintptr_t hpage = (uintptr_t)om >> grade_page_shift;
         if (hpage != handle_page) {
           report.out_handles++;
         } else {
@@ -254,6 +282,8 @@ namespace alaska {
     alaska::printf("Graded heap in %.3f ms\n", (end_time - start_time) / 1e6f);
     alaska::printf("Total committed bytes:      %zu\n", report.committed_bytes);
     alaska::printf("Total handles:              %zu\n", report.total_handles);
+    alaska::printf("Localized:                  %zu (%f%%)\n", report.total_localized,
+        report.total_localized * 100.0f / (float)report.total_handles);
     alaska::printf(
         "Handle table bytes:         %zu\n", report.total_handles * sizeof(alaska::Mapping));
     alaska::printf("Total object bytes:         %zu\n", report.object_bytes);
@@ -267,25 +297,21 @@ namespace alaska {
 
     // in/out pointers
     if (report.in_pointers + report.out_pointers > 0) {
-      alaska::printf("Pointer Locality:           %.2f%%\n",
-          100.0 * (double)report.in_pointers / (double)(report.in_pointers + report.out_pointers));
-    } else {
-      alaska::printf("Pointer Locality:           N/A\n");
+      alaska::printf("Pointer Locality:           %.2f%%  %zu/%zu\n",
+          100.0 * (double)report.in_pointers / (double)(report.in_pointers + report.out_pointers),
+          report.in_pointers, report.out_pointers);
     }
-    alaska::printf("    In-Pointers:            %zu\n", report.in_pointers);
-    alaska::printf("    Out-Pointers:           %zu\n", report.out_pointers);
 
 
     // in/out handles
     if (report.in_handles + report.out_handles > 0) {
-      alaska::printf("Handle Locality:            %.2f%%\n",
-          100.0 * (double)report.in_handles / (double)(report.in_handles + report.out_handles));
-    } else {
-      alaska::printf("Handle Locality:            N/A\n");
+      alaska::printf("Handle Locality:            %.2f%%  %zu/%zu\n",
+          100.0 * (double)report.in_handles / (double)(report.in_handles + report.out_handles),
+          report.in_handles, report.out_handles);
     }
-    alaska::printf("    In-Handles:             %zu\n", report.in_handles);
-    alaska::printf("    Out-Handles:            %zu\n", report.out_handles);
 
+
+    /*
     alaska::printf("\nSize Class Histogram:\n");
     alaska::printf(" Size Class | Size |  Count  |  In Ptrs  | Out Ptrs |  Locality \n");
     alaska::printf("-------------------------------------------------------------\n");
@@ -299,6 +325,7 @@ namespace alaska {
       alaska::printf(" %10zu | %4zu | %7zu | %9zu | %8zu | %8.2f%% \n", i, alaska::class_to_size(i),
           count, in_ptrs, out_ptrs, locality);
     }
+    */
 
 
 
@@ -307,6 +334,49 @@ namespace alaska {
 
 
 
+
+    return report;
+  }
+
+
+  void LocalityReport::dump() {
+    alaska::printf("Locality Report:\n");
+    alaska::printf("  In-Pointers:  %zu\n", in_pointers);
+    alaska::printf("  Out-Pointers: %zu\n", out_pointers);
+    alaska::printf("  Object Bytes: %zu\n", object_bytes);
+    if (in_pointers + out_pointers > 0) {
+      alaska::printf("  Pointer Locality: %.2f%%\n",
+          100.0 * (double)in_pointers / (double)(in_pointers + out_pointers));
+    } else {
+      alaska::printf("  Pointer Locality: N/A\n");
+    }
+  }
+
+  void grade_locality(alaska::Mapping &m, int depth, LocalityReport &report) {
+    // alaska::printf("Grading locality at depth %d for object %p\n", depth, &m);
+
+    auto header = alaska::ObjectHeader::from(&m);
+    auto p = header->data();
+    report.object_bytes += header->object_size();
+    uintptr_t object_page = (uintptr_t)p >> grade_page_shift;
+
+
+    header->walk([&](alaska::Mapping *om, alaska::ObjectHeader *oheader) {
+      uintptr_t opage = (uintptr_t)oheader->data() >> grade_page_shift;
+      if (opage != object_page) {
+        report.out_pointers++;
+      } else {
+        report.in_pointers++;
+      }
+      if (depth == 1) return;
+      grade_locality(*om, depth - 1, report);
+    });
+  }
+
+
+  LocalityReport grade_locality(alaska::Mapping &root, int max_depth) {
+    LocalityReport report;
+    grade_locality(root, max_depth, report);
     return report;
   }
 
