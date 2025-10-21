@@ -33,11 +33,11 @@ extern "C" void yukon_enable_localization(int enable) {
     enable = 0;
   }
 
-  the_runtime->with_barrier([&]() {
-    alaska::printf("YUKON: Grading the heap...\n");
-    the_runtime->grade_heap();
-    alaska::printf("YUKON: Done grading the heap.\n");
-  });
+  // the_runtime->with_barrier([&]() {
+  //   alaska::printf("YUKON: Grading the heap...\n");
+  //   the_runtime->grade_heap();
+  //   alaska::printf("YUKON: Done grading the heap.\n");
+  // });
 
   // -------------------------------------------- //
   // if (enable_localization && !enable) {
@@ -78,7 +78,12 @@ static void CONSTRUCTOR yukon_init(void) {
 
   signal(SIGPROF, yukon_dump_alarm_handler);
 
-  yukon_enable_localization(false);
+  if (getenv("LOCON") != nullptr) {
+    alaska::printf("LOCON passed. turning localization on at boot.\n");
+    yukon_enable_localization(true);
+  } else {
+    yukon_enable_localization(false);
+  }
 
   // Register segmentation fault handler
   // struct sigaction sa;
@@ -88,6 +93,7 @@ static void CONSTRUCTOR yukon_init(void) {
   // sigaction(SIGSEGV, &sa, NULL);
 
 
+#if !defined(ALASKA_YUKON_NO_HARDWARE)
   if (getenv("YUKON_PHYS") != NULL) {
     alaska::printf("Setting up handles to bypass the TLB when they're cached!\n");
     uint64_t value;
@@ -101,6 +107,7 @@ static void CONSTRUCTOR yukon_init(void) {
     read_csr(CSR_HTBASE, value);
     alaska::printf("  Reading it back gave 0x%lx\n", value);
   }
+#endif
 }
 
 

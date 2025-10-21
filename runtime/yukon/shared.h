@@ -18,6 +18,8 @@
 #define CSR_HTDUMP 0xc3
 #define CSR_HTINVAL 0xc4
 
+
+
 #define write_csr(reg, val) \
   ({ asm volatile("csrw %0, %1" ::"i"(reg), "rK"((uint64_t)val) : "memory"); })
 
@@ -129,7 +131,7 @@ struct yukon_schedule_arg {
 #define YUKON_IOCTL_RETURN _IO(YUKON_IOCTL_MAGIC, 1)
 
 static volatile long localization_latch = 0;
-static uint64_t yukon_mean_dump_interval = 1000'000;  // measured in microseconds.
+static uint64_t yukon_mean_dump_interval = 100'000;  // measured in microseconds.
 
 // This is true if localization is enabled in the system.
 // There are a few ways to disble localization, such as environment variables and the user-facing
@@ -227,11 +229,25 @@ static void dump_htlb(alaska::ThreadCache *tc) {
   auto fd = alaska::HandleTable::get_ht_fd();
   auto &rt = alaska::Runtime::get();
 
-  // rt.with_barrier([&]() {
-  //   alaska::printf("YUKON: Grading the heap...\n");
-  //   rt.grade_heap();
-  //   alaska::printf("YUKON: Done grading the heap.\n");
-  // });
+  rt.with_barrier([&]() {
+    alaska::printf("YUKON: Grading the heap...\n");
+    auto grade = rt.grade_heap();
+
+    auto total_pointers = grade.in_pointers + grade.out_pointers;
+    alaska::printf("Total pointers graded: %zu\n", total_pointers);
+    if (total_pointers > 0) {
+      float locality = (float)grade.in_pointers / (float)total_pointers;
+      alaska::printf("Locality = %f%% (%zu in, %zu out)\n", locality * 100.0f, grade.in_pointers,
+          grade.out_pointers);
+      if (locality < 0.5f) {
+        alaska::printf(
+            "YUKON: Low locality detected (%.2f%%). Running brute-force localization...\n",
+            locality * 100.0f);
+        rt.brute_force_localization(*tc);
+      }
+    }
+    ::printf("YUKON: Done grading the heap.\n");
+  });
 
   return;
 

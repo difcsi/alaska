@@ -86,7 +86,7 @@ namespace alaska {
     ALASKA_INLINE void *get_pointer_fast(void) const { return (void *)this->value; }
 
     inline void invalidate(void) {
-#ifdef __riscv
+#if defined(__riscv) && !defined(ALASKA_YUKON_NO_HARDWARE)
       // Fence *before* the handle invalidation.
       // __asm__ volatile("fence" ::: "memory");
       __asm__ volatile("csrw 0xc4, %0" ::"rK"((uint64_t)handle_id()) : "memory");

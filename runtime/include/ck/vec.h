@@ -465,63 +465,7 @@ namespace ck {
     }
 
 
-
-    void sort() { msort(0, size() - 1); }
-
    private:
-    void merge(int l, int m, int r) {
-      auto& buf = *this;
-      int i, j, k;
-
-      int n1 = m - l + 1;
-      int n2 = r - m;
-
-      int L[n1], R[n2];
-
-      // copy the arrays..
-      // TODO: remove the duplication
-      for (i = 0; i < n1; i++)
-        L[i] = buf[l + i];
-      for (j = 0; j < n2; j++)
-        R[j] = buf[m + 1 + j];
-
-      i = 0;
-      j = 0;
-      k = l;
-
-      while (i < n1 && j < n2) {
-        if (Traits<T>::cmp(L[i], R[j]) <= 0) {
-          buf[k] = L[i];
-          i++;
-        } else {
-          buf[k] = R[j];
-          j++;
-        }
-        k++;
-      }
-
-      while (i < n1) {
-        buf[k] = L[i];
-        i++;
-        k++;
-      }
-
-      while (j < n2) {
-        buf[k] = R[j];
-        j++;
-        k++;
-      }
-    }
-
-    void msort(int l, int r) {
-      if (l < r) {
-        int m = (l + r) / 2;
-        msort(l, m);
-        msort(m + 1, r);
-        merge(l, m, r);
-      }
-    }
-
     void reset_capacity() { m_capacity = inline_capacity; }
 
     static int padded_capacity(int capacity) {
