@@ -2,7 +2,7 @@
   description = "The Alaska Handle-Based Memory Management System";
 
   inputs = {
-    nixpkgs.url = "nixpkgs/nixos-24.05";
+    nixpkgs.url = "nixpkgs/nixos-25.05";
     flake-utils.url = "github:numtide/flake-utils";
   };
 
@@ -14,11 +14,11 @@
 
 
           runInputs = with pkgs; [
-            llvmPackages_16.libllvm
-            llvmPackages_16.clang
-            llvmPackages_16.stdenv
-            llvmPackages_16.libunwind
-            llvmPackages_16.openmp
+            llvmPackages_21.libllvm
+            llvmPackages_21.clang
+            llvmPackages_21.stdenv
+            llvmPackages_21.libunwind
+            llvmPackages_21.openmp
 
             (gllvm.overrideAttrs {
               doCheck = false;
@@ -59,6 +59,7 @@
             hardeningDisable = ["all"];
 
             shellHook = ''
+              unset NIX_ENFORCE_NO_NATIVE
               source $PWD/enable
             '';
           };

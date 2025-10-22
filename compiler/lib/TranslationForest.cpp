@@ -41,9 +41,7 @@ struct TranslationVisitor : public llvm::InstVisitor<TranslationVisitor> {
   void visitGetElementPtrInst(llvm::GetElementPtrInst &I) {
     // Simply insert an `alaska.derive` function right after `I`
     auto t = get_incoming_translated_value(node);
-    I.setOperand(0, t);
-    node.translated = &I;
-    // node.translated = alaska::insertDerivedBefore(I.getNextNode(), t, &I);
+    node.translated = alaska::insertDerivedBefore(I.getNextNode(), t, &I);
   }
 
   void visitLoadInst(llvm::LoadInst &I) {
@@ -136,7 +134,7 @@ static llvm::Instruction *compute_translation_insertion_location(
 
 
   if (auto invokeInst = dyn_cast<llvm::InvokeInst>(pointerToTranslate)) {
-    effectivePointerInstruction = invokeInst->getNormalDest()->getFirstNonPHIOrDbg();
+    effectivePointerInstruction = &*invokeInst->getNormalDest()->getFirstNonPHIOrDbg();
   } else if (auto pointerToTranslateInst = dyn_cast<llvm::Instruction>(pointerToTranslate)) {
     effectivePointerInstruction = pointerToTranslateInst;
   } else if (auto arg = dyn_cast<llvm::Argument>(pointerToTranslate)) {

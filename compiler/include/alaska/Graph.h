@@ -277,12 +277,12 @@ namespace alaska {
       auto count(const NodeType &n) { return this->_filter.count(n); }
 
       auto outgoing(const NodeType &n) {
-        auto [begin, end] = this->out_neighbors(n);
+        auto [begin, end] = _graph->out_neighbors(n);
         return filtered_iter_wrapper<decltype(begin)>(begin, end, *this);
       }
 
       auto incoming(const NodeType &n) {
-        auto [begin, end] = this->in_neighbors(n);
+        auto [begin, end] = _graph->in_neighbors(n);
         return filtered_iter_wrapper<decltype(begin)>(begin, end, *this);
       }
 

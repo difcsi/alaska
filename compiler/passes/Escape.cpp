@@ -176,9 +176,9 @@ static bool mightBlock(llvm::Function &F) {
     return false;
   }
 
-  if (name.startswith("alaska.")) return false;
-  if (name.startswith("__alaska")) return false;
-  if (name.startswith("llvm.")) return false;
+  if (name.starts_with("alaska.")) return false;
+  if (name.starts_with("__alaska")) return false;
+  if (name.starts_with("llvm.")) return false;
   // alaska::println("might block: ", name);
 
   return true;
@@ -231,18 +231,18 @@ llvm::PreservedAnalyses AlaskaEscapePass::run(llvm::Module &M, llvm::ModuleAnaly
     // if the function is defined (has a body) skip it
     if (!F.empty()) continue;
     // Ignore calls to alaska functions
-    if (F.getName().startswith("alaska_")) ignore = true;
-    if (F.getName().startswith("alaska.")) ignore = true;
+    if (F.getName().starts_with("alaska_")) ignore = true;
+    if (F.getName().starts_with("alaska.")) ignore = true;
     // Intriniscs
-    if (F.getName().startswith("llvm.lifetime")) ignore = true;
-    if (F.getName().startswith("llvm.va_start")) ignore = true;
-    if (F.getName().startswith("llvm.va_end")) ignore = true;
-    if (F.getName().startswith("llvm.dbg")) ignore = true;
-    if (F.getName().startswith("llvm.smax")) ignore = true;
-    if (F.getName().startswith("llvm.smin")) ignore = true;
-    // if (F.getName().startswith("llvm.memcpy")) ignore = true;
-    // if (F.getName().startswith("llvm.memset")) ignore = true;
-    if (F.getName().startswith("llvm.experimental.noalias")) ignore = true;
+    if (F.getName().starts_with("llvm.lifetime")) ignore = true;
+    if (F.getName().starts_with("llvm.va_start")) ignore = true;
+    if (F.getName().starts_with("llvm.va_end")) ignore = true;
+    if (F.getName().starts_with("llvm.dbg")) ignore = true;
+    if (F.getName().starts_with("llvm.smax")) ignore = true;
+    if (F.getName().starts_with("llvm.smin")) ignore = true;
+    // if (F.getName().starts_with("llvm.memcpy")) ignore = true;
+    // if (F.getName().starts_with("llvm.memset")) ignore = true;
+    if (F.getName().starts_with("llvm.experimental.noalias")) ignore = true;
 
     if (ignore) functions_to_ignore.insert(std::string(F.getName()));
   }
@@ -264,29 +264,53 @@ llvm::PreservedAnalyses AlaskaEscapePass::run(llvm::Module &M, llvm::ModuleAnaly
       if (F.isVarArg() && !relax_vararg_escape()) {
         // If the function is empty, we must escape varargs
         if (F.empty()) {
+          alaska::println("ESCAPE ", F.getName(), " empty vararg to function");
           info.escape_varargs = true;
         } else {
           // Otherwise, we need to do some snooping, as a va_list could escape somewhere else.
           // The way we do this is *dumb*. If a function which has varargs calls "va_start", we
           // conservativley say that the arguments will escape somewhere else. *va_args suck*
-          if (va_start_func != NULL) {
-            for (auto user : va_start_func->users()) {
-              if (auto inst = dyn_cast<llvm::Instruction>(user)) {
-                if (inst->getFunction() == &F) {
-                  info.escape_varargs = true;
-                  break;
+
+
+          {
+            bool found = false;
+            for (auto &BB : F) {
+              for (auto &I : BB) {
+                if (auto *call = dyn_cast<CallBase>(&I)) {
+                  if (auto *callee = call->getCalledFunction()) {
+                    if (callee->getName().starts_with("llvm.va_start")) {
+                      alaska::println("ESCAPE ", F.getName(), " vararg due to va_start");
+                      info.escape_varargs = true;
+                      found = true;
+                      break;
+                    }
+                  }
                 }
               }
+              if (found) break;
             }
           }
+
+          // if (va_start_func != NULL) {
+          //   for (auto user : va_start_func->users()) {
+          //     if (auto inst = dyn_cast<llvm::Instruction>(user)) {
+          //       if (inst->getFunction() == &F) {
+          //         info.escape_varargs = true;
+          //         break;
+          //       }
+          //     }
+          //   }
+          // }
         }
       }
 
       for (auto &arg : F.args()) {
         int no = arg.getArgNo();
         if (F.empty()) {
+          alaska::println("ESCAPE ", F.getName(), " arg ", no);
           info.args.insert(no);
         } else if (arg.getType()->isPointerTy() && arg.hasAttribute(Attribute::ByVal)) {
+          alaska::println("ESCAPE ", F.getName(), " byval arg ", no);
           info.args.insert(no);
         }
       }
@@ -360,7 +384,8 @@ llvm::PreservedAnalyses AlaskaEscapePass::run(llvm::Module &M, llvm::ModuleAnaly
 
 
           if (auto func = dyn_cast<llvm::Function>(call->getCalledOperand())) {
-            // llvm::errs() << "escape to argument " << i << " at call to \e[31m\"" <<
+            // llvm::errs() << "ESCAPE " << func->getName() << " :: " << *func->getFunctionType() <<
+            // "\n"; llvm::errs() << "escape to argument " << i << " at call to \e[31m\"" <<
             // func->getName() << "\e[0m"; if (llvm::DILocation *Loc = I.getDebugLoc()) {
             //   unsigned Line = Loc->getLine();
             //   unsigned Column = Loc->getColumn();  // Optional: Get column number

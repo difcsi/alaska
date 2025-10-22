@@ -95,8 +95,6 @@ bool collectOffsets(GetElementPtrInst *gep, const DataLayout &DL, unsigned BitWi
 llvm::PreservedAnalyses AlaskaLowerPass::run(llvm::Module &M, llvm::ModuleAnalysisManager &AM) {
   std::set<llvm::Instruction *> to_delete;
 
-  llvm::DataLayout DL(&M);
-
   // Lower GC rooting.
   if (auto func = M.getFunction("alaska.safepoint_poll")) {
     auto pollFunc = M.getOrInsertFunction("alaska_safepoint", func->getFunctionType());
@@ -131,7 +129,7 @@ llvm::PreservedAnalyses AlaskaLowerPass::run(llvm::Module &M, llvm::ModuleAnalys
       // If the return value is only used in calls, run the more expensive "escape" variant
       bool onlyCalls = true;
       for (auto *user : call->users()) {
-        if (auto c = dyn_cast<CallInst>(user)) {
+        if (isa<CallInst>(user)) {
           // Good!
         } else {
           // onlyCalls = false;

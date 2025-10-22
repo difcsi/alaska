@@ -275,7 +275,7 @@ bool alaska::shouldTranslate(llvm::Value *val) {
 
   if (auto arg = dyn_cast<Argument>(val)) {
     auto *func = arg->getParent();
-    if (func && func->getName().startswith(".omp_outlined")) {
+    if (func && func->getName().starts_with(".omp_outlined")) {
       return false;
     }
   }

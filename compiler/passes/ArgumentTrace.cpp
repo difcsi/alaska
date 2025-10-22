@@ -15,9 +15,9 @@ PreservedAnalyses AlaskaArgumentTracePass::run(Module &M, ModuleAnalysisManager 
   for (auto &F : M) {
     if (F.empty()) continue;
 
-    if (F.getName().startswith("alaska.")) continue;
-    if (F.getName().startswith("alaska_")) continue;
-    if (F.getName().startswith("__alaska")) continue;
+    if (F.getName().starts_with("alaska.")) continue;
+    if (F.getName().starts_with("alaska_")) continue;
+    if (F.getName().starts_with("__alaska")) continue;
 
     IRBuilder<> atEntry(F.front().getFirstNonPHI());
 

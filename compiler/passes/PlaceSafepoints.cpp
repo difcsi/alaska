@@ -380,7 +380,7 @@ PreservedAnalyses PlaceSafepointsPass::run(Module &M, ModuleAnalysisManager &AM)
 static bool needsStatepoint(CallBase *Call, const TargetLibraryInfo &TLI) {
   if (auto *CI = dyn_cast<CallInst>(Call)) {
     if (auto *f = CI->getCalledFunction()) {
-      if (f->getName().startswith("alaska.")) return false;
+      if (f->getName().starts_with("alaska.")) return false;
     }
     if (CI->isInlineAsm()) return false;
   }
@@ -496,7 +496,7 @@ static bool doesNotRequireEntrySafepointBefore(CallBase *Call) {
     switch (II->getIntrinsicID()) {
       case Intrinsic::experimental_gc_statepoint:
       case Intrinsic::experimental_patchpoint_void:
-      case Intrinsic::experimental_patchpoint_i64:
+      case Intrinsic::experimental_patchpoint:
         // The can wrap an actual call which may grow the stack by an unbounded
         // amount or run forever.
         return false;
@@ -563,9 +563,7 @@ static Instruction *findLocationForEntrySafepoint(Function &F, DominatorTree &DT
 // const char GCSafepointPollName[] = "gc.safepoint_poll";
 const char GCSafepointPollName[] = "alaska_safepoint";
 
-static bool isGCSafepointPoll(Function &F) {
-  return F.getName().equals(GCSafepointPollName);
-}
+static bool isGCSafepointPoll(Function &F) { return F.getName() == GCSafepointPollName; }
 
 /// Returns true if this function should be rewritten to include safepoint
 /// polls and parseable call sites.  The main point of this function is to be
@@ -573,7 +571,7 @@ static bool isGCSafepointPoll(Function &F) {
 static bool shouldRewriteFunction(Function &F) {
   // TODO: do this w/ the gc interface instead!
   // TODO: This should check the GCStrategy
-  if (F.getName().startswith("alaska")) {
+  if (F.getName().starts_with("alaska")) {
     return false;
   }
 
@@ -596,16 +594,12 @@ static bool shouldRewriteFunction(Function &F) {
 // TODO: These should become properties of the GCStrategy, possibly with
 // command line overrides.
 static bool enableEntrySafepoints(Function &F) {
-  if (F.getName().startswith(".omp_outlined")) return true;
-  if (F.getName().startswith("omp_outlined")) return true;
+  if (F.getName().starts_with(".omp_outlined")) return true;
+  if (F.getName().starts_with("omp_outlined")) return true;
   return !NoEntry;
 }
-static bool enableBackedgeSafepoints(Function &F) {
-  return !NoBackedge;
-}
-static bool enableCallSafepoints(Function &F) {
-  return !NoCall;
-}
+static bool enableBackedgeSafepoints(Function &F) { return !NoBackedge; }
+static bool enableCallSafepoints(Function &F) { return !NoCall; }
 
 // Insert a safepoint poll immediately before the given instruction.  Does
 // not handle the parsability of state at the runtime call, that's the

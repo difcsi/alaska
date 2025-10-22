@@ -52,7 +52,7 @@ PreservedAnalyses AlaskaTranslatePass::run(Module &M, ModuleAnalysisManager &AM)
     if (F.empty()) continue;
     auto section = F.getSection();
     // Skip functions which are annotated with `alaska_rt`
-    if (section.startswith("$__ALASKA__")) {
+    if (section.starts_with("$__ALASKA__")) {
       F.setSection("");
       continue;
     }

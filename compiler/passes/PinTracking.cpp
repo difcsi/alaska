@@ -121,7 +121,7 @@ PreservedAnalyses PinTrackingPass::run(Module &M, ModuleAnalysisManager &AM) {
             if (not targetFuncType->getReturnType()->isVoidTy()) continue;
           }
           if (auto func = call->getCalledFunction(); func != nullptr) {
-            if (func->getName().startswith("alaska.")) continue;
+            if (func->getName().starts_with("alaska.")) continue;
             if (func->getName() == "alaska_do_handle_fault_check") continue;
           }
           statepointCalls.insert(call);
@@ -136,7 +136,7 @@ PreservedAnalyses PinTrackingPass::run(Module &M, ModuleAnalysisManager &AM) {
             if (not targetFuncType->getReturnType()->isVoidTy()) continue;
           }
           if (auto func = invoke->getCalledFunction(); func != nullptr) {
-            if (func->getName().startswith("alaska.")) continue;
+            if (func->getName().starts_with("alaska.")) continue;
           }
           statepointCalls.insert(invoke);
         }

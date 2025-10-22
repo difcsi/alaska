@@ -63,7 +63,7 @@ namespace llvm {
       bool operator()(const Remedy_ptr &lhs, const Remedy_ptr &rhs) const {
         // if same remedy type use custom comparator,
         // otherwise compare based on cost or remedy name (if cost the same)
-        if (lhs->getRemedyName().equals(rhs->getRemedyName()))
+        if (lhs->getRemedyName() == (rhs->getRemedyName()))
           return lhs->compare(rhs);
         else if (lhs->cost == rhs->cost)
           return (lhs->getRemedyName().compare(rhs->getRemedyName()) == -1);

@@ -63,7 +63,7 @@ class TranslationInlinePass : public llvm::PassInfoMixin<TranslationInlinePass> 
     std::vector<llvm::CallInst *> toInline;
     for (auto &F : M) {
       if (F.empty()) continue;
-      if (F.getName().startswith("alaska_")) {
+      if (F.getName().starts_with("alaska_")) {
         for (auto user : F.users()) {
           if (auto call = dyn_cast<CallInst>(user)) {
             if (call->getCalledFunction() != &F) continue;
@@ -109,8 +109,8 @@ class SimpleFunctionPass : public llvm::PassInfoMixin<SimpleFunctionPass> {
     for (auto &F : M) {
       if (F.empty()) continue;
 
-      if (F.getName().startswith(".omp_outlined")) continue;
-      if (F.getName().startswith("omp_outlined")) continue;
+      if (F.getName().starts_with(".omp_outlined")) continue;
+      if (F.getName().starts_with("omp_outlined")) continue;
 
       llvm::DominatorTree DT(F);
       llvm::PostDominatorTree PDT(F);
@@ -123,7 +123,7 @@ class SimpleFunctionPass : public llvm::PassInfoMixin<SimpleFunctionPass> {
           if (auto *call = dyn_cast<CallInst>(&I)) {
             auto *calledFunction = call->getCalledFunction();
             // Is it an intrinsic?
-            if (calledFunction->getName().startswith("llvm.")) continue;
+            if (calledFunction->getName().starts_with("llvm.")) continue;
 
             hasProblematicCalls = true;
           }
