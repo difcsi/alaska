@@ -16,6 +16,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <iterator>
+#include <fstream>
+#include <iostream>
+#include <sstream>
 
 using namespace llvm;
 
@@ -92,6 +95,64 @@ bool collectOffsets(GetElementPtrInst *gep, const DataLayout &DL, unsigned BitWi
 }
 
 
+
+static inline void trim_inplace(std::string &s) {
+  size_t b = 0, e = s.size();
+  while (b < e && std::isspace(static_cast<unsigned char>(s[b])))
+    ++b;
+  while (e > b && std::isspace(static_cast<unsigned char>(s[e - 1])))
+    --e;
+  if (b == 0 && e == s.size()) return;
+  s.assign(s, b, e - b);
+}
+
+static bool parse_profile_file(const char *path, std::map<std::string, char> &out) {
+  std::ifstream in(path);
+  if (!in.is_open()) {
+    std::perror(path);
+    return false;
+  }
+
+  std::string line;
+  size_t line_no = 0;
+  while (std::getline(in, line)) {
+    ++line_no;
+
+    // Remove comments
+    if (auto pos = line.find('#'); pos != std::string::npos) line.erase(pos);
+    trim_inplace(line);
+    if (line.empty()) continue;
+
+    // First non-space char is the value
+    char value = 0;
+    size_t i = 0;
+    while (i < line.size() && std::isspace(static_cast<unsigned char>(line[i])))
+      ++i;
+    if (i >= line.size()) continue;
+    value = line[i++];
+
+    // Skip spaces before key
+    while (i < line.size() && std::isspace(static_cast<unsigned char>(line[i])))
+      ++i;
+
+    // Rest of the line is the key
+    std::string key;
+    if (i < line.size()) key = line.substr(i);
+    trim_inplace(key);
+
+    if (key.empty()) {
+      llvm::errs() << "alaska: warning: " << path << ":" << line_no
+                   << ": missing key after value\n";
+      continue;
+    }
+
+    alaska::println("alaska: profile: '", value, "' for '", key, "'");
+    out[key] = value;
+  }
+
+  return true;
+}
+
 llvm::PreservedAnalyses AlaskaLowerPass::run(llvm::Module &M, llvm::ModuleAnalysisManager &AM) {
   std::set<llvm::Instruction *> to_delete;
 
@@ -117,15 +178,64 @@ llvm::PreservedAnalyses AlaskaLowerPass::run(llvm::Module &M, llvm::ModuleAnalys
 
 
 
+  // function which is (u64, u64, u64) -> void
+  auto trackHitMiss = M.getOrInsertFunction("__alaska_track_hitmiss",
+      FunctionType::get(Type::getVoidTy(M.getContext()),
+          {PointerType::get(M.getContext(), 0), Type::getInt64Ty(M.getContext()),
+              Type::getInt64Ty(M.getContext())},
+          false));
+
+  std::map<std::string, char> profilePoints;
+  if (const char *profilePath = getenv("ALASKA_HPROF"); profilePath != nullptr) {
+    parse_profile_file(profilePath, profilePoints);
+  }
+
+  bool addProfilerData = getenv("ALASKA_PROFON") != nullptr;
+
   // Lower alaska.translate
   if (auto func = M.getFunction("alaska.translate")) {
     auto translateFunc = M.getOrInsertFunction("alaska_translate", func->getFunctionType());
+    auto translateFuncUncond =
+        M.getOrInsertFunction("alaska_translate_uncond", func->getFunctionType());
+    auto translateFuncNop = M.getOrInsertFunction("alaska_translate_nop", func->getFunctionType());
+
     auto translateEscapeFunc =
         M.getOrInsertFunction("alaska_translate_escape", func->getFunctionType());
 
     for (auto *call : collectCalls(M, "alaska.translate")) {
       IRBuilder<> b(call);  // insert after the call
-      
+
+
+      std::string ValueStr = "";
+      llvm::raw_string_ostream OS(ValueStr);
+      OS << call->getParent()->getParent()->getName();
+      OS << ":";
+      OS << call->getParent()->getName();
+      OS << ":";
+      call->getOperand(0)->printAsOperand(OS);
+      std::string profilePoint = OS.str();
+
+      auto translateFuncForThisSite = translateFunc;
+      // Look through the profile data (if we have any) for what kind of translate function to use.
+      auto it = profilePoints.find(profilePoint);
+      if (it != profilePoints.end()) {
+        char value = it->second;
+        alaska::println("Found profile data '", value, "' for ", profilePoint);
+        // alaska::println("   that is... ", *call->getOperand(0));
+        switch (value) {
+          case 'H':
+            translateFuncForThisSite = translateFuncUncond;
+            break;
+          case 'P':
+            translateFuncForThisSite = translateFuncNop;
+            break;
+          default:
+            break;
+        }
+      } else {
+        // alaska::println("No profile data for ", profilePoint);
+      }
+
       // If the return value is only used in calls, run the more expensive "escape" variant
       bool onlyCalls = true;
       for (auto *user : call->users()) {
@@ -139,7 +249,22 @@ llvm::PreservedAnalyses AlaskaLowerPass::run(llvm::Module &M, llvm::ModuleAnalys
       if (onlyCalls) {
         call->setCalledFunction(translateEscapeFunc);
       } else {
-        call->setCalledFunction(translateFunc);
+        call->setCalledFunction(translateFuncForThisSite);
+      }
+
+
+
+      if (addProfilerData) {
+        // alaska::println("Inserted alaska.translate to ", *call->getOperand(0));
+        // after, insert a call to trackHitMiss with a random ID, original pointer, translated
+        // pointer place the builder after the call
+        b.SetInsertPoint(call->getNextNode());
+
+        auto id = b.CreateGlobalStringPtr(profilePoint.c_str());
+        auto originalPtr =
+            b.CreatePtrToInt(call->getArgOperand(0), Type::getInt64Ty(M.getContext()));
+        auto translatedPtr = b.CreatePtrToInt(call, Type::getInt64Ty(M.getContext()));
+        b.CreateCall(trackHitMiss, {id, originalPtr, translatedPtr});
       }
     }
   }
@@ -151,11 +276,12 @@ llvm::PreservedAnalyses AlaskaLowerPass::run(llvm::Module &M, llvm::ModuleAnalys
     to_delete.insert(call);
   }
 
+
   // Lower alaska.derive
   for (auto call : collectCalls(M, "alaska.derive")) {
     // Derive is just a marker to indicate that a GEP happened on a translated value.
     // In the end, we just replace it's uses with the GEP.
-    
+
     IRBuilder<> b(call);  // insert after the call
     auto base = call->getArgOperand(0);
     auto offset = dyn_cast<llvm::GetElementPtrInst>(call->getArgOperand(1));
@@ -165,11 +291,28 @@ llvm::PreservedAnalyses AlaskaLowerPass::run(llvm::Module &M, llvm::ModuleAnalys
     call->replaceAllUsesWith(gep);
 
     to_delete.insert(call);
+
+    // bool originalHasOtherOsers = false;
+    // for (auto user : offset->users()) {
+    //   if (user != call) {
+    //     originalHasOtherOsers = true;
+    //     break;
+    //   }
+    // }
+    // // if the original gep has no users, delete it too.
+    // if (originalHasOtherOsers) {
+    //   to_delete.insert(offset);
+    // } else {
+    //   alaska::println("Warning: alaska.derive's GEP has other uses; not deleting:", *offset);
+    // }
   }
 
   for (auto inst_to_delete : to_delete) {
     inst_to_delete->eraseFromParent();
   }
+
+
+  //
 
 #ifdef ALASKA_VERIFY_PASS
   for (auto &F : M) {

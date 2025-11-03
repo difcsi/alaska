@@ -40,15 +40,7 @@ extern int __LLVM_StackMaps __attribute__((weak));
 #define APPLY_OFFSET(mapped, bits) \
   (void *)((uint64_t)mapped + ((uint64_t)bits & ((1LU << ALASKA_SIZE_BITS) - 1)))
 
-extern "C" void *alaska_translate_uncond(void *ptr) {
-  int64_t bits = (int64_t)ptr;
 
-  auto m = alaska::Mapping::from_handle(ptr);
-  // Pull the address from the mapping
-  void *mapped = m->get_pointer_fast();
-  ptr = APPLY_OFFSET(mapped, bits);
-  return ptr;
-}
 
 // TODO: we don't use this anymore. Do we need it?
 void *alaska_translate_escape(void *ptr) {
@@ -69,7 +61,13 @@ extern void alaska_htlb_sim_track(uintptr_t handle);
 extern "C" void do_handle_fault(void) { return; }
 
 
-#define ENABLE_HANDLE_FAULTS
+// #define ENABLE_HANDLE_FAULTS
+
+// static long translate_miss = 0;
+// static long translate_hit = 0;
+// __attribute__((destructor)) static void alaska_translate_dtor() {
+//   printf("Alaska Translate Hits: %ld Misses: %ld\n", translate_hit, translate_miss);
+// }
 
 
 // This function is a marker, and just gets removed
@@ -77,41 +75,66 @@ extern "C" void do_handle_fault(void) { return; }
 __attribute__((noinline)) extern "C" void alaska_do_handle_fault_check(
     void *ptr, void *handle, void *retry);
 
-void *alaska_translate(void *ptr) {
+
+
+extern "C" __attribute__((always_inline)) void *alaska_translate_uncond(void *ptr) {
+  auto m = alaska::Mapping::from_handle(ptr);
+
+  // Grab the pointer
+  void *mapped = m->get_pointer_fast();
+  int64_t mapped_bits;
+
+  mapped_bits = (int64_t)mapped;
+
+  // Apply the offset from the pointer
+  void *result = APPLY_OFFSET(mapped, (int64_t)ptr);
+
+  return result;
+}
+
+extern "C" void *alaska_translate(void *ptr) {
 #ifdef ALASKA_HTLB_SIM
   alaska_htlb_sim_track((uintptr_t)ptr);
 #endif
 
   int64_t bits = (int64_t)ptr;
-  int64_t mapped_bits;
   if (unlikely(bits >= 0 || bits == -1)) {
+    // translate_miss++;
     return ptr;
   }
 
+  // translate_hit++;
 
-  // Grab the mapping from the runtime
-  auto m = alaska::Mapping::from_handle(ptr);
 
-retry_translation:
-  // Grab the pointer
-  void *mapped = m->get_pointer_fast();
+  return alaska_translate_uncond(ptr);
 
-  mapped_bits = (int64_t)mapped;
-#ifdef ENABLE_HANDLE_FAULTS
-  if (unlikely(mapped_bits < 0)) {
-    alaska::do_handle_fault(bits);
-    // goto retry_translation;
-    mapped = m->get_pointer_fast();
-  }
-#endif
-  // // load from the address for some reason
-  // uint8_t v;
-  // v = *(volatile uint8_t *)mapped;
+  //   // Grab the mapping from the runtime
+  //   auto m = alaska::Mapping::from_handle(ptr);
+  //   int64_t mapped_bits;
 
-  // Apply the offset from the pointer
-  void *result = APPLY_OFFSET(mapped, bits);
-  return result;
+  // retry_translation:
+  //   // Grab the pointer
+  //   void *mapped = m->get_pointer_fast();
+
+  //   mapped_bits = (int64_t)mapped;
+  // #ifdef ENABLE_HANDLE_FAULTS
+  //   if (unlikely(mapped_bits < 0)) {
+  //     alaska::do_handle_fault(bits);
+  //     // goto retry_translation;
+  //     mapped = m->get_pointer_fast();
+  //   }
+  // #endif
+
+  //   // Apply the offset from the pointer
+  //   void *result = APPLY_OFFSET(mapped, bits);
+
+  //   return result;
 }
+
+
+
+
+extern "C" void *alaska_translate_nop(void *p) { return p; }
 
 void alaska_release(void *ptr) {
   // This function is just a marker that `ptr` is now dead (no longer used)

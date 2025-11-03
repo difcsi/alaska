@@ -264,7 +264,7 @@ llvm::PreservedAnalyses AlaskaEscapePass::run(llvm::Module &M, llvm::ModuleAnaly
       if (F.isVarArg() && !relax_vararg_escape()) {
         // If the function is empty, we must escape varargs
         if (F.empty()) {
-          alaska::println("ESCAPE ", F.getName(), " empty vararg to function");
+          // alaska::println("ESCAPE ", F.getName(), " empty vararg to function");
           info.escape_varargs = true;
         } else {
           // Otherwise, we need to do some snooping, as a va_list could escape somewhere else.
@@ -279,7 +279,7 @@ llvm::PreservedAnalyses AlaskaEscapePass::run(llvm::Module &M, llvm::ModuleAnaly
                 if (auto *call = dyn_cast<CallBase>(&I)) {
                   if (auto *callee = call->getCalledFunction()) {
                     if (callee->getName().starts_with("llvm.va_start")) {
-                      alaska::println("ESCAPE ", F.getName(), " vararg due to va_start");
+                      // alaska::println("ESCAPE ", F.getName(), " vararg due to va_start");
                       info.escape_varargs = true;
                       found = true;
                       break;
@@ -307,10 +307,10 @@ llvm::PreservedAnalyses AlaskaEscapePass::run(llvm::Module &M, llvm::ModuleAnaly
       for (auto &arg : F.args()) {
         int no = arg.getArgNo();
         if (F.empty()) {
-          alaska::println("ESCAPE ", F.getName(), " arg ", no);
+          // alaska::println("ESCAPE ", F.getName(), " arg ", no);
           info.args.insert(no);
         } else if (arg.getType()->isPointerTy() && arg.hasAttribute(Attribute::ByVal)) {
-          alaska::println("ESCAPE ", F.getName(), " byval arg ", no);
+          // alaska::println("ESCAPE ", F.getName(), " byval arg ", no);
           info.args.insert(no);
         }
       }
@@ -384,14 +384,16 @@ llvm::PreservedAnalyses AlaskaEscapePass::run(llvm::Module &M, llvm::ModuleAnaly
 
 
           if (auto func = dyn_cast<llvm::Function>(call->getCalledOperand())) {
-            // llvm::errs() << "ESCAPE " << func->getName() << " :: " << *func->getFunctionType() <<
-            // "\n"; llvm::errs() << "escape to argument " << i << " at call to \e[31m\"" <<
-            // func->getName() << "\e[0m"; if (llvm::DILocation *Loc = I.getDebugLoc()) {
-            //   unsigned Line = Loc->getLine();
-            //   unsigned Column = Loc->getColumn();  // Optional: Get column number
-            //   llvm::errs() << " Line: " << Line << ", Column: " << Column << "\n";
-            // }
-            // llvm::errs() << "\n";
+            // llvm::errs() << "ESCAPE " << func->getName() << " :: " << *func->getFunctionType()
+            //              << "\n";
+            llvm::errs() << "escape to argument " << i << " at call to \e[31m\"" << func->getName()
+                         << "\e[0m" << " in function " << F.getName();
+            if (llvm::DILocation *Loc = I.getDebugLoc()) {
+              unsigned Line = Loc->getLine();
+              unsigned Column = Loc->getColumn();  // Optional: Get column number
+              llvm::errs() << " Line: " << Line << ", Column: " << Column << "\n";
+            }
+            llvm::errs() << "\n";
           }
 
 
