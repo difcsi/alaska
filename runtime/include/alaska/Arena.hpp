@@ -115,7 +115,6 @@ namespace alaska {
 
    private:
     Block* new_block(void) {
-      alaska::printf("Creating new arena block of size %zu\n", m_arena_size);
       Block* new_block = (Block*)alaska_internal_malloc(sizeof(Block) + m_arena_size);
       new_block->next = nullptr;
       new_block->used = 0;
