@@ -352,9 +352,6 @@ namespace alaska {
     // end = last_object_seen + 1;
     // dump("end of loop");
     this->bump_next = (void *)end;
-    // allocator.reset_bump_allocator(get_object(end));
-    alaska::printf("SizedPage<%lu>.compact: moved %ld objects from %p to %p\n", object_size,
-        moved_objects, this->memory, (void *)bump_next);
     // dump_live();
 
     this->bump_next = get_object(end);
