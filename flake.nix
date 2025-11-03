@@ -18,6 +18,7 @@
             llvmPackages_21.clang
             llvmPackages_21.stdenv
             llvmPackages_21.libunwind
+            llvmPackages_21.libcxxClang
             llvmPackages_21.openmp
 
             (gllvm.overrideAttrs {
@@ -30,6 +31,9 @@
             coreutils # For our bash scripts
             python3 # For running bin/alaska-transform
             file
+
+            gcc-unwrapped
+
 
             getconf
           ];
@@ -57,6 +61,8 @@
 
             LOCALE_ARCHIVE = "${glibcLocales}/lib/locale/locale-archive";
             hardeningDisable = ["all"];
+
+            LD_LIBRARY_PATH = "${pkgs.gcc-unwrapped.lib}/lib";
 
             shellHook = ''
               unset NIX_ENFORCE_NO_NATIVE
