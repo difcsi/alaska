@@ -27,24 +27,6 @@
 
 #include <stdlib.h>
 
-#ifdef ALASKA_YUKON
-#define write_csr(reg, val) \
-  ({ asm volatile("csrw %0, %1" ::"i"(reg), "rK"((uint64_t)val) : "memory"); })
-
-#define CSR_TRACE 0xc7
-static inline void mark_alloc(uint64_t handle_id) {
-  return;
-  write_csr(CSR_TRACE, handle_id);
-  write_csr(CSR_TRACE, 0);
-}
-
-static inline void mark_free(uint64_t handle_id) {
-  return;
-  write_csr(CSR_TRACE, handle_id | (1ULL << 63));
-  write_csr(CSR_TRACE, 0);
-}
-#endif
-
 
 static int dev_alaska_fd = -1;
 
