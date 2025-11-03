@@ -13,6 +13,12 @@ typedef struct node {
 
 unsigned int seed = 12345;
 
+node_t *get_right(node_t *n) {
+  node_t **r = &n->right;
+  // printf("%zx\n", (uintptr_t)r);
+  return *r;
+}
+
 
 char *generate_fake_string(int max_len) {
   int len = 1 + (rand_r(&seed) % max_len);
@@ -138,7 +144,7 @@ bool localize_structure(uint64_t ptr);
 void run_tests(node_t *n) {
 
 
-  for (int trial = 0; trial < 10; trial++) {
+  for (int trial = 0; trial < 15; trial++) {
     volatile unsigned long c = 0;
     uint64_t start = alaska_timestamp();
     for (int i = 0; i < 200; i++) {
@@ -159,12 +165,13 @@ void run_tests(node_t *n) {
 int main() {
   long start, end;
   node_t *n = jumble_tree(make_tree(18));
+  // node_t *n = make_tree(21);
   printf("localized,walk_time\n");
   bool localized = false;
   // return 0;
 
   // run_tests(n);
-  localized = localize_structure((uint64_t)n);
+  // localized = localize_structure((uint64_t)n);
   run_tests(n);
   free_tree(n);
 

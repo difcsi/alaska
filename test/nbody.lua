@@ -1,121 +1,147 @@
--- The Computer Language Benchmarks Game
--- https://salsa.debian.org/benchmarksgame-team/benchmarksgame/
--- contributed by Mike Pall
--- modified by Geoff Leyland
--- modified by Mario Pernici
+-- N-Body Gravitational Simulation
+-- Usage: lua nbody.lua [num_bodies] [timestep] [num_steps]
 
-sun = {}
-jupiter = {}
-saturn = {}
-uranus = {}
-neptune = {}
-
-local sqrt = math.sqrt
-
-local PI = 3.141592653589793
-local SOLAR_MASS = 4 * PI * PI
-local DAYS_PER_YEAR = 365.24
-sun.x = 0.0
-sun.y = 0.0
-sun.z = 0.0
-sun.vx = 0.0
-sun.vy = 0.0
-sun.vz = 0.0
-sun.mass = SOLAR_MASS
-jupiter.x = 4.84143144246472090e+00
-jupiter.y = -1.16032004402742839e+00
-jupiter.z = -1.03622044471123109e-01
-jupiter.vx = 1.66007664274403694e-03 * DAYS_PER_YEAR
-jupiter.vy = 7.69901118419740425e-03 * DAYS_PER_YEAR
-jupiter.vz = -6.90460016972063023e-05 * DAYS_PER_YEAR
-jupiter.mass = 9.54791938424326609e-04 * SOLAR_MASS
-saturn.x = 8.34336671824457987e+00
-saturn.y = 4.12479856412430479e+00
-saturn.z = -4.03523417114321381e-01
-saturn.vx = -2.76742510726862411e-03 * DAYS_PER_YEAR
-saturn.vy = 4.99852801234917238e-03 * DAYS_PER_YEAR
-saturn.vz = 2.30417297573763929e-05 * DAYS_PER_YEAR
-saturn.mass = 2.85885980666130812e-04 * SOLAR_MASS
-uranus.x = 1.28943695621391310e+01
-uranus.y = -1.51111514016986312e+01
-uranus.z = -2.23307578892655734e-01
-uranus.vx = 2.96460137564761618e-03 * DAYS_PER_YEAR
-uranus.vy = 2.37847173959480950e-03 * DAYS_PER_YEAR
-uranus.vz = -2.96589568540237556e-05 * DAYS_PER_YEAR
-uranus.mass = 4.36624404335156298e-05 * SOLAR_MASS
-neptune.x = 1.53796971148509165e+01
-neptune.y = -2.59193146099879641e+01
-neptune.z = 1.79258772950371181e-01
-neptune.vx = 2.68067772490389322e-03 * DAYS_PER_YEAR
-neptune.vy = 1.62824170038242295e-03 * DAYS_PER_YEAR
-neptune.vz = -9.51592254519715870e-05 * DAYS_PER_YEAR
-neptune.mass = 5.15138902046611451e-05 * SOLAR_MASS
-
-local bodies = {sun,jupiter,saturn,uranus,neptune}
-
-local function advance(bodies, nbody, dt)
-  for i=1,nbody do
-    local bi = bodies[i]
-    local bix, biy, biz, bimass = bi.x, bi.y, bi.z, bi.mass
-    local bivx, bivy, bivz = bi.vx, bi.vy, bi.vz
-    for j=i+1,nbody do
-      local bj = bodies[j]
-      local dx, dy, dz = bix-bj.x, biy-bj.y, biz-bj.z
-      local dist2 = dx*dx + dy*dy + dz*dz
-      local mag = sqrt(dist2)
-      mag = dt / (mag * dist2)
-      local bm = bj.mass*mag
-      bivx = bivx - (dx * bm)
-      bivy = bivy - (dy * bm)
-      bivz = bivz - (dz * bm)
-      bm = bimass*mag
-      bj.vx = bj.vx + (dx * bm)
-      bj.vy = bj.vy + (dy * bm)
-      bj.vz = bj.vz + (dz * bm)
-    end
-    bi.vx = bivx
-    bi.vy = bivy
-    bi.vz = bivz
-    bi.x = bix + dt * bivx
-    bi.y = biy + dt * bivy
-    bi.z = biz + dt * bivz
-  end
+local function parse_args()
+  local n_bodies = tonumber(arg[1]) or 200
+  local timestep = tonumber(arg[2]) or 0.01
+  local num_steps = tonumber(arg[3]) or 1000
+  return n_bodies, timestep, num_steps
 end
 
-local function energy(bodies, nbody)
-  local e = 0
-  for i=1,nbody do
-    local bi = bodies[i]
-    local vx, vy, vz, bim = bi.vx, bi.vy, bi.vz, bi.mass
-    e = e + (0.5 * bim * (vx*vx + vy*vy + vz*vz))
-    for j=i+1,nbody do
+local function create_body(x, y, z, vx, vy, vz, mass)
+  return {
+    pos = {x, y, z},
+    vel = {vx, vy, vz},
+    acc = {0, 0, 0},
+    mass = mass
+  }
+end
+
+local function init_bodies(n)
+  local bodies = {}
+  math.randomseed(os.time())
+  
+  for i = 1, n do
+    local x = (math.random() - 0.5) * 200
+    local y = (math.random() - 0.5) * 200
+    local z = (math.random() - 0.5) * 200
+    local vx = (math.random() - 0.5) * 2
+    local vy = (math.random() - 0.5) * 2
+    local vz = (math.random() - 0.5) * 2
+    local mass = 1 + math.random() * 4
+    
+    table.insert(bodies, create_body(x, y, z, vx, vy, vz, mass))
+  end
+  
+  return bodies
+end
+
+local function compute_forces(bodies)
+  local G = 6.674e-11
+  local n = #bodies
+  
+  -- Reset accelerations
+  for i = 1, n do
+    bodies[i].acc[1] = 0
+    bodies[i].acc[2] = 0
+    bodies[i].acc[3] = 0
+  end
+  
+  -- Pairwise force computation
+  for i = 1, n do
+    for j = i + 1, n do
+      local bi = bodies[i]
       local bj = bodies[j]
-      local dx, dy, dz = bi.x-bj.x, bi.y-bj.y, bi.z-bj.z
-      local distance = sqrt(dx*dx + dy*dy + dz*dz)
-      e = e - ((bim * bj.mass) / distance)
+      
+      local dx = bj.pos[1] - bi.pos[1]
+      local dy = bj.pos[2] - bi.pos[2]
+      local dz = bj.pos[3] - bi.pos[3]
+      
+      local dist_sq = dx * dx + dy * dy + dz * dz
+      local dist = math.sqrt(dist_sq)
+      
+      -- Avoid singularity
+      if dist > 0.1 then
+        local f = G * bi.mass * bj.mass / dist_sq
+        local f_norm = f / dist
+        
+        -- Force on i due to j
+        bi.acc[1] = bi.acc[1] + f_norm * dx / bi.mass
+        bi.acc[2] = bi.acc[2] + f_norm * dy / bi.mass
+        bi.acc[3] = bi.acc[3] + f_norm * dz / bi.mass
+        
+        -- Force on j due to i (Newton's 3rd law)
+        bj.acc[1] = bj.acc[1] - f_norm * dx / bj.mass
+        bj.acc[2] = bj.acc[2] - f_norm * dy / bj.mass
+        bj.acc[3] = bj.acc[3] - f_norm * dz / bj.mass
+      end
     end
   end
-  return e
 end
 
-local function offsetMomentum(b, nbody)
-  local px, py, pz = 0, 0, 0
-  for i=1,nbody do
-    local bi = b[i]
-    local bim = bi.mass
-    px = px + (bi.vx * bim)
-    py = py + (bi.vy * bim)
-    pz = pz + (bi.vz * bim)
+local function integrate_euler(bodies, dt)
+  for i = 1, #bodies do
+    local b = bodies[i]
+    -- Update velocity
+    b.vel[1] = b.vel[1] + b.acc[1] * dt
+    b.vel[2] = b.vel[2] + b.acc[2] * dt
+    b.vel[3] = b.vel[3] + b.acc[3] * dt
+    
+    -- Update position
+    b.pos[1] = b.pos[1] + b.vel[1] * dt
+    b.pos[2] = b.pos[2] + b.vel[2] * dt
+    b.pos[3] = b.pos[3] + b.vel[3] * dt
   end
-  b[1].vx = -px / SOLAR_MASS
-  b[1].vy = -py / SOLAR_MASS
-  b[1].vz = -pz / SOLAR_MASS
 end
 
-local N = tonumber(arg and arg[1]) or 1000
-local nbody = #bodies
+local function compute_total_energy(bodies)
+  local G = 6.674e-11
+  local ke = 0
+  local pe = 0
+  
+  for i = 1, #bodies do
+    local b = bodies[i]
+    local v_sq = b.vel[1]^2 + b.vel[2]^2 + b.vel[3]^2
+    ke = ke + 0.5 * b.mass * v_sq
+  end
+  
+  for i = 1, #bodies do
+    for j = i + 1, #bodies do
+      local bi = bodies[i]
+      local bj = bodies[j]
+      local dx = bj.pos[1] - bi.pos[1]
+      local dy = bj.pos[2] - bi.pos[2]
+      local dz = bj.pos[3] - bi.pos[3]
+      local dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+      
+      if dist > 0.1 then
+        pe = pe - G * bi.mass * bj.mass / dist
+      end
+    end
+  end
+  
+  return ke, pe, ke + pe
+end
 
-offsetMomentum(bodies, nbody)
-io.write( string.format("%0.9f",energy(bodies, nbody)), "\n")
-for i=1,N do advance(bodies, nbody, 0.01) end
-io.write( string.format("%0.9f",energy(bodies, nbody)), "\n")
+local function simulate(bodies, timestep, num_steps)
+  print(string.format("Simulating %d bodies for %d steps (dt=%.4f)", 
+    #bodies, num_steps, timestep))
+  print("Step\tKE\t\tPE\t\tTotal E")
+  
+  for step = 1, num_steps do
+    compute_forces(bodies)
+    integrate_euler(bodies, timestep)
+    
+    if step % (num_steps / 10) == 0 or step == 1 then
+      local ke, pe, te = compute_total_energy(bodies)
+      print(string.format("%d\t%.3e\t%.3e\t%.3e", step, ke, pe, te))
+    end
+  end
+  
+  local ke, pe, te = compute_total_energy(bodies)
+  print(string.format("Final:\t%.3e\t%.3e\t%.3e", ke, pe, te))
+end
+
+local n_bodies, timestep, num_steps = parse_args()
+local bodies = init_bodies(n_bodies)
+simulate(bodies, timestep, num_steps)
