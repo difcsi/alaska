@@ -277,6 +277,7 @@ namespace alaska {
 
     auto end_time = alaska_timestamp();
 
+#if 0
     // TODO: remove this dumping when done debugging.
     alaska::printf("-- HEAP GRADE REPORT --\n");
     alaska::printf("Graded heap in %.3f ms\n", (end_time - start_time) / 1e6f);
@@ -328,10 +329,8 @@ namespace alaska {
     */
 
 
-
-
     alaska::printf("-----------------------\n");
-
+#endif
 
 
 
