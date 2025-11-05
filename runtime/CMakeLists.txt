@@ -50,10 +50,10 @@ add_definitions(-D_REENTRANT)
 
 
 include_directories(
-	include/
+  ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
-install(FILES include/alaska.h include/yukon.h DESTINATION include)
+install(FILES alaska.h yukon.h DESTINATION include)
 
 
 # The alaska library is broken up into two parts: the core, and the runtime.
@@ -65,37 +65,40 @@ install(FILES include/alaska.h include/yukon.h DESTINATION include)
 ##########################################################################################
 # This defines the core
 
-set(CORE_SOURCES
-	core/HandleTable.cpp
-	core/Runtime.cpp
-  core/BarrierWorker.cpp
-	core/Logger.cpp
-	core/Heap.cpp
-  core/ThreadCache.cpp
-	core/SizeClass.cpp
-  core/HugeObjectAllocator.cpp
-  core/PersistentAllocation.cpp
+set(CORE_SOURCES "")
+file(GLOB_RECURSE CORE_SOURCES "alaska/*.cpp" "alaska/*.c")
 
-  core/HeapPage.cpp
-  core/SizedPage.cpp
-  core/LocalityPage.cpp
-  core/Localizer.cpp
-  core/ObjectHeader.cpp
+# set(CORE_SOURCES
+# 	core/HandleTable.cpp
+# 	core/Runtime.cpp
+#   core/BarrierWorker.cpp
+# 	core/Logger.cpp
+# 	core/Heap.cpp
+#   core/ThreadCache.cpp
+# 	core/SizeClass.cpp
+#   core/HugeObjectAllocator.cpp
+#   core/PersistentAllocation.cpp
 
-  core/Utils.cpp
+#   core/HeapPage.cpp
+#   core/SizedPage.cpp
+#   core/LocalityPage.cpp
+#   core/Localizer.cpp
+#   core/ObjectHeader.cpp
 
-  # core/DiskHeap.cpp
-  # core/disk/Disk.cpp
-  # core/disk/BufferPool.cpp
-  # core/disk/Structure.cpp
+#   core/Utils.cpp
 
-  # include our internal malloc implementation (which is a rip of rpmalloc)
-  core/alaska_internal_malloc.c
+#   # core/DiskHeap.cpp
+#   # core/disk/Disk.cpp
+#   # core/disk/BufferPool.cpp
+#   # core/disk/Structure.cpp
+
+#   # include our internal malloc implementation (which is a rip of rpmalloc)
+#   core/alaska_internal_malloc.c
 
 
-	# C++ glue stuff, since we don't link against libc++ in the core library.
-	core/glue.cpp
-)
+# 	# C++ glue stuff, since we don't link against libc++ in the core library.
+# 	core/glue.cpp
+# )
 
 
 
@@ -152,11 +155,11 @@ install(
   PUBLIC_HEADER DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
   PRIVATE_HEADER DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 
-install(FILES
-  include/alaska/sim/HTLB.hpp
-  include/alaska/sim/TLB.hpp
-  include/alaska/sim/StatisticsManager.hpp
-  DESTINATION include/alaska/sim)
+# install(FILES
+#   sim/HTLB.hpp
+#   sim/TLB.hpp
+#   sim/StatisticsManager.hpp
+#   DESTINATION include/sim)
 
 
 
@@ -241,7 +244,7 @@ endif(ALASKA_HTLB_SIM)
   add_library(lifetimemalloc SHARED ${SRC_FILES})
   target_link_libraries(lifetimemalloc dl)
 
-  add_bitcode(alaska_translate SOURCES core/translate.cpp)
+  add_bitcode(alaska_translate SOURCES rt/translate.cpp)
   add_bitcode(alaska_compat SOURCES rt/compat.c)
   add_bitcode(alaska_stub SOURCES
       stub/net.c

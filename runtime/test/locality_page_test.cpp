@@ -6,7 +6,7 @@
 #include <alaska/Heap.hpp>
 
 #include <alaska/Runtime.hpp>
-#include <alaska/sim/handle_ptr.hpp>
+#include <sim/handle_ptr.hpp>
 
 #define DUMMY_THREADCACHE ((alaska::ThreadCache *)0x1000UL)
 

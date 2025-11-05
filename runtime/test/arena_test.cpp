@@ -7,7 +7,6 @@
 #include <alaska/Heap.hpp>
 
 #include <alaska/Runtime.hpp>
-#include <alaska/sim/handle_ptr.hpp>
 #include <alaska/Arena.hpp>
 
 class ArenaTest : public ::testing::Test {

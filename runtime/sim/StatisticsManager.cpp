@@ -1,9 +1,7 @@
-#include <alaska/sim/StatisticsManager.hpp>
+#include <sim/StatisticsManager.hpp>
 #include <chrono>
 #include <stdexcept>
 #include <unordered_map>
-
-#include <alaska/sim/StatisticsManager.hpp>
 
 using namespace alaska::sim;
 
@@ -107,7 +105,7 @@ void StatisticsManager::dump_csv_header(FILE *out) {
     fprintf(out, ","); \
   }                    \
   fprintf(out, #s);
-#include <alaska/sim/stats.inc>
+#include "./stats.inc"
 #undef STAT
   fprintf(out, "\n");
 }
@@ -122,7 +120,7 @@ void StatisticsManager::dump_csv_row(FILE *out) {
     fprintf(out, ","); \
   }                    \
   fprintf(out, "%lu", getStatistic(s));
-#include <alaska/sim/stats.inc>
+#include "./stats.inc"
 #undef STAT
   fprintf(out, "\n");
 }

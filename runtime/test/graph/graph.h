@@ -16,7 +16,7 @@
 #include "util.h"
 #include "platform_atomics.h"
 
-#include <alaska/sim/handle_ptr.hpp>
+#include <sim/handle_ptr.hpp>
 
 
 // Syntactic sugar for an edge

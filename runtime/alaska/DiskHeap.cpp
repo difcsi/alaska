@@ -13,7 +13,6 @@
 #include <string.h>
 #include <alaska/DiskHeap.hpp>
 #include "alaska/Heap.hpp"
-#include "alaska/liballoc.h"
 #include "ck/vec.h"
 #include <alaska/utils.h>
 #include <errno.h>

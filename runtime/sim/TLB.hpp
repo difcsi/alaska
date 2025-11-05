@@ -15,7 +15,7 @@
 #include <fstream>
 #include <unordered_map>
 #include <vector>
-#include <alaska/sim/StatisticsManager.hpp>
+#include <sim/StatisticsManager.hpp>
 
 
 namespace alaska::sim {

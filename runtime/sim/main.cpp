@@ -2,7 +2,7 @@
 #include <new>
 #include <alaska/Runtime.hpp>
 #include <alaska/ThreadCache.hpp>
-#include <alaska/sim/HTLB.hpp>
+#include <sim/HTLB.hpp>
 #include <stdlib.h>
 #include <stdio.h>
 #include <unordered_map>

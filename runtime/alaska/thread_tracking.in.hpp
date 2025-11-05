@@ -10,8 +10,7 @@
  */
 
 #include <alaska/ThreadRegistry.hpp>
-#include <alaska/rt.hpp>
-#include <alaska/rt/barrier.hpp>
+#include <rt/barrier.hpp>
 #include <dlfcn.h>
 #include <unistd.h>
 #include <pthread.h>

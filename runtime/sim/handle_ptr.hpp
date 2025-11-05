@@ -12,7 +12,7 @@
 #pragma once
 
 #include <alaska/alaska.hpp>
-#include <alaska/sim/HTLB.hpp>
+#include <sim/HTLB.hpp>
 
 namespace alaska::sim {
 

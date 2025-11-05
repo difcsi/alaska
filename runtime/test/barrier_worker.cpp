@@ -7,7 +7,7 @@
 #include <alaska/Heap.hpp>
 
 #include <alaska/Runtime.hpp>
-#include <alaska/sim/handle_ptr.hpp>
+#include <sim/handle_ptr.hpp>
 
 class BarrierWorkerTest : public ::testing::Test {
  public:

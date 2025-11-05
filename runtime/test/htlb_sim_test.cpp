@@ -9,8 +9,8 @@
 #include <alaska/ThreadCache.hpp>
 #include <unordered_set>
 
-#include <alaska/sim/handle_ptr.hpp>
-#include <alaska/sim/HTLB.hpp>
+#include <sim/handle_ptr.hpp>
+#include <sim/HTLB.hpp>
 
 
 

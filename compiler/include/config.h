@@ -1,1 +1,1 @@
-#include "../../runtime/include/alaska/config.h"
+#include "../../runtime/alaska/config.h"

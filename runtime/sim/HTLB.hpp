@@ -1,7 +1,7 @@
 #pragma once
 
-#include <alaska/sim/TLB.hpp>
-#include <alaska/sim/StatisticsManager.hpp>
+#include <sim/TLB.hpp>
+#include <sim/StatisticsManager.hpp>
 #include <alaska/ThreadCache.hpp>
 #include <cstdint>
 #include <fstream>

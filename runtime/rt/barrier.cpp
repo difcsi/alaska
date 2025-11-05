@@ -19,7 +19,7 @@
 #include <alaska.h>
 #include <alaska/utils.h>
 #include <alaska/alaska.hpp>
-#include <alaska/rt/barrier.hpp>
+#include <rt/barrier.hpp>
 #include <alaska/Runtime.hpp>
 #include <alaska/ThreadRegistry.hpp>
 
@@ -260,9 +260,9 @@ void alaska::barrier::get_pinned_handles(bool pin) {
 
       void** localSet = (void**)(reg + psi.offset);
       for (uint32_t i = 0; i < psi.count; i++) {
-        void *p = localSet[i];
+        void* p = localSet[i];
         if (rt.is_valid_handle(p)) {
-          auto *m = alaska::Mapping::from_handle(p);
+          auto* m = alaska::Mapping::from_handle(p);
           // printf(" (%zx)", m->handle_id());
           m->set_pinned(pin);
         } else {
@@ -717,8 +717,7 @@ void alaska_blob_init(struct alaska_blob_config* cfg) {
   // exit(-1);
 }
 
-// This function doesn't really need to exist,
-extern "C" void alaska_barrier_poll(void) {
-  abort();
-  return;
+extern "C" uint64_t alaska_barrier_poll() {
+  // nop.
+  return 0;
 }

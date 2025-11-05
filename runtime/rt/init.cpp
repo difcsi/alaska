@@ -13,10 +13,9 @@
 // This file contains the initialization and deinitialization functions for the
 // alaska::Runtime instance, as well as some other bookkeeping logic.
 
-#include <alaska/rt.hpp>
 #include <alaska/Runtime.hpp>
 #include <alaska/alaska.hpp>
-#include <alaska/rt/barrier.hpp>
+#include <rt/barrier.hpp>
 #include "alaska/SizeClass.hpp"
 #include <pthread.h>
 #include <stdio.h>
