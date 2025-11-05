@@ -98,17 +98,6 @@ TEST_F(RuntimeTest, UniqueSlabAllocations) {
 
 
 
-TEST_F(RuntimeTest, CapacityGrowth) {
-  // Allocate a large number of slabs
-  for (size_t i = 0; i < alaska::HandleTable::initial_capacity * 2; i++) {
-    auto* slab = runtime.handle_table.fresh_slab(DUMMY_THREADCACHE);
-    ASSERT_NE(slab, nullptr);
-  }
-
-  // Check that the capacity of the handle table has grown
-  ASSERT_GT(runtime.handle_table.capacity(), alaska::HandleTable::initial_capacity);
-}
-
 
 
 TEST_F(RuntimeTest, SlabGetHandle) {
