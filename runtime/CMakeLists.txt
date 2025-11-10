@@ -68,38 +68,6 @@ install(FILES alaska.h yukon.h DESTINATION include)
 set(CORE_SOURCES "")
 file(GLOB_RECURSE CORE_SOURCES "alaska/*.cpp" "alaska/*.c")
 
-# set(CORE_SOURCES
-# 	core/HandleTable.cpp
-# 	core/Runtime.cpp
-#   core/BarrierWorker.cpp
-# 	core/Logger.cpp
-# 	core/Heap.cpp
-#   core/ThreadCache.cpp
-# 	core/SizeClass.cpp
-#   core/HugeObjectAllocator.cpp
-#   core/PersistentAllocation.cpp
-
-#   core/HeapPage.cpp
-#   core/SizedPage.cpp
-#   core/LocalityPage.cpp
-#   core/Localizer.cpp
-#   core/ObjectHeader.cpp
-
-#   core/Utils.cpp
-
-#   # core/DiskHeap.cpp
-#   # core/disk/Disk.cpp
-#   # core/disk/BufferPool.cpp
-#   # core/disk/Structure.cpp
-
-#   # include our internal malloc implementation (which is a rip of rpmalloc)
-#   core/alaska_internal_malloc.c
-
-
-# 	# C++ glue stuff, since we don't link against libc++ in the core library.
-# 	core/glue.cpp
-# )
-
 
 
 add_library(alaska_core_objects OBJECT ${CORE_SOURCES})
