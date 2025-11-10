@@ -15,10 +15,10 @@ unsigned int seed = 12345;
 
 
 node_t *make_list(int depth) {
-  node_t *list = NULL;
+  node_t *list = null;
 
   while (depth > 0) {
-  node_t *n = calloc(1, sizeof(node_t));
+    node_t *n = calloc(1, sizeof(node_t));
 
     n->next = list;
     list = n;
@@ -28,11 +28,10 @@ node_t *make_list(int depth) {
   return list;
 }
 
-__attribute__((noinline))
-int list_count_nodes(volatile node_t *n) {
+__attribute__((noinline)) int list_count_nodes(volatile node_t *n) {
   int count = 0;
 
-  while (n != NULL) {
+  while (n != null) {
     count++;
     n = n->next;
   }
@@ -41,9 +40,9 @@ int list_count_nodes(volatile node_t *n) {
 
 
 void free_list(node_t *n) {
-  if (n == NULL) return;
+  if (n == null) return;
 
-  while (n != NULL) {
+  while (n != null) {
     node_t *cur = n;
     n = n->next;
     free(cur);
@@ -55,8 +54,6 @@ bool localize_structure(uint64_t ptr);
 
 
 void run_tests(node_t *n) {
-
-
   for (int trial = 0; trial < 15; trial++) {
     volatile unsigned long c = 0;
     uint64_t start = alaska_timestamp();
@@ -70,7 +67,7 @@ void run_tests(node_t *n) {
     (void)c;
     printf("%d, %fs\n", trial, walk_time / 1e9f);
     // return 0;
-    // printf("Node count: %lu\n", c);
+    // printf("node count: %lu\n", c);
   }
 }
 
@@ -85,5 +82,5 @@ int main() {
   run_tests(n);
   free_list(n);
 
-  return EXIT_SUCCESS;
+  return exit_success;
 }

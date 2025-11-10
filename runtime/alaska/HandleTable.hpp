@@ -166,8 +166,8 @@ namespace alaska {
     }
 
     // Free/release *some* mapping
-    inline void put(
-        alaska::Mapping *m, alaska::ThreadCache *owner = (alaska::ThreadCache *)0x1000UL) {
+    inline void put(alaska::Mapping *m,
+                    alaska::ThreadCache *owner = (alaska::ThreadCache *)0x1000UL) {
       alaska::HandleSlab *slab = get_slab(m);
       if (slab->is_owned_by(owner)) {
         slab->release_local(m);
