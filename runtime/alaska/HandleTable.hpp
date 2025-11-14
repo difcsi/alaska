@@ -105,6 +105,10 @@ namespace alaska {
     // to be used when the local free list is empty.
     alaska::Mapping *alloc_slow(void);
 
+    // Reset this slab to a clean state for reuse.
+    // Called by HandleTable when returning a slab to the free list.
+    void reset(void);
+
     size_t num_free(void) const { return free_list.num_free() + (end - next_free); }
     size_t capacity(void) const { return end - start; }
     bool has_any_free(void) const { return free_list.has_any_free() || (next_free < end); }
@@ -131,8 +135,21 @@ namespace alaska {
     HandleSlab *tail = nullptr;
   };
 
-  // This is a class which manages the mapping from pages in the handle table to slabs. If a
-  // handle table is already allocated, this class will panic when being constructed.
+  // HandleTable manages the global pool of handle slabs.
+  //
+  // Responsibilities:
+  // - Allocate new handle slabs (from free list or bump allocator)
+  // - Maintain global slab registry for index-based lookup and iteration
+  // - Accept returned slabs and maintain a free list for recycling
+  // - Support mapping->slab lookups via pointer arithmetic
+  //
+  // Ownership Model:
+  // - Slabs are owned by Domains (tracked in owner_domain field)
+  // - When a Domain is done with slabs, it returns them via return_slab()
+  // - HandleTable maintains a free list (m_free_slabs) of returned slabs
+  // - fresh_slab() checks free list first before allocating new slabs
+  //
+  // If a handle table is already allocated, construction will panic.
   // In the actual runtime implementation, there will be a global instance of this class.
   class HandleTable final {
    public:
@@ -150,11 +167,13 @@ namespace alaska {
 
     // Allocate a fresh slab, resizing the table if necessary.
     // domain: The Domain that will own this slab. Required (enforces ownership invariant).
+    // Tries free list first before bump allocating new slab.
     // Invariant: Every allocated slab must be owned by a Domain.
     alaska::HandleSlab *fresh_slab(Domain &domain);
-    // Get *some* slab from a domain that has free space, or allocate a fresh one.
-    // domain: The Domain that will own the slab.
-    alaska::HandleSlab *new_slab(Domain &domain);
+
+    // Return a slab to the free list for recycling.
+    // Performs full reset of slab state before adding to free list.
+    void return_slab(HandleSlab *slab);
     alaska::HandleSlab *get_slab(slabidx_t idx);
     // Given a mapping, return the index of the slab it belongs to.
     slabidx_t mapping_slab_idx(Mapping *m) const;
@@ -228,6 +247,8 @@ namespace alaska {
     static constexpr int growth_factor = 2;
 
     ck::vec<alaska::HandleSlab *> m_slabs;
+    // Queue of free slabs available for recycling
+    HandleSlabQueue m_free_slabs;
   };
 
 

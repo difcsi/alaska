@@ -30,8 +30,11 @@ namespace alaska {
   }
 
   void Domain::dropAll(void) {
-    // Return all slabs back to the handle table
-    // TODO: Should we do something with slabs that still have active allocations?
+    // Return all slabs back to the handle table's free list
+    for (auto slab : slabs) {
+      // TODO: Need to release allocated handles and data when slabs are dropped
+      ht.return_slab(slab);
+    }
     slabs.clear();
     current_slab = nullptr;
   }

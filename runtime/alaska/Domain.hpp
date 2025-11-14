@@ -10,14 +10,22 @@ namespace alaska {
   class ThreadCache;
 
 
-  // A Domain in Alaska represents an isolated allocation of the
-  // handle table. Each domain in the system has its own set of handle
-  // table slabs which it manages independently. By default, there is
-  // a "global" domain which is used when no other domain is
-  // specified.
+  // A Domain in Alaska represents an isolated partition of handle table slabs.
+  // Each domain manages its own set of handle table slabs independently.
+  // By default, there is a "global" domain used when no other domain is specified.
   //
-  // Handle slabs are owned by a domain, and each domain can allocate
-  // and free slabs as needed
+  // Slab Lifecycle:
+  // - Domain requests slabs from HandleTable via fresh_slab()
+  // - Domain tracks all its slabs in the 'slabs' vector
+  // - Domain allocates from current_slab until exhausted
+  // - When exhausted, Domain calls find_next_slab() to get another slab
+  // - find_next_slab() searches existing slabs or requests fresh ones
+  // - When Domain is destroyed, dropAll() returns all slabs to HandleTable
+  //
+  // Ownership:
+  // - Domains own the slabs in their 'slabs' vector
+  // - Slabs have owner_domain pointer pointing back to their owning Domain
+  // - When a slab is returned to HandleTable free list, owner_domain is cleared
   //
   // This is the actual Domain class that is returned by alaska_domain_create.
   class Domain : public alaska::InternalHeapAllocated {

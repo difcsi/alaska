@@ -264,16 +264,8 @@ namespace alaska {
 
     auto *handle_slab = this->runtime.handle_table.get_slab(m);
     auto *heap_page = alaska::Heap::get_page(ptr);
-    // heap_page->release_local(*m, ptr);
-    // handle_slab->release_local(m);
 
-    bool handle_owned = handle_slab->is_owned_by(this);
     bool heap_owned = heap_page->is_owned_by(this);
-    // if (likely(heap_owned and handle_owned)) {
-    //   heap_page->release_local(*m, ptr);
-    //   handle_slab->release_local(m);
-    //   return;
-    // }
 
     // Now the slow path.
 
@@ -283,12 +275,10 @@ namespace alaska {
       heap_page->release_remote(*m, ptr);
     }
 
-
-    if (likely(handle_owned)) {
-      handle_slab->release_local(m);
-    } else {
-      handle_slab->release_remote(m);
-    }
+    // TODO: We removed the ThreadCache ownership as now Domains own
+    // slabs. We need to think about correctness.
+    // TODO: look into notifying the domain somehow.
+    handle_slab->release_local(m);
     return;
   }
 
@@ -427,13 +417,6 @@ namespace alaska {
 #endif
 
       heap_page->release_local(*m, ptr);
-      // if (heap_page->is_owned_by(this)) {
-      //   // If the heap page is owned by this thread, we can free it locally.
-      //   heap_page->release_local(*m, ptr);
-      // } else {
-      //   // Otherwise, we need to release it remotely.
-      //   heap_page->release_remote(*m, ptr);
-      // }
     } else {
       alaska_internal_free(ptr);
     }
