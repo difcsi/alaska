@@ -30,8 +30,7 @@ namespace alaska {
     for (size_class_t i = 0; i < alaska::num_size_classes; i++) {
       size_classes[i] = nullptr;
     }
-    handle_table_churn++;
-    handle_slab = runtime.handle_table.new_slab(runtime.global_domain);
+    // Note: handle_slab initialization removed. Domain manages slabs now.
   }
 
 
@@ -107,7 +106,7 @@ namespace alaska {
     } else {
       int cls = alaska::size_to_class(size);
       if (cls == 0) return NULL;
-      auto *mapping = TC_ALIGNED(this->new_mapping());
+      auto *mapping = TC_ALIGNED(this->new_mapping(D));
 
       void *ptr;
       SizedPage *page = size_classes[cls];
@@ -180,7 +179,12 @@ namespace alaska {
       auto *sp = size_classes[cls];
 
       if (likely(sp != NULL)) {
-        auto &htfl = handle_slab->get_freelist();
+        auto *slab = D.current_slab;
+        if (unlikely(slab == nullptr)) {
+          // Need to get a slab first
+          return halloc_generic(D, size);
+        }
+        auto &htfl = slab->get_freelist();
         auto &spfl = sp->get_freelist();
 
         // Peek at the handle table and size page free lists.
@@ -312,7 +316,7 @@ namespace alaska {
       alaska::Mapping *m;
 
 #ifdef STUB_ALLOCATES_HANDLES
-      m = this->new_mapping();
+      m = this->new_mapping(runtime.global_domain);
 #else
       // Stub Mapping
       alaska::Mapping m_p{};
@@ -333,6 +337,7 @@ namespace alaska {
 
 
   LTO_INLINE void *ThreadCache::malloc(size_t size, bool zero_ignored) {
+    Domain &D = runtime.global_domain;
     if (likely(size < alaska::max_small_size)) {
       // int cls = alaska::size_to_class(size);
       auto *sp = size_classes[alaska::size_to_class_small(size)];
@@ -340,7 +345,12 @@ namespace alaska {
       // alaska::printf("sp=%p\n", sp);
 
       if (likely(sp != NULL)) {
-        auto &htfl = handle_slab->get_freelist();
+        auto *slab = D.current_slab;
+        if (unlikely(slab == nullptr)) {
+          // Need to get a slab first
+          return halloc_generic(D, size);
+        }
+        auto &htfl = slab->get_freelist();
         auto &spfl = sp->get_freelist();
 // Note: we cram an ALIGNED here because the RISCV compiler
 // can't figure it out, and emits four loads and four stores
@@ -453,14 +463,18 @@ namespace alaska {
     return header->object_size();
   }
 
-  __attribute__((noinline)) Mapping *ThreadCache::new_mapping_slow_path(void) {
+  __attribute__((noinline)) Mapping *ThreadCache::new_mapping_slow_path(Domain &domain) {
     handle_table_churn++;  // record that we are looking for a new handle table slab.
     // printf("Ran out of handles in the slab!\n");
-    auto new_handle_slab = runtime.handle_table.new_slab(runtime.global_domain);
-    this->handle_slab->set_owner(NULL);
-    this->handle_slab = new_handle_slab;
-    // This BETTER work!
-    auto m = handle_slab->alloc();
+    // Ask the domain to find or allocate a new slab for us
+    auto new_slab = domain.find_next_slab();
+    if (new_slab == nullptr) {
+      return nullptr;
+    }
+    // Update domain's current_slab
+    domain.current_slab = new_slab;
+    // Allocate from the new slab
+    auto m = new_slab->alloc();
     return m;
   }
 
