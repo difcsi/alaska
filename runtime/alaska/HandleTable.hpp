@@ -22,6 +22,8 @@
 
 namespace alaska {
 
+  class Domain;  // forward declare. <alaska/Domain.hpp>
+
   using slabidx_t = size_t;
 
   class HandleTable;
@@ -58,9 +60,11 @@ namespace alaska {
     HandleSlab *prev = nullptr;                // The previous slab in the queue
     HandleSlabQueue *current_queue = nullptr;  // What queue is this slab in?
 
+    alaska::Domain *owner_domain = nullptr;
+
 
     // -- Methods --
-    HandleSlab(HandleTable &table, slabidx_t idx);
+    HandleSlab(HandleTable &table, slabidx_t idx, Domain *domain = nullptr);
     void dump(FILE *stream);  // Dump this slab's debug info to a file
 
 

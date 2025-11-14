@@ -32,6 +32,7 @@ namespace alaska {
   Runtime::Runtime(alaska::Configuration config)
       : config(config)
       , handle_table(config)
+      , global_domain(handle_table)  // Construct the global domain
       , heap(config) {
     if (g_runtime != nullptr) {
       log_error("Cannot create a new Alaska Runtime, one already exists at %p", g_runtime);
@@ -79,11 +80,11 @@ namespace alaska {
 
     for (auto *tc : this->tcs) {
       fprintf(stream, "tc%d allocations:%zu (%.1f/s)", tc->id, tc->allocation_rate.read(),
-          tc->allocation_rate.digest());
+              tc->allocation_rate.digest());
       fprintf(stream, "  frees:%zu (%.1f/s)", tc->free_rate.read(), tc->free_rate.digest());
       fprintf(stream, "  heap_churn:%zu (%.1f/s)", tc->heap_churn.read(), tc->heap_churn.digest());
       fprintf(stream, "  ht_churn:%zu (%.1f/s)", tc->handle_table_churn.read(),
-          tc->handle_table_churn.digest());
+              tc->handle_table_churn.digest());
       fprintf(stream, "\n");
     }
     handle_table.dump(stream);
@@ -345,7 +346,7 @@ namespace alaska {
     alaska::printf("  Object Bytes: %zu\n", object_bytes);
     if (in_pointers + out_pointers > 0) {
       alaska::printf("  Pointer Locality: %.2f%%\n",
-          100.0 * (double)in_pointers / (double)(in_pointers + out_pointers));
+                     100.0 * (double)in_pointers / (double)(in_pointers + out_pointers));
     } else {
       alaska::printf("  Pointer Locality: N/A\n");
     }

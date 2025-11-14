@@ -55,24 +55,25 @@ namespace alaska {
 
     if (dev_alaska_fd > 0) {
       m_table = (Mapping *)mmap((void *)table_start, m_capacity * HandleTable::map_granularity,
-          PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED, dev_alaska_fd, 0);
+                                PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED, dev_alaska_fd, 0);
       // alaska::printf("Yukon: allocated handle table to %p with the kernel module!\n", m_table);
     } else {
       // Attempt to allocate the initial memory for the table.
-      m_table = (Mapping *)mmap((void *)table_start, m_capacity * HandleTable::map_granularity,
-          PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+      m_table =
+          (Mapping *)mmap((void *)table_start, m_capacity * HandleTable::map_granularity,
+                          PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
 
       // alaska::printf("Allocated handle table to %p with anon mmap\n", m_table);
     }
 
 
     // Validate that the table was allocated
-    ALASKA_ASSERT(
-        m_table != MAP_FAILED, "failed to allocate handle table. Maybe one is already allocated?");
+    ALASKA_ASSERT(m_table != MAP_FAILED,
+                  "failed to allocate handle table. Maybe one is already allocated?");
 
 
     log_debug("handle table successfully allocated to %p with initial capacity of %lu", m_table,
-        m_capacity);
+              m_capacity);
   }
 
   HandleTable::~HandleTable() {
@@ -107,7 +108,7 @@ namespace alaska {
 
     // Grow the mmap region
     m_table = (alaska::Mapping *)mremap(m_table, m_capacity * HandleTable::map_granularity,
-        new_cap * HandleTable::map_granularity, 0, m_table);
+                                        new_cap * HandleTable::map_granularity, 0, m_table);
 
     m_capacity = new_cap;
 
@@ -272,9 +273,10 @@ namespace alaska {
   // Handle Slab
   //////////////////////
 
-  HandleSlab::HandleSlab(HandleTable &table, slabidx_t idx)
+  HandleSlab::HandleSlab(HandleTable &table, slabidx_t idx, Domain *domain)
       : table(table)
       , idx(idx) {
+    this->owner_domain = domain;
     void *memory = table.get_slab_start(idx);
     // assert that memory is aligned to page size
     if ((((uintptr_t)memory % HandleTable::slab_size) != 0)) {

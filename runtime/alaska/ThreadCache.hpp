@@ -88,7 +88,8 @@ namespace alaska {
 
     // Handle allocation and deallocation routines.
     void *halloc(size_t size) alaska_attr_malloc;
-    void *halloc_generic(size_t size) alaska_attr_malloc;
+    void *halloc(Domain &D, size_t size) alaska_attr_malloc;
+    void *halloc_generic(Domain &D, size_t size) alaska_attr_malloc;
 
 
     void *hrealloc(void *handle, size_t new_size) alaska_attr_malloc;
@@ -143,7 +144,8 @@ namespace alaska {
   inline alaska::Mapping *ThreadCache::new_mapping(void) {
     auto m = handle_slab->alloc();
     if (unlikely(m == nullptr)) {
-      // alaska::printf("ThreadCache %d: Handle slab %p is full, allocating new slab\n", id, handle_slab);
+      // alaska::printf("ThreadCache %d: Handle slab %p is full, allocating new slab\n", id,
+      // handle_slab);
       m = new_mapping_slow_path();
     }
     return m;

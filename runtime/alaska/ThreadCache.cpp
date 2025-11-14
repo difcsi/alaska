@@ -75,7 +75,7 @@ namespace alaska {
 #define TC_ALIGNED(p) ((__typeof__(p))__builtin_assume_aligned((p), sizeof(uintptr_t)))
 
   // noinline
-  __attribute__((noinline)) void *ThreadCache::halloc_generic(size_t size) {
+  __attribute__((noinline)) void *ThreadCache::halloc_generic(Domain &D, size_t size) {
     // Now, if we are being called here, it means either we are
     // allocating a large object (size>1024) or one of the following
     // checks failed in ::halloc.
@@ -164,7 +164,10 @@ namespace alaska {
 #define halloc_track(name)
 #endif
 
-  LTO_INLINE void *ThreadCache::halloc(size_t size) {
+  // A version of halloc which uses the global domain.
+  LTO_INLINE void *ThreadCache::halloc(size_t size) { return halloc(runtime.global_domain, size); }
+
+  LTO_INLINE void *ThreadCache::halloc(Domain &D, size_t size) {
     halloc_track(halloc_calls);
     int cls = alaska::size_to_class(size);
     if (cls == 0) {
@@ -209,7 +212,7 @@ namespace alaska {
       halloc_track(halloc_not_small);
 
     // Ope! Fallback to the slower generic path.
-    return halloc_generic(size);
+    return halloc_generic(D, size);
   }
 
 
