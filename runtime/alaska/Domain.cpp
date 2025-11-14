@@ -1,14 +1,53 @@
 #include <alaska/Domain.hpp>
 #include <alaska/Runtime.hpp>
+#include <alaska/HandleTable.hpp>
 
 
 namespace alaska {
-  //
-
-
   Domain::Domain(HandleTable &ht)
       : ht(ht) {}
 
+  Domain::~Domain() {
+    // TODO: Handle case where slabs still have active allocations
+    dropAll();
+  }
+
+  alaska::HandleSlab *Domain::find_next_slab(void) {
+    // Search existing slabs for one with free space
+    for (auto slab : slabs) {
+      if (slab->has_any_free()) {
+        return slab;
+      }
+    }
+
+    // No existing slab has free space, allocate a fresh one
+    // Pass this Domain by reference to fresh_slab (enforces ownership invariant)
+    alaska::HandleSlab *new_slab = ht.fresh_slab(*this);
+    if (new_slab != nullptr) {
+      slabs.push(new_slab);
+    }
+    return new_slab;
+  }
+
+  void Domain::dropAll(void) {
+    // Return all slabs back to the handle table
+    // TODO: Should we do something with slabs that still have active allocations?
+    slabs.clear();
+    current_slab = nullptr;
+  }
+
+  alaska::Mapping *Domain::alloc_handle(void) {
+    // Ensure we have a current slab
+    if (current_slab == nullptr || !current_slab->has_any_free()) {
+      current_slab = find_next_slab();
+    }
+
+    if (current_slab == nullptr) {
+      return nullptr;
+    }
+
+    return current_slab->alloc();
+  }
 
 }  // namespace alaska
 

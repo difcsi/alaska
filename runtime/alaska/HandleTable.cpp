@@ -119,7 +119,7 @@ namespace alaska {
     ALASKA_ASSERT(m_table != MAP_FAILED, "failed to reallocate handle table during growth");
   }
 
-  HandleSlab *HandleTable::fresh_slab(ThreadCache *new_owner) {
+  HandleSlab *HandleTable::fresh_slab(Domain &domain) {
     ck::scoped_lock lk(this->lock);
 
     slabidx_t idx = m_slabs.size();
@@ -136,9 +136,12 @@ namespace alaska {
 
     // Allocate a new slab using the system allocator.
     // auto *sl = alaska::make_object<HandleSlab>(*this, idx);
-    auto *sl = new HandleSlab(*this, idx);
+    auto *sl = new HandleSlab(*this, idx, &domain);
     // if (do_mlock) sl->mlock();
-    sl->set_owner(new_owner);
+    // Note: Slabs are now Domain-owned. ThreadCache owner is set to nullptr.
+    // The owner field is kept for freelist routing (local vs remote operations) but does not represent ownership.
+    // TODO: Remove HandleSlab's ThreadCache ownership concept entirely
+    sl->set_owner(nullptr);
 
     last_mapping = sl->get_end() + 1;
 
@@ -148,7 +151,7 @@ namespace alaska {
   }
 
 
-  HandleSlab *HandleTable::new_slab(ThreadCache *new_owner) {
+  HandleSlab *HandleTable::new_slab(Domain &domain) {
     {
       ck::scoped_lock lk(this->lock);
 
@@ -157,9 +160,8 @@ namespace alaska {
       int tries = 0;
       for (auto *slab : m_slabs) {
         tries++;
-        if ((slab->get_owner() == nullptr || slab->get_owner() == new_owner) &&
-            slab->has_any_free()) {
-          slab->set_owner(new_owner);
+        // Look for slabs in this domain that have free space
+        if (slab->owner_domain == &domain && slab->has_any_free()) {
           found_slab = slab;
           break;
         }
@@ -173,7 +175,8 @@ namespace alaska {
       }
     }
 
-    return fresh_slab(new_owner);
+    // No existing slab in this domain has free space, allocate a fresh one
+    return fresh_slab(domain);
   }
 
 

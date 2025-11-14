@@ -149,9 +149,12 @@ namespace alaska {
     ~HandleTable(void);
 
     // Allocate a fresh slab, resizing the table if necessary.
-    alaska::HandleSlab *fresh_slab(ThreadCache *new_owner);
-    // Get *some* unowned slab, the amount of free entries currently doesn't really matter.
-    alaska::HandleSlab *new_slab(ThreadCache *new_owner);
+    // domain: The Domain that will own this slab. Required (enforces ownership invariant).
+    // Invariant: Every allocated slab must be owned by a Domain.
+    alaska::HandleSlab *fresh_slab(Domain &domain);
+    // Get *some* slab from a domain that has free space, or allocate a fresh one.
+    // domain: The Domain that will own the slab.
+    alaska::HandleSlab *new_slab(Domain &domain);
     alaska::HandleSlab *get_slab(slabidx_t idx);
     // Given a mapping, return the index of the slab it belongs to.
     slabidx_t mapping_slab_idx(Mapping *m) const;

@@ -31,7 +31,7 @@ namespace alaska {
       size_classes[i] = nullptr;
     }
     handle_table_churn++;
-    handle_slab = runtime.handle_table.new_slab(this);
+    handle_slab = runtime.handle_table.new_slab(runtime.global_domain);
   }
 
 
@@ -456,7 +456,7 @@ namespace alaska {
   __attribute__((noinline)) Mapping *ThreadCache::new_mapping_slow_path(void) {
     handle_table_churn++;  // record that we are looking for a new handle table slab.
     // printf("Ran out of handles in the slab!\n");
-    auto new_handle_slab = runtime.handle_table.new_slab(this);
+    auto new_handle_slab = runtime.handle_table.new_slab(runtime.global_domain);
     this->handle_slab->set_owner(NULL);
     this->handle_slab = new_handle_slab;
     // This BETTER work!

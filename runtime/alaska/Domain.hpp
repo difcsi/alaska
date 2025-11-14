@@ -27,18 +27,29 @@ namespace alaska {
     Domain &operator=(const Domain &) = delete;
     Domain &operator=(Domain &&) = delete;
     Domain(HandleTable &ht);
-
+    ~Domain();
 
     // Allocate a new mapping from this domain's slice of the handle table.
     alaska::Mapping *alloc_handle(void);
+
+    // Return all slabs owned by this domain back to the handle table.
+    void dropAll(void);
 
    protected:
     friend alaska::ThreadCache;  // The ThreadCache is allowed to access the handle slab.
 
     // The current handle slab for allocation from this Domain.
-    alaska::HandleSlab *handle_slab = nullptr;
+    // ThreadCache accesses this directly for fast allocation path.
+    alaska::HandleSlab *current_slab = nullptr;
+
+    // Find a new current_slab when the existing one is exhausted.
+    // Returns nullptr if no slabs have free space and no new slab can be allocated.
+    alaska::HandleSlab *find_next_slab(void);
 
    private:
+    // All handle slabs owned by this domain.
+    ck::vec<alaska::HandleSlab *> slabs;
+
     // The handle table we are allocating from.
     //    TODO: do we need to store this here? Maybe refactor to have
     //    an explicitly global handle table.
