@@ -309,3 +309,142 @@ TEST_F(DomainTest, DomainContains) {
   EXPECT_FALSE(domain2.contains(m1));
   EXPECT_TRUE(domain2.contains(m2));
 }
+
+
+// Test that every allocated handle belongs to its domain
+TEST_F(DomainTest, AllAllocatedHandlesContainedInDomain) {
+  auto &global_domain = rt.global_domain;
+
+  // Allocate many handles
+  std::vector<alaska::Mapping *> handles;
+  for (int i = 0; i < 50; i++) {
+    auto m = global_domain.alloc_handle();
+    EXPECT_NE(m, nullptr);
+    handles.push_back(m);
+  }
+
+  // Verify every allocated handle is contained in global_domain
+  for (auto m : handles) {
+    EXPECT_TRUE(global_domain.contains(m))
+        << "Handle at " << (void *)m << " should be in global_domain";
+  }
+}
+
+
+// Test that handles from different domains don't overlap
+TEST_F(DomainTest, DomainsHaveNoOverlappingHandles) {
+  auto &global_domain = rt.global_domain;
+
+  // Create second and third domains
+  alaska::Domain domain2(rt.handle_table);
+  alaska::Domain domain3(rt.handle_table);
+
+  // Allocate handles from all three domains
+  std::vector<alaska::Mapping *> global_handles;
+  std::vector<alaska::Mapping *> domain2_handles;
+  std::vector<alaska::Mapping *> domain3_handles;
+
+  for (int i = 0; i < 20; i++) {
+    global_handles.push_back(global_domain.alloc_handle());
+    domain2_handles.push_back(domain2.alloc_handle());
+    domain3_handles.push_back(domain3.alloc_handle());
+  }
+
+  // Verify that handles don't overlap between domains
+  // Global domain handles should NOT be in domain2 or domain3
+  for (auto m : global_handles) {
+    EXPECT_TRUE(global_domain.contains(m));
+    EXPECT_FALSE(domain2.contains(m))
+        << "Global domain handle should not be in domain2";
+    EXPECT_FALSE(domain3.contains(m))
+        << "Global domain handle should not be in domain3";
+  }
+
+  // Domain2 handles should NOT be in global or domain3
+  for (auto m : domain2_handles) {
+    EXPECT_FALSE(global_domain.contains(m))
+        << "Domain2 handle should not be in global_domain";
+    EXPECT_TRUE(domain2.contains(m));
+    EXPECT_FALSE(domain3.contains(m))
+        << "Domain2 handle should not be in domain3";
+  }
+
+  // Domain3 handles should NOT be in global or domain2
+  for (auto m : domain3_handles) {
+    EXPECT_FALSE(global_domain.contains(m))
+        << "Domain3 handle should not be in global_domain";
+    EXPECT_FALSE(domain2.contains(m))
+        << "Domain3 handle should not be in domain2";
+    EXPECT_TRUE(domain3.contains(m));
+  }
+}
+
+
+// Test that allocated handles are immediately contained in domain
+TEST_F(DomainTest, ImmediateContainmentAfterAlloc) {
+  auto &global_domain = rt.global_domain;
+
+  // Allocate a handle
+  auto m = global_domain.alloc_handle();
+  EXPECT_NE(m, nullptr);
+
+  // Immediately check that it's contained
+  EXPECT_TRUE(global_domain.contains(m));
+
+  // Allocate another and check
+  auto m2 = global_domain.alloc_handle();
+  EXPECT_NE(m2, nullptr);
+  EXPECT_TRUE(global_domain.contains(m2));
+
+  // First one should still be contained
+  EXPECT_TRUE(global_domain.contains(m));
+}
+
+
+// Test that multiple domains with many handles have no overlap
+TEST_F(DomainTest, ManyHandlesNoOverlap) {
+  auto &global_domain = rt.global_domain;
+  alaska::Domain domain2(rt.handle_table);
+
+  // Allocate 100 handles from each domain
+  std::vector<alaska::Mapping *> global_handles;
+  std::vector<alaska::Mapping *> domain2_handles;
+
+  for (int i = 0; i < 100; i++) {
+    auto m1 = global_domain.alloc_handle();
+    auto m2 = domain2.alloc_handle();
+
+    EXPECT_NE(m1, nullptr);
+    EXPECT_NE(m2, nullptr);
+
+    global_handles.push_back(m1);
+    domain2_handles.push_back(m2);
+  }
+
+  // Verify containment for all handles
+  for (auto m : global_handles) {
+    EXPECT_TRUE(global_domain.contains(m));
+    EXPECT_FALSE(domain2.contains(m));
+  }
+
+  for (auto m : domain2_handles) {
+    EXPECT_FALSE(global_domain.contains(m));
+    EXPECT_TRUE(domain2.contains(m));
+  }
+
+  // Verify no two handles from global_domain are the same
+  for (size_t i = 0; i < global_handles.size(); i++) {
+    for (size_t j = i + 1; j < global_handles.size(); j++) {
+      EXPECT_NE(global_handles[i], global_handles[j])
+          << "Global domain handles should be unique";
+    }
+  }
+
+  // Verify no two handles from domain2 are the same
+  for (size_t i = 0; i < domain2_handles.size(); i++) {
+    for (size_t j = i + 1; j < domain2_handles.size(); j++) {
+      EXPECT_NE(domain2_handles[i], domain2_handles[j])
+          << "Domain2 handles should be unique";
+    }
+  }
+}
