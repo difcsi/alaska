@@ -83,6 +83,7 @@ extern "C" void *alaska_domain_alloc(alaska_domain_t *a, size_t size) {
 }
 
 extern "C" void alaska_domain_free(alaska_domain_t *a, void *ptr) {
+  if (a == nullptr) return;
   alaska::Domain *domain = reinterpret_cast<alaska::Domain *>(a);
   (void)ptr;
 
