@@ -286,3 +286,26 @@ TEST_F(DomainTest, MultipleDomainsDontInterfere) {
     EXPECT_EQ(slab->owner_domain, &domain2);
   }
 }
+
+
+// Test that Domain::contains() correctly identifies domain membership
+TEST_F(DomainTest, DomainContains) {
+  auto &global_domain = rt.global_domain;
+
+  // Create a second domain
+  alaska::Domain domain2(rt.handle_table);
+
+  // Allocate from both domains
+  auto m1 = global_domain.alloc_handle();
+  auto m2 = domain2.alloc_handle();
+
+  EXPECT_NE(m1, nullptr);
+  EXPECT_NE(m2, nullptr);
+
+  // Check that each domain contains its own mappings
+  EXPECT_TRUE(global_domain.contains(m1));
+  EXPECT_FALSE(global_domain.contains(m2));
+
+  EXPECT_FALSE(domain2.contains(m1));
+  EXPECT_TRUE(domain2.contains(m2));
+}

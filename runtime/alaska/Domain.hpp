@@ -49,6 +49,13 @@ namespace alaska {
     // Get the current slab for this domain (for testing/introspection)
     alaska::HandleSlab *get_current_slab(void) const { return current_slab; }
 
+    // Check if a mapping belongs to this domain.
+    // Returns true if the mapping is in a slab owned by this domain.
+    bool contains(alaska::Mapping *m) const {
+      auto *slab = ht.get_slab(m);
+      return slab != nullptr && slab->owner_domain == this;
+    }
+
    protected:
     friend alaska::ThreadCache;  // The ThreadCache is allowed to access the handle slab.
 
