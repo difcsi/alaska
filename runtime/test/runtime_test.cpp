@@ -180,7 +180,7 @@ TEST_F(RuntimeTest, SlabReturnHandle) {
   // Get a handle from the slab
   auto handle = slab->alloc();
   // Return the handle to the slab
-  slab->release_local(handle);
+  slab->free(handle);
   // Get another handle from the slab
   auto handle2 = slab->alloc();
   // Check that the handle is the same as the one that was returned the first time

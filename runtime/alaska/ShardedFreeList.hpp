@@ -95,6 +95,22 @@ namespace alaska {
       num_local_free++;
     }
 
+    // Thread-safe version of free_local using atomics.
+    // Can be safely called from multiple threads.
+    __attribute__((noinline)) inline void free_local_atomic(void *p) {
+      auto *block = (Block *)p;
+      Block **list = &local_free;
+      // Use atomic CAS to safely push onto the local free list
+      do {
+        block->next = *list;
+      } while (!__atomic_compare_exchange_n(
+          list, &block->next, block, 1, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED));
+
+      block->markFreed();
+      // Atomically increment the count
+      atomic_inc(num_local_free, 1);
+    }
+
     __attribute__((noinline)) inline void free_remote(void *p) {
       auto *block = (Block *)p;
       Block **list = &remote_free;

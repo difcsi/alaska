@@ -70,8 +70,7 @@ namespace alaska {
 
     // Implemented at the bottom of this file...
     alaska::Mapping *alloc(void);             // Allocate a mapping from this slab
-    void release_remote(alaska::Mapping *m);  // Return a mapping back to this slab (remote)
-    void release_local(alaska::Mapping *m);   // Return a mapping back to this slab (local)
+    void free(alaska::Mapping *m);            // Return a mapping back to this slab (thread-safe)
     void mlock(void);                         // `mlock` the memory behind this slab
 
 
@@ -191,15 +190,13 @@ namespace alaska {
       return slab;
     }
 
-    // Free/release *some* mapping
+    // Free/release *some* mapping using thread-safe atomic operations.
+    // The owner parameter is now ignored; the slab uses atomic free operations
+    // that work safely from any thread.
     inline void put(alaska::Mapping *m,
                     alaska::ThreadCache *owner = (alaska::ThreadCache *)0x1000UL) {
       alaska::HandleSlab *slab = get_slab(m);
-      if (slab->is_owned_by(owner)) {
-        slab->release_local(m);
-      } else {
-        slab->release_remote(m);
-      }
+      slab->free(m);
     }
 
     void *get_base(void) const { return (void *)m_table; }
@@ -282,8 +279,11 @@ namespace alaska {
     return m;
   }
 
-  inline void HandleSlab::release_remote(Mapping *m) { free_list.free_remote((void *)m); }
-  inline void HandleSlab::release_local(Mapping *m) { free_list.free_local((void *)m); }
+  // Thread-safe free operation that can be called from any thread.
+  // Uses atomic operations to safely return a mapping to this slab.
+  inline void HandleSlab::free(Mapping *m) {
+    free_list.free_local_atomic((void *)m);
+  }
 
 
 

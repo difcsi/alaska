@@ -275,10 +275,9 @@ namespace alaska {
       heap_page->release_remote(*m, ptr);
     }
 
-    // TODO: We removed the ThreadCache ownership as now Domains own
-    // slabs. We need to think about correctness.
-    // TODO: look into notifying the domain somehow.
-    handle_slab->release_local(m);
+    // Return the handle to the slab using thread-safe atomic operations.
+    // This works correctly even if freed from a different thread than allocation.
+    handle_slab->free(m);
     return;
   }
 
@@ -405,11 +404,8 @@ namespace alaska {
       // Release the mapping
 
       auto *handle_slab = this->runtime.handle_table.get_slab(m);
-      if (likely(handle_slab->is_owned_by(this))) {
-        handle_slab->release_local(m);
-      } else {
-        handle_slab->release_remote(m);
-      }
+      // Use thread-safe atomic free operation
+      handle_slab->free(m);
 #else
       // Stub mapping
       alaska::Mapping m_p{};
