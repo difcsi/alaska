@@ -43,6 +43,12 @@ namespace alaska {
     // Return all slabs owned by this domain back to the handle table.
     void dropAll(void);
 
+    // Get the vector of slabs owned by this domain (for testing/introspection)
+    const ck::vec<alaska::HandleSlab *> &get_slabs(void) const { return slabs; }
+
+    // Get the current slab for this domain (for testing/introspection)
+    alaska::HandleSlab *get_current_slab(void) const { return current_slab; }
+
    protected:
     friend alaska::ThreadCache;  // The ThreadCache is allowed to access the handle slab.
 

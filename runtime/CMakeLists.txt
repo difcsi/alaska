@@ -319,24 +319,12 @@ if (ALASKA_ENABLE_TESTING)
 
   enable_testing()
   include(GoogleTest)
+  file(GLOB_RECURSE TEST_SOURCES "test/*.cpp")
 
 
 	add_executable(
 		alaska_test
-		test/runtime_test.cpp
-		test/heap_test.cpp
-		test/sizeclass_test.cpp
-		test/magazine_test.cpp
-		test/threadcache_test.cpp
-		test/hugeobject_test.cpp
-    test/sizedalloc_test.cpp
-    test/object_allocator_test.cpp
-    test/handle_ptr_test.cpp
-    test/htlb_sim_test.cpp
-    test/locality_page_test.cpp
-    test/barrier_worker.cpp
-    test/arena_test.cpp
-    test/sizedpage_test.cpp
+    ${TEST_SOURCES}
 	)
 
 	target_link_libraries(
