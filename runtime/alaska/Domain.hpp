@@ -30,8 +30,8 @@ namespace alaska {
   // This is the actual Domain class that is returned by alaska_domain_create.
   class Domain : public alaska::InternalHeapAllocated {
    public:
-    Domain(const Domain &) = default;
-    Domain(Domain &&) = default;
+    Domain(const Domain &) = delete;
+    Domain(Domain &&) = delete;
     Domain &operator=(const Domain &) = delete;
     Domain &operator=(Domain &&) = delete;
     Domain(HandleTable &ht);
