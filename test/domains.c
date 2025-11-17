@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <alaska.h>
+#include <inttypes.h>
 
 int main() {
   alaska_domain_t *d1 = alaska_domain_create(0);
