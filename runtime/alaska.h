@@ -13,7 +13,7 @@ extern "C" {
 #define NOEXCEPT
 #endif
 
-// Allocate a handle as well as it's backing memory if the runtime decides to do
+// Allocate a handle as well as its backing memory if the runtime decides to do
 // so. This is the main interface to alaska's handle system, as actually using
 // handles is entirely transparent.
 extern void *
