@@ -233,6 +233,8 @@ llvm::PreservedAnalyses AlaskaEscapePass::run(llvm::Module &M, llvm::ModuleAnaly
     // Ignore calls to alaska functions
     if (F.getName().starts_with("alaska_")) ignore = true;
     if (F.getName().starts_with("alaska.")) ignore = true;
+    // Domain functions should not be escaped to.
+    if (F.getName().starts_with("alaska_domain_")) ignore = true;
     // Intriniscs
     if (F.getName().starts_with("llvm.lifetime")) ignore = true;
     if (F.getName().starts_with("llvm.va_start")) ignore = true;
