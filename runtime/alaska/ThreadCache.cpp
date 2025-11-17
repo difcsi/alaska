@@ -568,5 +568,14 @@ namespace alaska {
   }
 
 
+  static __thread alaska::ThreadCache *g_tc = nullptr;
+
+  alaska::ThreadCache *alaska::ThreadCache::current() {
+    if (g_tc == nullptr) {
+      auto &rt = alaska::Runtime::get();
+      g_tc = rt.new_threadcache();
+    }
+    return g_tc;
+  }
 
 }  // namespace alaska

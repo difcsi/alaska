@@ -131,6 +131,8 @@ namespace alaska {
     alaska::Mapping *new_mapping_slow_path(Domain &domain);
     void free_mapping(alaska::Mapping *);
 
+    static ThreadCache *current(void);
+
    private:
     alaska::Mapping *reverse_lookup(void *heap_ptr);
 

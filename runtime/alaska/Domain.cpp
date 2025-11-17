@@ -79,9 +79,10 @@ extern "C" void *alaska_domain_alloc(alaska_domain_t *a, size_t size) {
   if (a == NULL) return NULL;
   // Grab the domain pointer from the opaque type
   alaska::Domain *domain = reinterpret_cast<alaska::Domain *>(a);
-  // TODO: figure out allocation.
-  // return domain->alloc(size);
-  return NULL;
+
+  auto *tc = alaska::ThreadCache::current();
+
+  return tc->halloc(*domain, size);
 }
 
 extern "C" void alaska_domain_free(alaska_domain_t *a, void *ptr) {
@@ -89,8 +90,8 @@ extern "C" void alaska_domain_free(alaska_domain_t *a, void *ptr) {
   alaska::Domain *domain = reinterpret_cast<alaska::Domain *>(a);
   (void)ptr;
 
-  // for now, we just defer to the thread cache free.
-
-  // TODO: free
-  // domain->free(ptr);
+  // for now, we just defer to the thread cache free, until having the
+  // domain free means something.
+  auto *tc = alaska::ThreadCache::current();
+  tc->hfree(ptr);
 }
