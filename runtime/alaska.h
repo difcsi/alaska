@@ -73,6 +73,7 @@ typedef struct alaska_domain alaska_domain_t;
 struct alaska_domain_config { int todo; };
 
 // Create a new Domain. Returns NULL on failure.
+// The `cfg` parameter is reserved for future use and is currently ignored.
 alaska_domain_t *alaska_domain_create(struct alaska_domain_config *cfg);
 void alaska_domain_destroy(alaska_domain_t *a);
 
