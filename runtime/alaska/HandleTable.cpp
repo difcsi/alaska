@@ -55,24 +55,25 @@ namespace alaska {
 
     if (dev_alaska_fd > 0) {
       m_table = (Mapping *)mmap((void *)table_start, m_capacity * HandleTable::map_granularity,
-          PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED, dev_alaska_fd, 0);
+                                PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED, dev_alaska_fd, 0);
       // alaska::printf("Yukon: allocated handle table to %p with the kernel module!\n", m_table);
     } else {
       // Attempt to allocate the initial memory for the table.
-      m_table = (Mapping *)mmap((void *)table_start, m_capacity * HandleTable::map_granularity,
-          PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+      m_table =
+          (Mapping *)mmap((void *)table_start, m_capacity * HandleTable::map_granularity,
+                          PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
 
       // alaska::printf("Allocated handle table to %p with anon mmap\n", m_table);
     }
 
 
     // Validate that the table was allocated
-    ALASKA_ASSERT(
-        m_table != MAP_FAILED, "failed to allocate handle table. Maybe one is already allocated?");
+    ALASKA_ASSERT(m_table != MAP_FAILED,
+                  "failed to allocate handle table. Maybe one is already allocated?");
 
 
     log_debug("handle table successfully allocated to %p with initial capacity of %lu", m_table,
-        m_capacity);
+              m_capacity);
   }
 
   HandleTable::~HandleTable() {
@@ -107,7 +108,7 @@ namespace alaska {
 
     // Grow the mmap region
     m_table = (alaska::Mapping *)mremap(m_table, m_capacity * HandleTable::map_granularity,
-        new_cap * HandleTable::map_granularity, 0, m_table);
+                                        new_cap * HandleTable::map_granularity, 0, m_table);
 
     m_capacity = new_cap;
 
@@ -118,9 +119,19 @@ namespace alaska {
     ALASKA_ASSERT(m_table != MAP_FAILED, "failed to reallocate handle table during growth");
   }
 
-  HandleSlab *HandleTable::fresh_slab(ThreadCache *new_owner) {
+  HandleSlab *HandleTable::fresh_slab(Domain &domain) {
     ck::scoped_lock lk(this->lock);
 
+    // Try to get a slab from the free list first
+    HandleSlab *sl = m_free_slabs.pop();
+    if (sl != nullptr) {
+      // Reuse slab from free list
+      sl->owner_domain = &domain;
+      log_trace("Reusing slab %lu from free list for domain %p", sl->idx, &domain);
+      return sl;
+    }
+
+    // No free slabs available, allocate a new one
     slabidx_t idx = m_slabs.size();
     log_trace("Allocating a new slab at idx %d", idx);
 
@@ -135,9 +146,12 @@ namespace alaska {
 
     // Allocate a new slab using the system allocator.
     // auto *sl = alaska::make_object<HandleSlab>(*this, idx);
-    auto *sl = new HandleSlab(*this, idx);
+    sl = new HandleSlab(*this, idx, &domain);
     // if (do_mlock) sl->mlock();
-    sl->set_owner(new_owner);
+    // Note: Slabs are now Domain-owned. ThreadCache owner is set to nullptr.
+    // The owner field is kept for freelist routing (local vs remote operations) but does not represent ownership.
+    // TODO: Remove HandleSlab's ThreadCache ownership concept entirely
+    sl->set_owner(nullptr);
 
     last_mapping = sl->get_end() + 1;
 
@@ -146,35 +160,21 @@ namespace alaska {
     return sl;
   }
 
+  void HandleTable::return_slab(HandleSlab *slab) {
+    ck::scoped_lock lk(this->lock);
 
-  HandleSlab *HandleTable::new_slab(ThreadCache *new_owner) {
-    {
-      ck::scoped_lock lk(this->lock);
+    log_trace("Returning slab %lu to free list", slab->idx);
 
-      HandleSlab *found_slab = nullptr;
-      // TODO: PERFORMANCE BAD HERE. POP FROM A LIST!
-      int tries = 0;
-      for (auto *slab : m_slabs) {
-        tries++;
-        if ((slab->get_owner() == nullptr || slab->get_owner() == new_owner) &&
-            slab->has_any_free()) {
-          slab->set_owner(new_owner);
-          found_slab = slab;
-          break;
-        }
-      }
+    // Full reset of slab state for clean reuse
+    // Clear domain ownership
+    slab->owner_domain = nullptr;
 
-      if (found_slab != nullptr) {
-        // printf("Checked %d slabs to find a free one\n", tries);
-        return found_slab;
-      } else {
-        // printf("Checked %d slabs, and didn't find one\n", tries);
-      }
-    }
+    // Reset internal slab state (bump allocator and free lists)
+    slab->reset();
 
-    return fresh_slab(new_owner);
+    // Add to free list for recycling
+    m_free_slabs.push(slab);
   }
-
 
 
   void HandleTable::dump(FILE *stream) {
@@ -272,9 +272,10 @@ namespace alaska {
   // Handle Slab
   //////////////////////
 
-  HandleSlab::HandleSlab(HandleTable &table, slabidx_t idx)
+  HandleSlab::HandleSlab(HandleTable &table, slabidx_t idx, Domain *domain)
       : table(table)
       , idx(idx) {
+    this->owner_domain = domain;
     void *memory = table.get_slab_start(idx);
     // assert that memory is aligned to page size
     if ((((uintptr_t)memory % HandleTable::slab_size) != 0)) {
@@ -307,6 +308,16 @@ namespace alaska {
     // Swap the local and remote free lists and try to get the first entry from the local list.
     free_list.swap();
     return (alaska::Mapping *)free_list.pop();
+  }
+
+
+  void HandleSlab::reset(void) {
+    // Reset the bump allocator pointer to the start
+    next_free = start;
+
+    // Clear the free lists for clean reuse
+    // TODO: Need to release allocated handles and data when dropped
+    free_list.reset();
   }
 
 

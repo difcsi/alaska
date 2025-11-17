@@ -27,18 +27,8 @@
 
 
 
-// TODO: don't have this be global!
-static __thread alaska::ThreadCache *g_tc = nullptr;
 
-
-
-alaska::ThreadCache *get_tc_r(void) {
-  if (unlikely(g_tc == nullptr)) {
-    g_tc = alaska::Runtime::get().new_threadcache();
-  }
-  return g_tc;
-}
-alaska::LockedThreadCache get_tc(void) { return *get_tc_r(); }
+alaska::LockedThreadCache get_tc(void) { return *alaska::ThreadCache::current(); }
 
 
 
@@ -129,7 +119,7 @@ size_t alaska_usable_size(void *ptr) {
 // template <typename Fn>
 // static void walk_structure(void *ptr, size_t max_depth, Fn fn) {
 //   auto &rt = alaska::Runtime::get();
-//   auto *tc = get_tc_r();
+//   auto *tc = alaska::ThreadCache::current();
 //   ck::queue<void *> todo(max_depth);
 
 //   auto schedule_pointer = [&](void *h, alaska::Mapping *m) {
@@ -212,7 +202,7 @@ static long localize_structure_impl(alaska::Mapping *m, int depth, alaska::Threa
 extern "C" bool localize_structure(void *ptr) {
   auto &rt = alaska::Runtime::get();
 
-  // auto *tc = get_tc_r();
+  // auto *tc = alaska::ThreadCache::current();
   // rt.with_barrier([&]() {
   //   rt.grade_heap();
   //   long localized = 0;
@@ -224,7 +214,7 @@ extern "C" bool localize_structure(void *ptr) {
   // });
 
   rt.with_barrier([&]() {
-    auto *tc = get_tc_r();
+    auto *tc = alaska::ThreadCache::current();
     auto *m = alaska::Mapping::from_handle(ptr);
     seen = 0;
 
@@ -345,7 +335,7 @@ __attribute__((destructor)) void __alaska_hitmiss_exit(void) {
   printf("handles: %ld, ptrs: %ld, mixes: %ld\n", handles, ptrs, mixes);
   printf("total branches:   %16lu\n", total_branches);
   printf("removed branches: %16lu   (%7.2f%%)\n", removed_branches,
-      100.0f * removed_branches / (float)total_branches);
+         100.0f * removed_branches / (float)total_branches);
 
   fclose(profile_stream);
 }

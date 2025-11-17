@@ -12,6 +12,7 @@
 #include <alaska/HeapPage.hpp>
 #include <alaska/AllocationRequest.hpp>
 #include <alaska/ThreadCache.hpp>
+#include <alaska/Runtime.hpp>
 
 #include <sys/mman.h>
 #include <errno.h>
@@ -34,7 +35,7 @@ namespace alaska {
 
 
   void *HeapPage::allocate_handle(const AllocationRequest &req) {
-    alaska::Mapping *m = req.requestor.new_mapping();
+    alaska::Mapping *m = req.requestor.new_mapping(req.domain);
     void *ptr = this->alloc(*m, req.size);
     // If the allocation request failed, make sure to free the handle too!
     if (ptr == NULL) {

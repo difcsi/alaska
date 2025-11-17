@@ -22,6 +22,8 @@
 
 namespace alaska {
 
+  class Domain;  // forward declare. <alaska/Domain.hpp>
+
   using slabidx_t = size_t;
 
   class HandleTable;
@@ -58,16 +60,17 @@ namespace alaska {
     HandleSlab *prev = nullptr;                // The previous slab in the queue
     HandleSlabQueue *current_queue = nullptr;  // What queue is this slab in?
 
+    alaska::Domain *owner_domain = nullptr;
+
 
     // -- Methods --
-    HandleSlab(HandleTable &table, slabidx_t idx);
+    HandleSlab(HandleTable &table, slabidx_t idx, Domain *domain = nullptr);
     void dump(FILE *stream);  // Dump this slab's debug info to a file
 
 
     // Implemented at the bottom of this file...
     alaska::Mapping *alloc(void);             // Allocate a mapping from this slab
-    void release_remote(alaska::Mapping *m);  // Return a mapping back to this slab (remote)
-    void release_local(alaska::Mapping *m);   // Return a mapping back to this slab (local)
+    void free(alaska::Mapping *m);            // Return a mapping back to this slab (thread-safe)
     void mlock(void);                         // `mlock` the memory behind this slab
 
 
@@ -101,6 +104,10 @@ namespace alaska {
     // to be used when the local free list is empty.
     alaska::Mapping *alloc_slow(void);
 
+    // Reset this slab to a clean state for reuse.
+    // Called by HandleTable when returning a slab to the free list.
+    void reset(void);
+
     size_t num_free(void) const { return free_list.num_free() + (end - next_free); }
     size_t capacity(void) const { return end - start; }
     bool has_any_free(void) const { return free_list.has_any_free() || (next_free < end); }
@@ -127,8 +134,21 @@ namespace alaska {
     HandleSlab *tail = nullptr;
   };
 
-  // This is a class which manages the mapping from pages in the handle table to slabs. If a
-  // handle table is already allocated, this class will panic when being constructed.
+  // HandleTable manages the global pool of handle slabs.
+  //
+  // Responsibilities:
+  // - Allocate new handle slabs (from free list or bump allocator)
+  // - Maintain global slab registry for index-based lookup and iteration
+  // - Accept returned slabs and maintain a free list for recycling
+  // - Support mapping->slab lookups via pointer arithmetic
+  //
+  // Ownership Model:
+  // - Slabs are owned by Domains (tracked in owner_domain field)
+  // - When a Domain is done with slabs, it returns them via return_slab()
+  // - HandleTable maintains a free list (m_free_slabs) of returned slabs
+  // - fresh_slab() checks free list first before allocating new slabs
+  //
+  // If a handle table is already allocated, construction will panic.
   // In the actual runtime implementation, there will be a global instance of this class.
   class HandleTable final {
    public:
@@ -145,9 +165,14 @@ namespace alaska {
     ~HandleTable(void);
 
     // Allocate a fresh slab, resizing the table if necessary.
-    alaska::HandleSlab *fresh_slab(ThreadCache *new_owner);
-    // Get *some* unowned slab, the amount of free entries currently doesn't really matter.
-    alaska::HandleSlab *new_slab(ThreadCache *new_owner);
+    // domain: The Domain that will own this slab. Required (enforces ownership invariant).
+    // Tries free list first before bump allocating new slab.
+    // Invariant: Every allocated slab must be owned by a Domain.
+    alaska::HandleSlab *fresh_slab(Domain &domain);
+
+    // Return a slab to the free list for recycling.
+    // Performs full reset of slab state before adding to free list.
+    void return_slab(HandleSlab *slab);
     alaska::HandleSlab *get_slab(slabidx_t idx);
     // Given a mapping, return the index of the slab it belongs to.
     slabidx_t mapping_slab_idx(Mapping *m) const;
@@ -165,15 +190,13 @@ namespace alaska {
       return slab;
     }
 
-    // Free/release *some* mapping
+    // Free/release *some* mapping using thread-safe atomic operations.
+    // The owner parameter is now ignored; the slab uses atomic free operations
+    // that work safely from any thread.
     inline void put(alaska::Mapping *m,
                     alaska::ThreadCache *owner = (alaska::ThreadCache *)0x1000UL) {
       alaska::HandleSlab *slab = get_slab(m);
-      if (slab->is_owned_by(owner)) {
-        slab->release_local(m);
-      } else {
-        slab->release_remote(m);
-      }
+      slab->free(m);
     }
 
     void *get_base(void) const { return (void *)m_table; }
@@ -221,6 +244,8 @@ namespace alaska {
     static constexpr int growth_factor = 2;
 
     ck::vec<alaska::HandleSlab *> m_slabs;
+    // Queue of free slabs available for recycling
+    HandleSlabQueue m_free_slabs;
   };
 
 
@@ -254,8 +279,11 @@ namespace alaska {
     return m;
   }
 
-  inline void HandleSlab::release_remote(Mapping *m) { free_list.free_remote((void *)m); }
-  inline void HandleSlab::release_local(Mapping *m) { free_list.free_local((void *)m); }
+  // Thread-safe free operation that can be called from any thread.
+  // Uses atomic operations to safely return a mapping to this slab.
+  inline void HandleSlab::free(Mapping *m) {
+    free_list.free_local_atomic((void *)m);
+  }
 
 
 

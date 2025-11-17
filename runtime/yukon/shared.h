@@ -39,10 +39,8 @@ static struct {
   uint64_t count;
   uint64_t instructions;
 } inst_counts[] = {
-    [INSTCOUNT_MALLOC] = {"malloc", 0, 0},
-    [INSTCOUNT_CALLOC] = {"calloc", 0, 0},
-    [INSTCOUNT_FREE] = {"free", 0, 0},
-    [INSTCOUNT_REALLOC] = {"realloc", 0, 0},
+    [INSTCOUNT_MALLOC] = {"malloc", 0, 0},   [INSTCOUNT_CALLOC] = {"calloc", 0, 0},
+    [INSTCOUNT_FREE] = {"free", 0, 0},       [INSTCOUNT_REALLOC] = {"realloc", 0, 0},
     [INSTCOUNT_GETSIZE] = {"getsize", 0, 0},
 };
 
@@ -73,7 +71,7 @@ static void CONSTRUCTOR print_inst_counts_init() {
       uint64_t count = inst_counts[i].count;
       double avg = (double)instructions / (double)count;
       printf("YUKON_INSTRUCTION_STAT=%s sum_inst:%zu, calls:%zu, avg:%lf\n", inst_counts[i].name,
-          instructions, count, avg);
+             instructions, count, avg);
     }
   });
 }
@@ -113,6 +111,8 @@ static inline alaska::ThreadCache *yukon_get_tc_unchecked() { return the_tc; }
 
 
 
+alaska::ThreadCache *alaska::ThreadCache::current() { return yukon_get_tc(); }
+
 
 static char stdout_buf[BUFSIZ];
 static char stderr_buf[BUFSIZ];
@@ -145,8 +145,8 @@ enum LocalizationState {
   LS_DEFERRED,
   LS_SCHEDULING,
 };
-const char *localization_state_names[] = {
-    "Disabled", "Pending", "Localizing", "Deferred", "Scheduling"};
+const char *localization_state_names[] = {"Disabled", "Pending", "Localizing", "Deferred",
+                                          "Scheduling"};
 
 static LocalizationState localization_state = LS_DISABLED;
 static void localizer_state_transition(LocalizationState new_state) {
@@ -238,7 +238,7 @@ static void dump_htlb(alaska::ThreadCache *tc) {
     if (total_pointers > 0) {
       float locality = (float)grade.in_pointers / (float)total_pointers;
       alaska::printf("Locality = %f%% (%zu in, %zu out)\n", locality * 100.0f, grade.in_pointers,
-          grade.out_pointers);
+                     grade.out_pointers);
       if (locality < 0.5f) {
         alaska::printf(
             "YUKON: Low locality detected (%.2f%%). Running brute-force localization...\n",

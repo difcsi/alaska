@@ -13,7 +13,7 @@ class SizedPageTest : public ::testing::Test {
     // Make it so we only get warnings
     alaska::set_log_level(LOG_WARN);
     sp = rt.heap.get_sizedpage(16, nullptr /* Dubious if passing null here is okay. */);
-    hs = rt.handle_table.new_slab(nullptr);
+    hs = rt.handle_table.fresh_slab(rt.global_domain);
   }
   void TearDown() override {}
 
@@ -23,7 +23,7 @@ class SizedPageTest : public ::testing::Test {
 
     void *d = sp->alloc(*m, 16);
     if (d == NULL) {
-      hs->release_local(m);
+      hs->free(m);
       return nullptr;
     }
 
@@ -32,7 +32,7 @@ class SizedPageTest : public ::testing::Test {
   }
   void release(alaska::Mapping *m) {
     sp->release_local(*m, m->get_pointer());
-    hs->release_local(m);
+    hs->free(m);
   }
 
   alaska::Runtime rt;

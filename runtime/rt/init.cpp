@@ -16,10 +16,8 @@
 #include <alaska/Runtime.hpp>
 #include <alaska/alaska.hpp>
 #include <rt/barrier.hpp>
-#include "alaska/SizeClass.hpp"
 #include <pthread.h>
 #include <stdio.h>
-#include <signal.h>
 #include <ck/queue.h>
 #include <alaska/RateCounter.hpp>
 
