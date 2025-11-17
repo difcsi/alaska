@@ -104,7 +104,7 @@ namespace alaska {
       do {
         block->next = *list;
       } while (!__atomic_compare_exchange_n(
-          list, &block->next, block, 1, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED));
+          list, &block->next, block, 1, __ATOMIC_RELEASE, __ATOMIC_RELAXED));
 
       block->markFreed();
       // Atomically increment the count
