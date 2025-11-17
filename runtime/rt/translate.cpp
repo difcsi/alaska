@@ -12,7 +12,6 @@
 #include <fcntl.h>
 #include <malloc.h>
 #include <stdint.h>
-#include <stdio.h>
 #include <sys/cdefs.h>
 #include <sys/mman.h>
 #include <unistd.h>
@@ -58,23 +57,7 @@ extern void alaska_htlb_sim_track(uintptr_t handle);
 
 
 
-extern "C" void do_handle_fault(void) { return; }
-
-
-// #define ENABLE_HANDLE_FAULTS
-
-// static long translate_miss = 0;
-// static long translate_hit = 0;
-// __attribute__((destructor)) static void alaska_translate_dtor() {
-//   printf("Alaska Translate Hits: %ld Misses: %ld\n", translate_hit, translate_miss);
-// }
-
-
-// This function is a marker, and just gets removed
-// after the compiler does some magic to merge them.
-__attribute__((noinline)) extern "C" void alaska_do_handle_fault_check(
-    void *ptr, void *handle, void *retry);
-
+#define ENABLE_HANDLE_FAULTS
 
 
 extern "C" __attribute__((always_inline)) void *alaska_translate_uncond(void *ptr) {
@@ -85,6 +68,12 @@ extern "C" __attribute__((always_inline)) void *alaska_translate_uncond(void *pt
   int64_t mapped_bits;
 
   mapped_bits = (int64_t)mapped;
+#ifdef ENABLE_HANDLE_FAULTS
+  if (unlikely(mapped_bits < 0)) {
+    alaska::do_handle_fault((int64_t)ptr);
+    mapped = m->get_pointer_fast();
+  }
+#endif
 
   // Apply the offset from the pointer
   void *result = APPLY_OFFSET(mapped, (int64_t)ptr);
@@ -107,28 +96,6 @@ extern "C" void *alaska_translate(void *ptr) {
 
 
   return alaska_translate_uncond(ptr);
-
-  //   // Grab the mapping from the runtime
-  //   auto m = alaska::Mapping::from_handle(ptr);
-  //   int64_t mapped_bits;
-
-  // retry_translation:
-  //   // Grab the pointer
-  //   void *mapped = m->get_pointer_fast();
-
-  //   mapped_bits = (int64_t)mapped;
-  // #ifdef ENABLE_HANDLE_FAULTS
-  //   if (unlikely(mapped_bits < 0)) {
-  //     alaska::do_handle_fault(bits);
-  //     // goto retry_translation;
-  //     mapped = m->get_pointer_fast();
-  //   }
-  // #endif
-
-  //   // Apply the offset from the pointer
-  //   void *result = APPLY_OFFSET(mapped, bits);
-
-  //   return result;
 }
 
 
