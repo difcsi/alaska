@@ -168,9 +168,9 @@ namespace alaska {
   }
 
 
-  int do_handle_fault(uint64_t handle) {
+  void do_handle_fault(uint64_t handle) {
     auto &rt = alaska::Runtime::get();
-    return rt.handle_fault(handle);
+    rt.handle_fault(handle);
   }
 
 
