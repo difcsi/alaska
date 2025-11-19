@@ -79,6 +79,12 @@ namespace alaska {
 
     template <typename Fn>
     inline void for_each(Fn fn) {
+      // TODO: optimize this by using the free list as a sort of skip
+      // list to avoid visiting free mappings. That is, iterate over
+      // the free list and check if the subsequent mapping is free or
+      // not. If it is, iterate until it is not and apply the
+      // callback. There is an edge case with the first entry in the
+      // table, but that is easy enough to special case.
       for (alaska::Mapping *m = start; m < end; m++) {
         if (not m->is_free()) fn(m);
       }

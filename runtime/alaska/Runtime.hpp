@@ -206,8 +206,7 @@ namespace alaska {
 
 
   // called from translate.cpp
-  __attribute__((preserve_all))
-  void do_handle_fault(uint64_t handle);
+  __attribute__((preserve_all)) void do_handle_fault(uint64_t handle);
 
   struct LocalityReport {
     size_t out_pointers = 0;  // How many pointers point out of the block?

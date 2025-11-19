@@ -56,6 +56,15 @@ namespace alaska {
       return slab != nullptr && slab->owner_domain == this;
     }
 
+
+    // Iterate over all handles allocated in this domain and apply the given function.
+    template <typename Func>
+    void for_each_handle(Func fn) {
+      for (auto *slab : slabs) {
+        slab->for_each(fn);
+      }
+    }
+
    protected:
     friend alaska::ThreadCache;  // The ThreadCache is allowed to access the handle slab.
 
