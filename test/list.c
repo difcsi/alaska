@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <alaska.h>
 #include <stdbool.h>
+#include <stddef.h>
 
 typedef struct node {
   struct node *next;
@@ -15,7 +16,7 @@ unsigned int seed = 12345;
 
 
 node_t *make_list(int depth) {
-  node_t *list = null;
+  node_t *list = NULL;
 
   while (depth > 0) {
     node_t *n = calloc(1, sizeof(node_t));
@@ -31,7 +32,7 @@ node_t *make_list(int depth) {
 __attribute__((noinline)) int list_count_nodes(volatile node_t *n) {
   int count = 0;
 
-  while (n != null) {
+  while (n != NULL) {
     count++;
     n = n->next;
   }
@@ -40,9 +41,9 @@ __attribute__((noinline)) int list_count_nodes(volatile node_t *n) {
 
 
 void free_list(node_t *n) {
-  if (n == null) return;
+  if (n == NULL) return;
 
-  while (n != null) {
+  while (n != NULL) {
     node_t *cur = n;
     n = n->next;
     free(cur);
@@ -53,11 +54,12 @@ bool localize_structure(uint64_t ptr);
 
 
 
-void run_tests(node_t *n) {
+void run_tests() {
   for (int trial = 0; trial < 15; trial++) {
-    volatile unsigned long c = 0;
     uint64_t start = alaska_timestamp();
-    for (int i = 0; i < 200; i++) {
+    node_t *n = make_list(1 << 21);
+    volatile unsigned long c = 0;
+    for (int i = 0; i < 20; i++) {
       c += list_count_nodes(n);
     }
     uint64_t end = alaska_timestamp();
@@ -66,6 +68,7 @@ void run_tests(node_t *n) {
 
     (void)c;
     printf("%d, %fs\n", trial, walk_time / 1e9f);
+    free_list(n);
     // return 0;
     // printf("node count: %lu\n", c);
   }
@@ -74,13 +77,9 @@ void run_tests(node_t *n) {
 
 int main() {
   long start, end;
-  node_t *n = make_list(1 << 21);
   printf("localized,walk_time\n");
   bool localized = false;
-  // run_tests(n);
-  // localized = localize_structure((uint64_t)n);
-  run_tests(n);
-  free_list(n);
+  run_tests();
 
-  return exit_success;
+  return EXIT_SUCCESS;
 }

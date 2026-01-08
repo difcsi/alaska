@@ -13,6 +13,7 @@
 
 
 
+#include <alaska/alaska.hpp>
 #include "alaska/list_head.h"
 namespace alaska {
 
@@ -22,7 +23,7 @@ namespace alaska {
     BARRIER_WORK_DONE,
   };
 
-  class BarrierWorker {
+  class BarrierWorker : public alaska::InternalHeapAllocated {
    public:
     BarrierWorker();
     virtual ~BarrierWorker();

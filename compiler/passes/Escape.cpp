@@ -20,7 +20,7 @@ static bool relax_vararg_escape(void) { return getenv("ALASKA_RELAX_VARARG") != 
 
 static bool mightBlock(llvm::Function &F) {
   // This is a big list of library functions that may end up blocking in the kernel or
-  std::set<StringRef> blocking_whitelist = {
+  static std::set<StringRef> blocking_whitelist = {
       // "printf",
       "epoll_create",
       "close",

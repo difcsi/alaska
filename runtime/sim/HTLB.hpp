@@ -101,15 +101,18 @@ namespace alaska::sim {
         }
       }
 
-      // Otherwise, evict LRU entry
-      auto lru_it = std::min_element(set.begin(), set.end(), [](const Entry &a, const Entry &b) {
-        return a.last_accessed < b.last_accessed;
-      });
+      // Otherwise, evict LRU entry - find entry with minimum last_accessed
+      Entry *lru_entry = &set[0];
+      for (auto &entry : set) {
+        if (entry.last_accessed < lru_entry->last_accessed) {
+          lru_entry = &entry;
+        }
+      }
 
-      evicted = lru_it->tag;
-      lru_it->tag = tag;
-      lru_it->last_accessed = access_counter++;
-      lru_it->valid = true;
+      evicted = lru_entry->tag;
+      lru_entry->tag = tag;
+      lru_entry->last_accessed = access_counter++;
+      lru_entry->valid = true;
       return true;
     }
 

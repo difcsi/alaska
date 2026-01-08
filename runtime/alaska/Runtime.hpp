@@ -205,8 +205,18 @@ namespace alaska {
   bool is_initialized(void);
 
 
-  // called from translate.cpp
-  __attribute__((preserve_all)) void do_handle_fault(uint64_t handle);
+  // called from translate.cpp This function takes a handle (as a
+  // pointer that was paassed to alaska_translate) and performs the
+  // required operations to handle the fault and return a translated
+  // pointer. This is considered a *very* slow path operation, and
+  // conditional calls to this function are placed in every alaska
+  // translate site, so it also returns the result of translating the
+  // handle to avoid extra control flow at the call sites.  it is
+  // expected that, at least to some extent, this function will return
+  // promptly and not block (for too long). It is *not* called in an
+  // environment where alaska barriers can be performed as an
+  // optimization.
+  __attribute__((preserve_all, pure)) void *do_handle_fault_and_translate(uint64_t handle) asm("alaska.HF");
 
   struct LocalityReport {
     size_t out_pointers = 0;  // How many pointers point out of the block?

@@ -95,23 +95,21 @@ struct InstructionTracker {
 
 
 static inline alaska::Runtime *the_runtime;
-static inline alaska::ThreadCache *the_tc;
 
 __attribute__((noinline)) static void yukon_init_runtime_and_tc() {
   the_runtime = new alaska::Runtime();
-  the_tc = the_runtime->new_threadcache();
+}
+
+static inline alaska::ThreadCache *yukon_get_tc_unchecked() {
+  return alaska::ThreadCache::current();
 }
 
 static inline alaska::ThreadCache *yukon_get_tc() {
-  if (unlikely(the_tc == nullptr)) yukon_init_runtime_and_tc();
-  return the_tc;
+  if (unlikely(the_runtime == nullptr)) yukon_init_runtime_and_tc();
+  return yukon_get_tc_unchecked();
 }
 
-static inline alaska::ThreadCache *yukon_get_tc_unchecked() { return the_tc; }
 
-
-
-alaska::ThreadCache *alaska::ThreadCache::current() { return yukon_get_tc(); }
 
 
 static char stdout_buf[BUFSIZ];

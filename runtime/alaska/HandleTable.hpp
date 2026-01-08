@@ -69,9 +69,9 @@ namespace alaska {
 
 
     // Implemented at the bottom of this file...
-    alaska::Mapping *alloc(void);             // Allocate a mapping from this slab
-    void free(alaska::Mapping *m);            // Return a mapping back to this slab (thread-safe)
-    void mlock(void);                         // `mlock` the memory behind this slab
+    alaska::Mapping *alloc(void);   // Allocate a mapping from this slab
+    void free(alaska::Mapping *m);  // Return a mapping back to this slab (thread-safe)
+    void mlock(void);               // `mlock` the memory behind this slab
 
 
     inline alaska::Mapping *get_end(void) const { return end; }
@@ -190,6 +190,11 @@ namespace alaska {
 
     bool valid_handle(alaska::Mapping *m) const;
 
+    inline Domain *get_owner_domain(alaska::Mapping *m) {
+      alaska::HandleSlab *slab = get_slab(m);
+      return slab->owner_domain;
+    }
+
 
     inline alaska::HandleSlab *get_slab(alaska::Mapping *m) {
       alaska::HandleSlab *slab = *(alaska::HandleSlab **)((uintptr_t)m & ~(slab_size - 1));
@@ -287,9 +292,7 @@ namespace alaska {
 
   // Thread-safe free operation that can be called from any thread.
   // Uses atomic operations to safely return a mapping to this slab.
-  inline void HandleSlab::free(Mapping *m) {
-    free_list.free_local_atomic((void *)m);
-  }
+  inline void HandleSlab::free(Mapping *m) { free_list.free_local_atomic((void *)m); }
 
 
 

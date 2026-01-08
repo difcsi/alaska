@@ -82,6 +82,8 @@ void *alaska_domain_alloc(alaska_domain_t *a, size_t sz);
 // Free a handle associated with the given domain
 void alaska_domain_free(alaska_domain_t *a, void *ptr);
 
+void alaska_mark_for_fault_TEST(void *ptr);
+
 #ifdef __cplusplus
 }
 #endif

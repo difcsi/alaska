@@ -6,11 +6,7 @@
 #define managed __attribute__((address_space(1)))
 #define COUNT 10000000
 
-__attribute__((noinline)) void inc(volatile int *x) {
-  if (x != NULL) {
-    *x += 1;
-  }
-}
+__attribute__((noinline)) void inc(volatile int *x) { *x += 1; }
 
 int main(int argc, char **argv) {
   for (int i = 0; i < 1 << 21; i++) {

@@ -52,6 +52,14 @@ namespace alaska {
     return current_slab->alloc();
   }
 
+
+  // Default domain implementation of handle_fault does nothing.
+  bool Domain::handle_fault(alaska::Mapping &m) {
+    // alaska::printf("Domain handling fault for mapping %p\n", &m);
+    m.set_fault_pending(false);
+    return true;
+  }
+
 }  // namespace alaska
 
 

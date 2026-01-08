@@ -9,7 +9,10 @@
  * and modify it as specified in the file "LICENSE".
  */
 #define UNW_LOCAL_ONLY
+
+#ifdef ALASKA_HAS_LIBUNWIND
 #include <libunwind.h>
+#endif
 #include <alaska/StackMapParser.h>
 #include <alaska/config.h>
 
@@ -221,6 +224,7 @@ static bool in_might_block_function(uintptr_t start_addr) {
 }
 
 void alaska::barrier::get_pinned_handles(bool pin) {
+#ifdef ALASKA_HAS_LIBUNWIND
   unw_cursor_t cursor;
   unw_context_t uc;
   unw_word_t pc, sp, reg;
@@ -293,6 +297,7 @@ void alaska::barrier::get_pinned_handles(bool pin) {
   }
   // printf("\n");
   dump_lock.unlock();
+#endif
 }
 
 
@@ -491,8 +496,8 @@ static void alaska_barrier_signal_handler(int sig, siginfo_t* info, void* ptr) {
         __builtin___clear_cache((char*)start, (char*)end);
       }
 
-      printf(
-          "ManagedUntracked: pc:0x%zx sig:%d invl:%d!\n", return_address, sig, invalid_state_abort);
+      printf("ManagedUntracked: pc:0x%zx sig:%d invl:%d!\n", return_address, sig,
+             invalid_state_abort);
       if (sig == SIGILL) {
         alaska::thread_tracking::my_state.join_status = ALASKA_JOIN_REASON_ABORT;
         break;
@@ -658,7 +663,7 @@ void parse_stack_map(uint8_t* t) {
 
     if (record.getID() == 'H') {
       printf("handle fault at 0x%lx lo:%d, loc:%d\n", addr, record.getNumLiveOuts(),
-          record.getNumLocations());
+             record.getNumLocations());
       for (std::uint16_t i = 0; i < record.getNumLocations(); i++) {
         auto l = record.getLocation(i);
 

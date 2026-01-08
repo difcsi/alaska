@@ -135,8 +135,9 @@ install(
 # This defines the runtime that compiled code is linked against
 if(NOT ALASKA_CORE_ONLY) # -----------------------------------------------------------------------------------
 
-  find_library(LIBUNWIND_LIBRARIES NAMES unwind )
+  find_library(LIBUNWIND_LIBRARIES NAMES unwind)
   message(STATUS "UNWIND: ${LIBUNWIND_LIBRARIES}")
+
 
   set(SOURCES
     rt/init.cpp
@@ -151,12 +152,20 @@ if(ALASKA_HTLB_SIM)
   list(APPEND SOURCES rt/sim.cpp)
 endif(ALASKA_HTLB_SIM)
 
-  add_library(alaska SHARED ${SOURCES})
+  add_library(alaska ${ALASKA_LIBRARY_TYPE} ${SOURCES})
 
   target_include_directories(alaska PUBLIC include/)
   set_target_properties(alaska PROPERTIES LINKER_LANGUAGE C)
   set_target_properties(alaska PROPERTIES SOVERSION ${ALASKA_VERSION})
-  target_link_libraries(alaska dl pthread ${LIBUNWIND_LIBRARIES})
+  target_link_libraries(alaska dl pthread)
+
+
+  # if unwind is found, define a macro
+  if(LIBUNWIND_LIBRARIES)
+    target_compile_definitions(alaska PUBLIC -DALASKA_HAS_LIBUNWIND=1)
+    target_link_libraries(alaska ${LIBUNWIND_LIBRARIES})
+
+  endif()
 
   # target_compile_options(alaska PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-nostdlib++ -nostdinc++>)
   target_compile_options(alaska PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-nostdinc++>)
@@ -172,8 +181,7 @@ endif(ALASKA_HTLB_SIM)
     PUBLIC_HEADER DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
     PRIVATE_HEADER DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 
-
-
+  if(ALASKA_CORE_BITCODE)
   function(add_bitcode name)
     cmake_parse_arguments(
       SRC        # prefix of output variables
@@ -212,9 +220,10 @@ endif(ALASKA_HTLB_SIM)
   add_library(lifetimemalloc SHARED ${SRC_FILES})
   target_link_libraries(lifetimemalloc dl)
 
+
   add_bitcode(alaska_translate SOURCES rt/translate.cpp)
   add_bitcode(alaska_compat SOURCES rt/compat.c)
-  add_bitcode(alaska_stub SOURCES
+   add_bitcode(alaska_stub SOURCES
       stub/net.c
       stub/dtoa.c
       stub/obstack.c
@@ -224,8 +233,15 @@ endif(ALASKA_HTLB_SIM)
 
 
   target_link_libraries(alaska alaska_translate_native)
+  endif(ALASKA_CORE_BITCODE)
 
-endif(NOT ALASKA_CORE_ONLY) # ---------------------------------------------------------------------------------
+endif(NOT ALASKA_CORE_ONLY)
+
+
+
+
+
+
 
 
 

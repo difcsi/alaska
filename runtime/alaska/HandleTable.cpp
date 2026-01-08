@@ -48,10 +48,12 @@ namespace alaska {
     m_capacity = HandleTable::initial_capacity;
 
 
+#ifndef ALASKA_YUKON_NO_HARDWARE
     if (dev_alaska_fd == -1) {
       int fd = open("/dev/alaska", O_RDWR);
       if (fd > 0) dev_alaska_fd = fd;
     }
+#endif
 
     if (dev_alaska_fd > 0) {
       m_table = (Mapping *)mmap((void *)table_start, m_capacity * HandleTable::map_granularity,

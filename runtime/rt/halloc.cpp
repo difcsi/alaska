@@ -39,12 +39,16 @@ static void *_halloc(size_t sz, int zero) {
   // This seems right...
   if (result == NULL) errno = ENOMEM;
 
-
+  // mark the handle as 'to fault' for testing purposes
+  auto m = alaska::Mapping::from_handle_safe(result);
+  if (m) {
+    m->set_fault_pending(true);
+  }
 
   if (zero) {
-    // handle translate.
     alaska::handle_memset(result, 0, sz);
   }
+
   return result;
 }
 
@@ -242,6 +246,10 @@ extern "C" bool localize_structure(void *ptr) {
 
 // ----------- Translate hit/miss ------------ //
 
+
+#define ENABLE_HITMISS_TRACKING
+
+#ifdef ENABLE_HITMISS_TRACKING
 struct HitMiss {
   const char *key;
   uint64_t hit;
@@ -281,6 +289,12 @@ extern "C" void __alaska_track_hitmiss(const char *key, uint64_t original, uint6
 
 
 __attribute__((destructor)) void __alaska_hitmiss_exit(void) {
+  auto &rt = alaska::Runtime::get();
+  auto faults = rt.handle_faults.read();
+  auto fps = rt.handle_faults.digest();
+  fprintf(stderr, "Handle faults: %lu (%.2f per second)\n", faults, fps);
+
+  return;
   ck::vec<HitMiss> vhm;
   // dump hitmiss
   for (auto &[k, hm] : hitmiss) {
@@ -293,7 +307,6 @@ __attribute__((destructor)) void __alaska_hitmiss_exit(void) {
   long handles = 0;
   long ptrs = 0;
   long mixes = 0;
-
   long total_branches = 0;
   long removed_branches = 0;
 
@@ -339,3 +352,5 @@ __attribute__((destructor)) void __alaska_hitmiss_exit(void) {
 
   fclose(profile_stream);
 }
+
+#endif  // ENABLE_HITMISS_TRACKING

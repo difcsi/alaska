@@ -76,12 +76,18 @@ namespace alaska {
 
   class Mapping {
    private:
-    static constexpr uint64_t MAPPING_BIT_PINNED = (1UL << 63);
-    uint64_t value;
+    union {
+      struct {
+        uint64_t _value : 62;
+        uint64_t pinned : 1;
+        uint64_t pending_fault : 1;
+      };
+      uint64_t value;
+    };
 
 
    public:
-    ALASKA_INLINE void *get_pointer(void) const { return (void *)this->value; }
+    ALASKA_INLINE void *get_pointer(void) const { return (void *)(uint64_t)this->_value; }
 
     ALASKA_INLINE void *get_pointer_fast(void) const { return (void *)this->value; }
 
@@ -130,18 +136,12 @@ namespace alaska {
 
 
     // TODO: should these be atomic?
-    bool is_pinned(void) const {
-      // check MAPPING_BIT_PINNED
-      return (this->value & MAPPING_BIT_PINNED) != 0;
-    }
-    void set_pinned(bool to) {
-      if (to) {
-        this->value |= MAPPING_BIT_PINNED;
-      } else {
-        this->value &= ~MAPPING_BIT_PINNED;
-      }
-    }
+    bool is_pinned(void) const { return this->pinned; }
+    void set_pinned(bool to) { this->pinned = to; }
 
+
+    bool fault_pending(void) const { return this->pending_fault; }
+    void set_fault_pending(bool to) { this->pending_fault = to; }
 
     void reset(void) {
       this->value = 0;
@@ -154,6 +154,7 @@ namespace alaska {
     ALASKA_INLINE uint64_t encode(void) const {
       auto out = (uint64_t)((uint64_t)this >> ALASKA_SQUEEZE_BITS);
       return out;
+      return false;
     }
 
     ALASKA_INLINE handle_id_t handle_id(void) const {
@@ -218,8 +219,8 @@ namespace alaska {
     }
   };
 
-  static_assert(
-      sizeof(alaska::Mapping) == 8, "Mapping must be 8 bytes to fit in a handle. Please fix this.");
+  static_assert(sizeof(alaska::Mapping) == 8,
+                "Mapping must be 8 bytes to fit in a handle. Please fix this.");
 
   // runtime.cpp
   extern void record_translation_info(bool hit);

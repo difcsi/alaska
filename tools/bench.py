@@ -85,7 +85,7 @@ all_spec = [
     619,
     638,
     644,
-]
+]\1
 
 spec_enable = [
   605, # mcf

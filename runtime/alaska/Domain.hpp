@@ -35,7 +35,10 @@ namespace alaska {
     Domain &operator=(const Domain &) = delete;
     Domain &operator=(Domain &&) = delete;
     Domain(HandleTable &ht);
-    ~Domain();
+    virtual ~Domain();
+
+
+    virtual bool handle_fault(alaska::Mapping &m);
 
     // Allocate a new mapping from this domain's slice of the handle table.
     alaska::Mapping *alloc_handle(void);

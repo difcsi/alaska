@@ -16,6 +16,7 @@
           runInputs = with pkgs; [
             llvmPackages_21.libllvm
             llvmPackages_21.clang # -unwrapped
+            llvmPackages_21.clang-unwrapped
             llvmPackages_21.stdenv
             llvmPackages_21.libunwind
             # llvmPackages_21.libcxxClang

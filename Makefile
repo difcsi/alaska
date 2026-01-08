@@ -9,6 +9,7 @@ export PATH:=$(ROOT)/local/bin:$(PATH)
 export LD_LIBRARY_PATH:=$(ROOT)/local/lib:$(LD_LIBRARY_PATH)
 
 CC=clang
+
 CXX=clang++
 export CC
 export CXX
