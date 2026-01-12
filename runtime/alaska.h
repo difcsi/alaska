@@ -101,13 +101,13 @@ typedef enum {
 
 
 
-inline AlaskaCtlResult alaska_ctl(uint64_t handle, enum AlaskaCtlOperation op, uint64_t arg) {
+inline AlaskaCtlResult alaska_ctl(enum AlaskaCtlOperation op, uint64_t arg) {
   // Internal call to the runtime. This must be marked as weak, as the application must be able to
   // compile without the runtime linked in.
-  extern AlaskaCtlResult __alaska_ctl(uint64_t handle, enum AlaskaCtlOperation op, uint64_t arg)
+  extern AlaskaCtlResult __alaska_ctl(enum AlaskaCtlOperation op, uint64_t arg)
       __attribute__((weak));
   if (__alaska_ctl) {
-    return __alaska_ctl(handle, op, arg);
+    return __alaska_ctl(op, arg);
   }
   return ALASKA_NOT_LINKED;
 }

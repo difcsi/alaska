@@ -415,15 +415,20 @@ static void __attribute__((destructor)) alaska_runtime_deinit(void) {
 }
 
 
-extern "C" AlaskaCtlResult __alaska_ctl(uint64_t handle, enum AlaskaCtlOperation op, uint64_t arg) {
-  printf("alaska_ctl(%p, %d, %p)\n", (void *)handle, op, (void *)arg);
+extern "C" AlaskaCtlResult __alaska_ctl(AlaskaCtlOperation op, uint64_t arg) {
+  printf("alaska_ctl(%d, %p)\n", op, (void *)arg);
 
-  auto m = alaska::Mapping::from_handle_safe((void *)handle);
-  if (!m) return ALASKA_INVALID;
+#define CTRL_CHECK_HANDLE(_arg)                               \
+  ({                                                          \
+    auto m = alaska::Mapping::from_handle_safe((void *)_arg); \
+    if (!m) return ALASKA_INVALID;                            \
+    m;                                                        \
+  })
 
   switch (op) {
     case ALASKA_CTL_MARK_FOR_FAULT: {
-      printf("Marking %p for fault\n", (void *)handle);
+      auto m = CTRL_CHECK_HANDLE(arg);
+      printf("Marking %p for fault\n", (void *)arg);
       m->set_fault_pending(true);
       return ALASKA_SUCCESS;
     }
