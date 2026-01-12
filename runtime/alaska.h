@@ -15,8 +15,7 @@ extern "C" {
 // Allocate a handle as well as its backing memory if the runtime decides to do
 // so. This is the main interface to alaska's handle system, as actually using
 // handles is entirely transparent.
-extern void *
-halloc(size_t sz) NOEXCEPT; // __attribute__((alloc_size(1), malloc, nothrow));
+extern void *halloc(size_t sz) NOEXCEPT;  // __attribute__((alloc_size(1), malloc, nothrow));
 
 // calloc a handle, returning a zeroed array of nmemb elements, each of size
 // `size`
@@ -69,7 +68,9 @@ extern void *__alaska_leak(void *);
 typedef struct alaska_domain alaska_domain_t;
 
 // The configuration structure for creating a new domain.
-struct alaska_domain_config { int todo; };
+struct alaska_domain_config {
+  int todo;
+};
 
 // Create a new Domain. Returns NULL on failure.
 // The `cfg` parameter is reserved for future use and is currently ignored.
@@ -83,6 +84,34 @@ void *alaska_domain_alloc(alaska_domain_t *a, size_t sz);
 void alaska_domain_free(alaska_domain_t *a, void *ptr);
 
 void alaska_mark_for_fault_TEST(void *ptr);
+
+
+
+
+enum AlaskaCtlOperation {
+  ALASKA_CTL_MARK_FOR_FAULT,
+};
+
+typedef enum {
+  ALASKA_NOT_LINKED,  // The runtime is not linked in
+  ALASKA_SUCCESS,
+  ALASKA_INVALID,  // Invalid handle, invalid op, etc.
+} AlaskaCtlResult;
+
+
+
+
+inline AlaskaCtlResult alaska_ctl(uint64_t handle, enum AlaskaCtlOperation op, uint64_t arg) {
+  // Internal call to the runtime. This must be marked as weak, as the application must be able to
+  // compile without the runtime linked in.
+  extern AlaskaCtlResult __alaska_ctl(uint64_t handle, enum AlaskaCtlOperation op, uint64_t arg)
+      __attribute__((weak));
+  if (__alaska_ctl) {
+    return __alaska_ctl(handle, op, arg);
+  }
+  return ALASKA_NOT_LINKED;
+}
+
 
 #ifdef __cplusplus
 }

@@ -171,7 +171,7 @@ namespace alaska {
   void *do_handle_fault_and_translate(uint64_t handle) {
     auto &rt = alaska::Runtime::get();
     rt.handle_fault(handle);
-    return alaska::Mapping::translate((void*)handle);
+    return alaska::Mapping::translate((void *)handle);
   }
 
 
@@ -181,11 +181,14 @@ namespace alaska {
     auto *domain = this->handle_table.get_owner_domain(m);
 
 
+    printf("Handle fault on %p\n", (void *)m);
+
     if (!domain->handle_fault(*m)) {
       log_error("Unhandled fault on handle %p\n", m);
       abort();
     }
-    ALASKA_ASSERT(m->fault_pending() == false, "Fault pending bit should be cleared after a handle fault is resolved");
+    ALASKA_ASSERT(m->fault_pending() == false,
+                  "Fault pending bit should be cleared after a handle fault is resolved");
     // printf("fault on %p\n", m);
     handle_faults.track_atomic(1);
     return 0;
@@ -411,3 +414,20 @@ static void __attribute__((destructor)) alaska_runtime_deinit(void) {
   }
 }
 
+
+extern "C" AlaskaCtlResult __alaska_ctl(uint64_t handle, enum AlaskaCtlOperation op, uint64_t arg) {
+  printf("alaska_ctl(%p, %d, %p)\n", (void *)handle, op, (void *)arg);
+
+  auto m = alaska::Mapping::from_handle_safe((void *)handle);
+  if (!m) return ALASKA_INVALID;
+
+  switch (op) {
+    case ALASKA_CTL_MARK_FOR_FAULT: {
+      printf("Marking %p for fault\n", (void *)handle);
+      m->set_fault_pending(true);
+      return ALASKA_SUCCESS;
+    }
+    default:
+      return ALASKA_INVALID;
+  }
+}
