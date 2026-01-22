@@ -52,3 +52,5 @@ __pycache__
 
 # Temp, not sure if should fully ignore this
 /CLAUDE.md
+/dumps/
+alaska.hprof

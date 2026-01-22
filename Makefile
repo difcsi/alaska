@@ -70,4 +70,7 @@ local/bin/clang:
 redis: FORCE
 	nix develop --command bash -c "source enable && make -C test/redis"
 
+build/dump_analysis: tools/dump_analysis.cpp
+	$(CXX) -O3 -fopenmp runtime/alaska/compression/lz4.c tools/dump_analysis.cpp -Iruntime/alaska/compression -lm $(shell pkg-config --cflags --libs zlib) $(shell pkg-config --cflags --libs libzstd) -o build/dump_analysis
+
 FORCE: # anything you want to force, depend on this

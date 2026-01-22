@@ -49,6 +49,7 @@
             python3Packages.pip
             gdb ps which git
             zlib
+            zstd
             wget
 
             bashInteractive
@@ -63,7 +64,7 @@
             LOCALE_ARCHIVE = "${glibcLocales}/lib/locale/locale-archive";
             hardeningDisable = ["all"];
 
-            LD_LIBRARY_PATH = "${pkgs.gcc-unwrapped.lib}/lib";
+            # LD_LIBRARY_PATH = "${pkgs.gcc-unwrapped.lib}/lib";
 
             shellHook = ''
               unset NIX_ENFORCE_NO_NATIVE

@@ -30,8 +30,8 @@ namespace alaska {
     auto prot = PROT_READ | PROT_WRITE;
     auto flags = MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE;
     heap_start = mmap(NULL, alaska::heap_size, prot, flags, -1, 0);
-    ALASKA_ASSERT(
-        heap_start != MAP_FAILED, "Failed to allocate the heap's backing memory. Aborting.");
+    ALASKA_ASSERT(heap_start != MAP_FAILED,
+                  "Failed to allocate the heap's backing memory. Aborting.");
 
     heap_bump = heap_start;
     heap_bump = (void *)(((uintptr_t)heap_bump + alaska::page_size - 1) & ~(alaska::page_size - 1));
@@ -72,9 +72,9 @@ namespace alaska {
 
   LocalityPage *Heap::get_localitypage(size_t size_requirement, ThreadCache *owner) {
     ck::scoped_lock lk(this->lock);  // TODO: don't lock.
-    auto *p = this->find_or_alloc_page<LocalityPage>(
-        locality_pages, owner, size_requirement, [](auto *p) {
-        });
+    auto *p = this->find_or_alloc_page<LocalityPage>(locality_pages, owner, size_requirement,
+                                                     [](auto *p) {
+                                                     });
     return p;
   }
 
@@ -112,7 +112,7 @@ namespace alaska {
         size_t committed = p->committed();
         total_committed += committed;
         fprintf(stream, "  - %p avail:%zu  commit:%zu  frag:%f\n", p, p->available(), committed,
-            p->fragmentation());
+                p->fragmentation());
         return true;
       });
     }
@@ -123,12 +123,12 @@ namespace alaska {
       size_t committed = p->committed();
       total_committed += committed;
       fprintf(stream, "  - %p avail:%zu  commit:%zu  frag:%f\n", p, p->available(), committed,
-          p->fragmentation());
+              p->fragmentation());
       return true;
     });
 
     fprintf(stream, "Total committed memory: %zu bytes (%fmb)\n", total_committed,
-        total_committed / (1024.0 * 1024.0));
+            total_committed / (1024.0 * 1024.0));
 
     fprintf(stream, "\n");
   }
@@ -205,7 +205,7 @@ namespace alaska {
     alaska::printf("Locality pages: %lu\n", locality_pages.size());
     locality_pages.for_each([&](LocalityPage *lp) {
       alaska::printf(" - Locality page %p  commit:%zu, avail:%zu, frag:%.2f%%\n", lp,
-          lp->committed(), lp->available(), lp->fragmentation() * 100);
+                     lp->committed(), lp->available(), lp->fragmentation() * 100);
       return true;
     });
     return c;
