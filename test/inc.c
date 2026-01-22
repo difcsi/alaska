@@ -1,10 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
-#include <yukon.h>
 
-#define managed __attribute__((address_space(1)))
-#define COUNT 10000000
 
 __attribute__((noinline)) void inc(volatile int *x) { *x += 1; }
 
