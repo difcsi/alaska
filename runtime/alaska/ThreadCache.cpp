@@ -30,7 +30,7 @@ namespace alaska {
     for (size_class_t i = 0; i < alaska::num_size_classes; i++) {
       size_classes[i] = nullptr;
     }
-    // Note: handle_slab initialization removed. Domain manages slabs now.
+    this->current_slab = nullptr;
   }
 
 
@@ -74,7 +74,7 @@ namespace alaska {
 #define TC_ALIGNED(p) ((__typeof__(p))__builtin_assume_aligned((p), sizeof(uintptr_t)))
 
   // noinline
-  __attribute__((noinline)) void *ThreadCache::halloc_generic(Domain &D, size_t size) {
+  __attribute__((noinline)) void *ThreadCache::halloc_generic(size_t size) {
     // Now, if we are being called here, it means either we are
     // allocating a large object (size>1024) or one of the following
     // checks failed in ::halloc.
@@ -106,7 +106,7 @@ namespace alaska {
     } else {
       int cls = alaska::size_to_class(size);
       if (cls == 0) return NULL;
-      auto *mapping = TC_ALIGNED(this->new_mapping(D));
+      auto *mapping = TC_ALIGNED(this->new_mapping());
 
       void *ptr;
       SizedPage *page = size_classes[cls];
@@ -164,9 +164,7 @@ namespace alaska {
 #endif
 
   // A version of halloc which uses the global domain.
-  LTO_INLINE void *ThreadCache::halloc(size_t size) { return halloc(runtime.global_domain, size); }
-
-  LTO_INLINE void *ThreadCache::halloc(Domain &D, size_t size) {
+  LTO_INLINE void *ThreadCache::halloc(size_t size) {
     halloc_track(halloc_calls);
     int cls = alaska::size_to_class(size);
     if (cls == 0) {
@@ -179,10 +177,10 @@ namespace alaska {
       auto *sp = size_classes[cls];
 
       if (likely(sp != NULL)) {
-        auto *slab = D.current_slab;
+        auto *slab = this->current_slab;
         if (unlikely(slab == nullptr)) {
           // Need to get a slab first
-          return halloc_generic(D, size);
+          return halloc_generic(size);
         }
         auto &htfl = slab->get_freelist();
         auto &spfl = sp->get_freelist();
@@ -216,7 +214,7 @@ namespace alaska {
       halloc_track(halloc_not_small);
 
     // Ope! Fallback to the slower generic path.
-    return halloc_generic(D, size);
+    return halloc_generic(size);
   }
 
 
@@ -305,7 +303,7 @@ namespace alaska {
       alaska::Mapping *m;
 
 #ifdef STUB_ALLOCATES_HANDLES
-      m = this->new_mapping(runtime.global_domain);
+      m = this->new_mapping();
 #else
       // Stub Mapping
       alaska::Mapping m_p{};
@@ -326,7 +324,6 @@ namespace alaska {
 
 
   LTO_INLINE void *ThreadCache::malloc(size_t size, bool zero_ignored) {
-    Domain &D = runtime.global_domain;
     if (likely(size < alaska::max_small_size)) {
       // int cls = alaska::size_to_class(size);
       auto *sp = size_classes[alaska::size_to_class_small(size)];
@@ -334,10 +331,10 @@ namespace alaska {
       // alaska::printf("sp=%p\n", sp);
 
       if (likely(sp != NULL)) {
-        auto *slab = D.current_slab;
+        auto *slab = this->current_slab;
         if (unlikely(slab == nullptr)) {
           // Need to get a slab first
-          return halloc_generic(D, size);
+          return halloc_generic(size);
         }
         auto &htfl = slab->get_freelist();
         auto &spfl = sp->get_freelist();
@@ -442,16 +439,20 @@ namespace alaska {
     return header->object_size();
   }
 
-  __attribute__((noinline)) Mapping *ThreadCache::new_mapping_slow_path(Domain &domain) {
+  __attribute__((noinline)) Mapping *ThreadCache::new_mapping_slow_path(void) {
     handle_table_churn++;  // record that we are looking for a new handle table slab.
     // printf("Ran out of handles in the slab!\n");
-    // Ask the domain to find or allocate a new slab for us
-    auto new_slab = domain.find_next_slab();
+
+    // We need to get a new slab from the handle table
+    auto new_slab = runtime.handle_table.fresh_slab();
+
     if (new_slab == nullptr) {
       return nullptr;
     }
-    // Update domain's current_slab
-    domain.current_slab = new_slab;
+
+    // Update our current slab
+    this->current_slab = new_slab;
+
     // Allocate from the new slab
     auto m = new_slab->alloc();
     return m;

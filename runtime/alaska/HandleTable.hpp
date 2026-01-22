@@ -22,7 +22,7 @@
 
 namespace alaska {
 
-  class Domain;  // forward declare. <alaska/Domain.hpp>
+
 
   using slabidx_t = size_t;
 
@@ -60,11 +60,12 @@ namespace alaska {
     HandleSlab *prev = nullptr;                // The previous slab in the queue
     HandleSlabQueue *current_queue = nullptr;  // What queue is this slab in?
 
-    alaska::Domain *owner_domain = nullptr;
+
 
 
     // -- Methods --
-    HandleSlab(HandleTable &table, slabidx_t idx, Domain *domain = nullptr);
+    HandleSlab(HandleTable &table, slabidx_t idx);
+
     void dump(FILE *stream);  // Dump this slab's debug info to a file
 
 
@@ -171,10 +172,8 @@ namespace alaska {
     ~HandleTable(void);
 
     // Allocate a fresh slab, resizing the table if necessary.
-    // domain: The Domain that will own this slab. Required (enforces ownership invariant).
     // Tries free list first before bump allocating new slab.
-    // Invariant: Every allocated slab must be owned by a Domain.
-    alaska::HandleSlab *fresh_slab(Domain &domain);
+    alaska::HandleSlab *fresh_slab(void);
 
     // Return a slab to the free list for recycling.
     // Performs full reset of slab state before adding to free list.
@@ -190,10 +189,6 @@ namespace alaska {
 
     bool valid_handle(alaska::Mapping *m) const;
 
-    inline Domain *get_owner_domain(alaska::Mapping *m) {
-      alaska::HandleSlab *slab = get_slab(m);
-      return slab->owner_domain;
-    }
 
 
     inline alaska::HandleSlab *get_slab(alaska::Mapping *m) {

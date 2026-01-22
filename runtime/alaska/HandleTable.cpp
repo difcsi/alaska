@@ -121,15 +121,14 @@ namespace alaska {
     ALASKA_ASSERT(m_table != MAP_FAILED, "failed to reallocate handle table during growth");
   }
 
-  HandleSlab *HandleTable::fresh_slab(Domain &domain) {
+  HandleSlab *HandleTable::fresh_slab(void) {
     ck::scoped_lock lk(this->lock);
 
     // Try to get a slab from the free list first
     HandleSlab *sl = m_free_slabs.pop();
     if (sl != nullptr) {
       // Reuse slab from free list
-      sl->owner_domain = &domain;
-      log_trace("Reusing slab %lu from free list for domain %p", sl->idx, &domain);
+      log_trace("Reusing slab %lu from free list", sl->idx);
       return sl;
     }
 
@@ -147,11 +146,10 @@ namespace alaska {
     }
 
     // Allocate a new slab using the system allocator.
-    // auto *sl = alaska::make_object<HandleSlab>(*this, idx);
-    sl = new HandleSlab(*this, idx, &domain);
-    // if (do_mlock) sl->mlock();
+    sl = new HandleSlab(*this, idx);
     // Note: Slabs are now Domain-owned. ThreadCache owner is set to nullptr.
-    // The owner field is kept for freelist routing (local vs remote operations) but does not represent ownership.
+    // The owner field is kept for freelist routing (local vs remote operations) but does not
+    // represent ownership.
     // TODO: Remove HandleSlab's ThreadCache ownership concept entirely
     sl->set_owner(nullptr);
 
@@ -168,8 +166,6 @@ namespace alaska {
     log_trace("Returning slab %lu to free list", slab->idx);
 
     // Full reset of slab state for clean reuse
-    // Clear domain ownership
-    slab->owner_domain = nullptr;
 
     // Reset internal slab state (bump allocator and free lists)
     slab->reset();
@@ -274,10 +270,9 @@ namespace alaska {
   // Handle Slab
   //////////////////////
 
-  HandleSlab::HandleSlab(HandleTable &table, slabidx_t idx, Domain *domain)
+  HandleSlab::HandleSlab(HandleTable &table, slabidx_t idx)
       : table(table)
       , idx(idx) {
-    this->owner_domain = domain;
     void *memory = table.get_slab_start(idx);
     // assert that memory is aligned to page size
     if ((((uintptr_t)memory % HandleTable::slab_size) != 0)) {
@@ -294,7 +289,8 @@ namespace alaska {
 
     // Finally, set the end pointer to the end of the slab
     this->end = (alaska::Mapping *)memory + HandleTable::slab_capacity;
-    // alaska::printf("Allocated new handle slab %p at idx %d (%p - %p)\n", this, idx, start, end);
+    // alaska::printf("Allocated new handle slab %p at idx %d (%p - %p)\n", this, idx, start,
+    // end);
   }
 
 

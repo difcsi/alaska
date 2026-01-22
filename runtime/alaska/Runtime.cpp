@@ -32,7 +32,6 @@ namespace alaska {
   Runtime::Runtime(alaska::Configuration config)
       : config(config)
       , handle_table(config)
-      , global_domain(handle_table)  // Construct the global domain
       , heap(config) {
     if (g_runtime != nullptr) {
       log_error("Cannot create a new Alaska Runtime, one already exists at %p", g_runtime);
@@ -178,17 +177,12 @@ namespace alaska {
   int Runtime::handle_fault(uint64_t handle) {
     auto *m = alaska::Mapping::from_handle((void *)handle);
 
-    auto *domain = this->handle_table.get_owner_domain(m);
+    // printf("Handle fault on %p\n", (void *)m);
 
+    // With domains removed, we simply clear the fault pending bit.
+    // If we had more complex logic (like paging from disk), it would go here.
+    m->set_fault_pending(false);
 
-    printf("Handle fault on %p\n", (void *)m);
-
-    if (!domain->handle_fault(*m)) {
-      log_error("Unhandled fault on handle %p\n", m);
-      abort();
-    }
-    ALASKA_ASSERT(m->fault_pending() == false,
-                  "Fault pending bit should be cleared after a handle fault is resolved");
     // printf("fault on %p\n", m);
     handle_faults.track_atomic(1);
     return 0;

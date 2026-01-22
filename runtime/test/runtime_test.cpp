@@ -53,7 +53,7 @@ TEST_F(RuntimeTest, OnlyOneRuntime) {
 
 TEST_F(RuntimeTest, FreshSlabAllocation) {
   // Allocate a fresh slab from the handle table
-  auto* slab = runtime.handle_table.fresh_slab(runtime.global_domain);
+  auto* slab = runtime.handle_table.fresh_slab();
   // Check that the allocated slab is not null
   ASSERT_NE(slab, nullptr);
 }
@@ -66,7 +66,7 @@ TEST_F(RuntimeTest, FreshSlabAllocationIncreasesSlabCount) {
   int initialSlabCount = runtime.handle_table.slab_count();
 
   // Allocate a fresh slab from the handle table
-  auto* slab = runtime.handle_table.fresh_slab(runtime.global_domain);
+  auto* slab = runtime.handle_table.fresh_slab();
 
   // Check that the allocated slab is not null
   ASSERT_NE(slab, nullptr);
@@ -80,9 +80,9 @@ TEST_F(RuntimeTest, FreshSlabAllocationIncreasesSlabCount) {
 
 TEST_F(RuntimeTest, UniqueSlabAllocations) {
   // Allocate multiple fresh slabs from the handle table
-  auto* slab1 = runtime.handle_table.fresh_slab(runtime.global_domain);
-  auto* slab2 = runtime.handle_table.fresh_slab(runtime.global_domain);
-  auto* slab3 = runtime.handle_table.fresh_slab(runtime.global_domain);
+  auto* slab1 = runtime.handle_table.fresh_slab();
+  auto* slab2 = runtime.handle_table.fresh_slab();
+  auto* slab3 = runtime.handle_table.fresh_slab();
 
   // Check that all allocated slabs are not null
   ASSERT_NE(slab1, nullptr);
@@ -98,11 +98,9 @@ TEST_F(RuntimeTest, UniqueSlabAllocations) {
 
 
 
-
-
 TEST_F(RuntimeTest, SlabGetHandle) {
   // Allocate a fresh slab from the handle table
-  auto* slab = runtime.handle_table.fresh_slab(runtime.global_domain);
+  auto* slab = runtime.handle_table.fresh_slab();
 
   // Get a handle from the slab
   auto handle = slab->alloc();
@@ -113,7 +111,7 @@ TEST_F(RuntimeTest, SlabGetHandle) {
 
 TEST_F(RuntimeTest, SlabNFreeDecreasesOnHandleGet) {
   // Allocate a fresh slab from the handle table
-  auto* slab = runtime.handle_table.fresh_slab(runtime.global_domain);
+  auto* slab = runtime.handle_table.fresh_slab();
   // Get the initial nfree count
   int initialNFree = slab->num_free();
   // Get a handle from the slab
@@ -129,7 +127,7 @@ TEST_F(RuntimeTest, SlabNFreeDecreasesOnHandleGet) {
 TEST_F(RuntimeTest, SlabGetSlab) {
   // Allocate a large number of slabs
   for (size_t i = 0; i < alaska::HandleTable::initial_capacity * 2; i++) {
-    auto* slab = runtime.handle_table.fresh_slab(runtime.global_domain);
+    auto* slab = runtime.handle_table.fresh_slab();
     ASSERT_NE(slab, nullptr);
     // Check that get_slab returns the right slab
     ASSERT_EQ(runtime.handle_table.get_slab(slab->idx), slab);
@@ -139,7 +137,7 @@ TEST_F(RuntimeTest, SlabGetSlab) {
 
 TEST_F(RuntimeTest, SlabGetReturnsNullWhenOutOfCapacity) {
   // Allocate a fresh slab from the handle table
-  auto* slab = runtime.handle_table.fresh_slab(runtime.global_domain);
+  auto* slab = runtime.handle_table.fresh_slab();
 
   // Fill up the slab with handles
   for (size_t i = 0; i < slab->capacity(); i++) {
@@ -158,7 +156,7 @@ TEST_F(RuntimeTest, SlabGetReturnsNullWhenOutOfCapacity) {
 // Test that a slab returns all unique handles
 TEST_F(RuntimeTest, SlabUniqueHandles) {
   // Allocate a fresh slab from the handle table
-  auto* slab = runtime.handle_table.fresh_slab(runtime.global_domain);
+  auto* slab = runtime.handle_table.fresh_slab();
   // Create a set to store the handles
   std::set<alaska::Mapping*> handles;
   // Fill up the slab with handles
@@ -176,7 +174,7 @@ TEST_F(RuntimeTest, SlabUniqueHandles) {
 // test that a slab returns the same mapping once it is put back
 TEST_F(RuntimeTest, SlabReturnHandle) {
   // Allocate a fresh slab from the handle table
-  auto* slab = runtime.handle_table.fresh_slab(runtime.global_domain);
+  auto* slab = runtime.handle_table.fresh_slab();
   // Get a handle from the slab
   auto handle = slab->alloc();
   // Return the handle to the slab
@@ -195,7 +193,7 @@ TEST_F(RuntimeTest, SlabMappingIndex) {
   // For a few iterations...
   for (int slabi = 0; slabi < 10; slabi++) {
     // Allocate a fresh slab from the handle table
-    auto* slab = runtime.handle_table.fresh_slab(runtime.global_domain);
+    auto* slab = runtime.handle_table.fresh_slab();
     // Fill up the slab with handles
     for (size_t i = 0; slab->num_free() > 0; i++) {
       auto handle = slab->alloc();
@@ -222,7 +220,7 @@ TEST_F(RuntimeTest, HandleSlabQueuePop) {
   // For a few iterations...
   for (size_t i = 0; i < 10; i++) {
     // Allocate a fresh slab from the handle table
-    auto* slab = runtime.handle_table.fresh_slab(runtime.global_domain);
+    auto* slab = runtime.handle_table.fresh_slab();
     // Push the slab to the queue
     queue.push(slab);
     // Store the slab in the vector
@@ -249,7 +247,7 @@ TEST_F(RuntimeTest, HandleSlabQueuePopEmpty) {
 TEST_F(RuntimeTest, HandleSlabQueueEmpty) {
   alaska::HandleSlabQueue queue;
   ASSERT_TRUE(queue.empty());
-  auto* slab = runtime.handle_table.fresh_slab(runtime.global_domain);
+  auto* slab = runtime.handle_table.fresh_slab();
   queue.push(slab);
   ASSERT_FALSE(queue.empty());
   queue.pop();
@@ -259,9 +257,9 @@ TEST_F(RuntimeTest, HandleSlabQueueEmpty) {
 // Test that removing a slab from the start of the queue works.
 TEST_F(RuntimeTest, HandleSlabQueueRemoveStart) {
   alaska::HandleSlabQueue queue;
-  auto* slab1 = runtime.handle_table.fresh_slab(runtime.global_domain);
-  auto* slab2 = runtime.handle_table.fresh_slab(runtime.global_domain);
-  auto* slab3 = runtime.handle_table.fresh_slab(runtime.global_domain);
+  auto* slab1 = runtime.handle_table.fresh_slab();
+  auto* slab2 = runtime.handle_table.fresh_slab();
+  auto* slab3 = runtime.handle_table.fresh_slab();
 
   queue.push(slab1);
   queue.push(slab2);
@@ -275,9 +273,9 @@ TEST_F(RuntimeTest, HandleSlabQueueRemoveStart) {
 // Test that removing a slab from the middle of the queue works.
 TEST_F(RuntimeTest, HandleSlabQueueRemoveMiddle) {
   alaska::HandleSlabQueue queue;
-  auto* slab1 = runtime.handle_table.fresh_slab(runtime.global_domain);
-  auto* slab2 = runtime.handle_table.fresh_slab(runtime.global_domain);
-  auto* slab3 = runtime.handle_table.fresh_slab(runtime.global_domain);
+  auto* slab1 = runtime.handle_table.fresh_slab();
+  auto* slab2 = runtime.handle_table.fresh_slab();
+  auto* slab3 = runtime.handle_table.fresh_slab();
 
   queue.push(slab1);
   queue.push(slab2);
@@ -291,9 +289,9 @@ TEST_F(RuntimeTest, HandleSlabQueueRemoveMiddle) {
 // Test that removing a slab from the end of the queue works.
 TEST_F(RuntimeTest, HandleSlabQueueRemoveEnd) {
   alaska::HandleSlabQueue queue;
-  auto* slab1 = runtime.handle_table.fresh_slab(runtime.global_domain);
-  auto* slab2 = runtime.handle_table.fresh_slab(runtime.global_domain);
-  auto* slab3 = runtime.handle_table.fresh_slab(runtime.global_domain);
+  auto* slab1 = runtime.handle_table.fresh_slab();
+  auto* slab2 = runtime.handle_table.fresh_slab();
+  auto* slab3 = runtime.handle_table.fresh_slab();
 
   queue.push(slab1);
   queue.push(slab2);

@@ -15,19 +15,17 @@
 
 namespace alaska {
   class ThreadCache;
-  class Domain;
+
 
 
   // This is a simple structure which collects all the parameters needed
   // to request an allocation from a HeapPage.
   struct AllocationRequest {
-    AllocationRequest(ThreadCache &requestor, Domain &domain, size_t sz)
+    AllocationRequest(ThreadCache &requestor, size_t sz)
         : requestor(requestor)
-        , domain(domain)
         , size(sz) {}
 
     ThreadCache &requestor;  // The thread cache requesting this allocation
-    Domain &domain;          // The domain for handle slab allocation
     size_t size;             // The number of bytes (at least) being requested.
     bool zero = false;       // Should the data be zeroed?
   };

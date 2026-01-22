@@ -14,7 +14,7 @@
 #include <alaska/Heap.hpp>
 #include <alaska/HeapPage.hpp>
 #include <alaska/HandleTable.hpp>
-#include <alaska/Domain.hpp>
+
 #include <alaska/LocalityPage.hpp>
 #include <alaska/alaska.hpp>
 #include <alaska/Localizer.hpp>
@@ -44,8 +44,9 @@ namespace alaska {
     // access to the HandleTable and the Heap.
     alaska::Runtime &runtime;
 
-    // Note: handle_slab was removed. ThreadCache now accesses Domain::current_slab directly.
-    // Each Domain manages its own handle slabs, and ThreadCache fetches from its domain.
+    // Each ThreadCache now manages its own handle slab directly.
+    // When the current slab is exhausted, the ThreadCache requests a new one from the HandleTable.
+    alaska::HandleSlab *current_slab = nullptr;
 
     // Each thread cache has a private heap page for each size class
     // it might allocate from. When a size class fills up, it is
@@ -88,8 +89,8 @@ namespace alaska {
 
     // Handle allocation and deallocation routines.
     void *halloc(size_t size) alaska_attr_malloc;
-    void *halloc(Domain &D, size_t size) alaska_attr_malloc;
-    void *halloc_generic(Domain &D, size_t size) alaska_attr_malloc;
+
+    void *halloc_generic(size_t size) alaska_attr_malloc;
 
 
     void *hrealloc(void *handle, size_t new_size) alaska_attr_malloc;
@@ -127,8 +128,8 @@ namespace alaska {
     long localize_one(alaska::Mapping *mapping);
 
     // Allocate a new handle table mapping
-    alaska::Mapping *new_mapping(Domain &domain);
-    alaska::Mapping *new_mapping_slow_path(Domain &domain);
+    alaska::Mapping *new_mapping(void);
+    alaska::Mapping *new_mapping_slow_path(void);
     void free_mapping(alaska::Mapping *);
 
     static ThreadCache *current(void);
@@ -143,17 +144,15 @@ namespace alaska {
   };
 
 
-  inline alaska::Mapping *ThreadCache::new_mapping(Domain &domain) {
-    // Access the domain's current slab directly for fast path
-    auto slab = domain.current_slab;
-    if (unlikely(slab == nullptr || !slab->has_any_free())) {
-      // Slow path: domain needs to find/allocate a new slab
-      return new_mapping_slow_path(domain);
+  inline alaska::Mapping *ThreadCache::new_mapping(void) {
+    if (unlikely(current_slab == nullptr || !current_slab->has_any_free())) {
+      // Slow path: find/allocate a new slab
+      return new_mapping_slow_path();
     }
-    auto m = slab->alloc();
+    auto m = current_slab->alloc();
     if (unlikely(m == nullptr)) {
       // Slab appeared to have space but allocation failed, try slow path
-      return new_mapping_slow_path(domain);
+      return new_mapping_slow_path();
     }
     return m;
   }

@@ -22,7 +22,7 @@
 #include <alaska/Runtime.hpp>
 #include <alaska/RateCounter.hpp>
 #include <alaska/BarrierWorker.hpp>
-#include <alaska/Domain.hpp>
+
 
 namespace alaska {
   /**
@@ -45,8 +45,6 @@ namespace alaska {
     alaska::Configuration config;
     // The handle table is a global table that maps handles to their corresponding memory blocks.
     alaska::HandleTable handle_table;
-    // The default/global handle domain that is used when no other domain is specified.
-    alaska::Domain global_domain;
 
     // This is the actual heap
     alaska::Heap heap;
@@ -196,7 +194,6 @@ namespace alaska {
   };
 
 
-  inline Domain &get_global_domain(void) { return Runtime::get().global_domain; }
 
 
   // Spin until the runtime has been initialized somehow

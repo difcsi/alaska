@@ -24,18 +24,18 @@ namespace alaska {
 
   HeapPage::HeapPage(void *backing_memory)
       : memory(backing_memory) {
-
     // The first thing we do is store the back pointer to ourselves in the backing memory.
     header()->owner = this;
     header()->magic = HeapPageHeader::expected_magic;
     header()->end = (char *)memory + page_size;
-    // alaska::printf("HeapPage: memory: %p, header %p, owned by %p\n", memory, (uintptr_t)this->header(), this->header()->owner);
+    // alaska::printf("HeapPage: memory: %p, header %p, owned by %p\n", memory,
+    // (uintptr_t)this->header(), this->header()->owner);
     mag_list = LIST_HEAD_INIT(mag_list);
   }
 
 
   void *HeapPage::allocate_handle(const AllocationRequest &req) {
-    alaska::Mapping *m = req.requestor.new_mapping(req.domain);
+    alaska::Mapping *m = req.requestor.new_mapping();
     void *ptr = this->alloc(*m, req.size);
     // If the allocation request failed, make sure to free the handle too!
     if (ptr == NULL) {
