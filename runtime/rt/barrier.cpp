@@ -249,54 +249,29 @@ void alaska::barrier::get_pinned_handles(bool pin) {
     }
     unw_get_reg(&cursor, UNW_REG_IP, &pc);
     unw_get_reg(&cursor, UNW_REG_SP, &sp);
-    char** bt = backtrace_symbols((void**)&pc, 1);
-    // printf("pc:%12lx sp:%lx ", pc, sp);
 
-    ::free(bt);
     auto it = pin_map.find(pc);
     if (it != pin_map.end()) {
       auto& psi = it->value;
-      if (psi.count == 0) continue;  // should not happen!
+      if (psi.count == 0) {
+        continue;
+      }
       unw_get_reg(&cursor, psi.regNum, &reg);
 
-
-      printf(" %c ", psi.type);
 
       void** localSet = (void**)(reg + psi.offset);
       for (uint32_t i = 0; i < psi.count; i++) {
         void* p = localSet[i];
         if (rt.is_valid_handle(p)) {
           auto* m = alaska::Mapping::from_handle(p);
-          // printf(" (%zx)", m->handle_id());
           m->set_pinned(pin);
-        } else {
-          printf(" !!!");
         }
       }
-    } else {
-      long closest = 0;
-      long closest_dist = INT64_MAX;
-
-      for (auto& [addr, _] : pin_map) {
-        long dist = (long)addr - (long)pc;
-        if (dist < 0) dist = -dist;
-
-        if (dist < closest_dist) {
-          closest = addr;
-          closest_dist = dist;
-        }
-      }
-
-      // if (closest_dist < 0xffff) {
-      //   printf(" closest = %zx (+-%zu)", closest, closest_dist);
-      // } else {
-      //   printf(" tfa");
-      // }
     }
-    // printf("\n");
   }
-  // printf("\n");
   dump_lock.unlock();
+#else
+  printf("No libunwind!\n");
 #endif
 }
 
