@@ -90,6 +90,8 @@ void alaska_mark_for_fault_TEST(void *ptr);
 
 enum AlaskaCtlOperation {
   ALASKA_CTL_MARK_FOR_FAULT,
+  ALASKA_CTL_RUN_BARRIER,    // arg = struct alaska_barrier_config*
+  ALASKA_CTL_COMPRESS_TEST,  // arg = handle
 };
 
 typedef enum {
@@ -99,9 +101,14 @@ typedef enum {
 } AlaskaCtlResult;
 
 
+struct alaska_barrier_config {
+  void (*callback)(void *user);
+  void *user;
+};
 
 
-inline AlaskaCtlResult alaska_ctl(enum AlaskaCtlOperation op, uint64_t arg) {
+__attribute__((noinline)) static inline AlaskaCtlResult alaska_ctl(enum AlaskaCtlOperation op,
+                                                                   uint64_t arg) {
   // Internal call to the runtime. This must be marked as weak, as the application must be able to
   // compile without the runtime linked in.
   extern AlaskaCtlResult __alaska_ctl(enum AlaskaCtlOperation op, uint64_t arg)

@@ -415,15 +415,36 @@ static void __attribute__((destructor)) alaska_runtime_deinit(void) {
 }
 
 
-extern "C" AlaskaCtlResult __alaska_ctl(AlaskaCtlOperation op, uint64_t arg) {
-  printf("alaska_ctl(%d, %p)\n", op, (void *)arg);
+#include <alaska/compression/lz4.h>
 
-#define CTRL_CHECK_HANDLE(_arg)                               \
-  ({                                                          \
-    auto m = alaska::Mapping::from_handle_safe((void *)_arg); \
-    if (!m) return ALASKA_INVALID;                            \
-    m;                                                        \
+static size_t compress_zero_removal_size(void *data, size_t size) {
+  size_t csize = 0;
+  csize += sizeof(uint16_t);  // store the size of the data
+  // there should be a bit for each byte, set to 1 if the byte is non-zero
+  csize += (size + 7) / 8;
+
+  for (size_t i = 0; i < size; i++) {
+    if (((uint8_t *)data)[i] != 0) {
+      csize += sizeof(uint8_t);
+    }
+  }
+  return csize;
+}
+
+
+bool test_is_valid(void *handle, alaska::Runtime &rt) { return rt.is_valid_handle(handle); }
+
+extern "C" AlaskaCtlResult __alaska_ctl(AlaskaCtlOperation op, uint64_t arg) {
+  // printf("alaska_ctl(%d, %p)\n", op, (void *)arg);
+
+#define CTRL_CHECK_HANDLE(_arg)                                \
+  ({                                                           \
+    auto *m = alaska::Mapping::from_handle_safe((void *)_arg); \
+    if (!m) return ALASKA_INVALID;                             \
+    m;                                                         \
   })
+
+  auto &rt = alaska::Runtime::get();
 
   switch (op) {
     case ALASKA_CTL_MARK_FOR_FAULT: {
@@ -432,6 +453,40 @@ extern "C" AlaskaCtlResult __alaska_ctl(AlaskaCtlOperation op, uint64_t arg) {
       m->set_fault_pending(true);
       return ALASKA_SUCCESS;
     }
+
+    case ALASKA_CTL_RUN_BARRIER: {
+      auto cfg = (struct alaska_barrier_config *)arg;
+      if (!cfg->callback) return ALASKA_INVALID;
+
+      rt.with_barrier([cfg]() {
+        cfg->callback(cfg->user);
+      });
+      return ALASKA_SUCCESS;
+    }
+
+    case ALASKA_CTL_COMPRESS_TEST: {
+      auto ht = &rt.handle_table;
+      uint64_t total_size = 0;
+      uint64_t total_compressed_size = 0;
+
+
+      rt.with_barrier([&]() {
+        ht->for_each_handle([&](alaska::Mapping *m) {
+          auto header = alaska::ObjectHeader::from(m);
+          auto data = header->data();
+          auto uncompressed_size = header->object_size();
+          total_size += uncompressed_size;
+          total_compressed_size += compress_zero_removal_size(data, uncompressed_size);
+        });
+        float ratio = (total_size == 0) ? 0.0f : (float)total_compressed_size / (float)total_size;
+        printf("With zero removal, compressed %fMB to %fMB, ratio %.2f\n",
+               (float)total_size / (1024.0f * 1024.0f),
+               (float)total_compressed_size / (1024.0f * 1024.0f), ratio);
+      });
+
+      return ALASKA_SUCCESS;
+    }
+
     default:
       return ALASKA_INVALID;
   }

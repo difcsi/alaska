@@ -216,7 +216,8 @@ namespace alaska {
   // promptly and not block (for too long). It is *not* called in an
   // environment where alaska barriers can be performed as an
   // optimization.
-  __attribute__((preserve_all, pure)) void *do_handle_fault_and_translate(uint64_t handle) asm("alaska.HF");
+  __attribute__((preserve_all, pure)) void *do_handle_fault_and_translate(uint64_t handle) asm(
+      "alaska.HF");
 
   struct LocalityReport {
     size_t out_pointers = 0;  // How many pointers point out of the block?

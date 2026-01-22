@@ -167,6 +167,8 @@ static bool mightBlock(llvm::Function &F) {
       "vfprintf",
       "dcgettext",
       "alaska_do_handle_fault_check",
+      "alaska_ctl",
+      "__alaska_ctl",
   };
 
   if (not F.empty()) return false;

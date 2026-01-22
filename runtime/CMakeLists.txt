@@ -66,7 +66,12 @@ install(FILES alaska.h yukon.h DESTINATION include)
 # This defines the core
 
 set(CORE_SOURCES "")
-file(GLOB_RECURSE CORE_SOURCES "alaska/*.cpp" "alaska/*.c")
+file(GLOB_RECURSE CORE_SOURCES
+  "alaska/**/*.cpp"
+  "alaska/*.cpp"
+  "alaska/**/*.c"
+  "alaska/*.c"
+)
 
 
 
@@ -85,8 +90,10 @@ add_library(alaska_core SHARED $<TARGET_OBJECTS:alaska_core_objects>)
 set_target_properties(alaska_core PROPERTIES LINKER_LANGUAGE C)
 set_target_properties(alaska_core PROPERTIES SOVERSION ${ALASKA_VERSION})
 
-target_link_libraries(alaska_core dl pthread)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(ZSTD REQUIRED libzstd)
 
+target_link_libraries(alaska_core dl pthread ${ZSTD_STATIC_LIBRARIES})
 
 
 
@@ -98,9 +105,11 @@ install(
   PRIVATE_HEADER DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 
 
+
 # A static copy of the above library.
 add_library(alaska_core_static STATIC $<TARGET_OBJECTS:alaska_core_objects>)
 set_target_properties(alaska_core_static PROPERTIES OUTPUT_NAME "alaska_core")
+target_link_libraries(alaska_core_static ${ZSTD_STATIC_LIBRARIES})
 install(
   TARGETS alaska_core_static
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
