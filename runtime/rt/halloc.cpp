@@ -39,12 +39,6 @@ static void *_halloc(size_t sz, int zero) {
   // This seems right...
   if (result == NULL) errno = ENOMEM;
 
-  // mark the handle as 'to fault' for testing purposes
-  auto m = alaska::Mapping::from_handle_safe(result);
-  if (m) {
-    m->set_fault_pending(true);
-  }
-
   if (zero) {
     alaska::handle_memset(result, 0, sz);
   }
@@ -289,12 +283,12 @@ extern "C" void __alaska_track_hitmiss(const char *key, uint64_t original, uint6
 
 
 __attribute__((destructor)) void __alaska_hitmiss_exit(void) {
+  return;
   auto &rt = alaska::Runtime::get();
   auto faults = rt.handle_faults.read();
   auto fps = rt.handle_faults.digest();
   fprintf(stderr, "Handle faults: %lu (%.2f per second)\n", faults, fps);
 
-  return;
   ck::vec<HitMiss> vhm;
   // dump hitmiss
   for (auto &[k, hm] : hitmiss) {
