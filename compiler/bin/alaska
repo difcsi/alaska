@@ -98,13 +98,13 @@ CLANG="${ALASKA_CLANG:=clang}"
 
 if [ "$phase" = "compile" ]; then
   # -Xclang -disable-llvm-passes
-	$GCLANG -O1  -Wno-unused-command-line-argument -I${PFX}/include -c ${COLLECT_CLANG_ARGS[@]} `alaska-config --cflags`
+	$GCLANG -O0  -Wno-unused-command-line-argument -I${PFX}/include -c ${COLLECT_CLANG_ARGS[@]} `alaska-config --cflags`
 	exit
 else
 
 	# If the program is being linked, link it as the user requests, then
 	# use get-bc to run our pass on it behind the scenes :)
-	$GCLANG -O1  -Wno-unused-command-line-argument -I${PFX}/include ${COLLECT_CLANG_ARGS[@]} `alaska-config --cflags --ldflags`
+	$GCLANG -O0  -Wno-unused-command-line-argument -I${PFX}/include ${COLLECT_CLANG_ARGS[@]} `alaska-config --cflags --ldflags`
 
 	get-bc $OUTFILE >/dev/null
 	TMPFILE=${OUTFILE}.bc
