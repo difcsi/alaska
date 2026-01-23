@@ -1,13 +1,13 @@
 #include <gtest/gtest.h>
 #include <alaska.h>
-#include "alaska/HeapPage.hpp"
-#include "alaska/Logger.hpp"
+#include "alaska/heaps/HeapPage.hpp"
+#include "alaska/util/Logger.hpp"
 #include "gtest/gtest.h"
 #include <vector>
-#include <alaska/Heap.hpp>
+#include <alaska/heaps/Heap.hpp>
 
-#include <alaska/ThreadCache.hpp>
-#include <alaska/Runtime.hpp>
+#include <alaska/core/ThreadCache.hpp>
+#include <alaska/core/Runtime.hpp>
 
 class ThreadCacheTest : public ::testing::Test {
  public:

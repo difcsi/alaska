@@ -1,11 +1,11 @@
 #include <gtest/gtest.h>
 #include <alaska.h>
-#include "alaska/Logger.hpp"
+#include "alaska/util/Logger.hpp"
 #include "gtest/gtest.h"
 #include <vector>
-#include <alaska/Heap.hpp>
+#include <alaska/heaps/Heap.hpp>
 
-#include <alaska/Runtime.hpp>
+#include <alaska/core/Runtime.hpp>
 #include <sim/handle_ptr.hpp>
 
 #define DUMMY_THREADCACHE ((alaska::ThreadCache *)0x1000UL)

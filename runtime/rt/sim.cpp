@@ -5,7 +5,7 @@
 #include <stdint.h>
 #include <stdio.h>
 
-#include <alaska/Runtime.hpp>
+#include <alaska/core/Runtime.hpp>
 #include <alaska/sim/HTLB.hpp>
 #include "alaska/alaska.hpp"
 #include "alaska/config.h"

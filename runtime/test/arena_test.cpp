@@ -1,13 +1,13 @@
 #include <gtest/gtest.h>
 #include <alaska.h>
-#include "alaska/Logger.hpp"
+#include "alaska/util/Logger.hpp"
 #include "gtest/gtest.h"
 #include <vector>
 #include <gmock/gmock.h>
-#include <alaska/Heap.hpp>
+#include <alaska/heaps/Heap.hpp>
 
-#include <alaska/Runtime.hpp>
-#include <alaska/Arena.hpp>
+#include <alaska/core/Runtime.hpp>
+#include <alaska/util/Arena.hpp>
 
 class ArenaTest : public ::testing::Test {
  public:
@@ -47,7 +47,7 @@ TEST_F(ArenaTest, PushMany) {
 
 // TEST_F(ArenaTest, PushDecrementsRemaining) {
 //   size_t start = arena.remaining();
-//   auto ptr = arena.push(64);  
+//   auto ptr = arena.push(64);
 //   size_t end  = arena.remaining();
 //   EXPECT_EQ(start - end, 64);
 // }

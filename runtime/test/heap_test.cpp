@@ -1,13 +1,13 @@
 #include <gtest/gtest.h>
 #include <alaska.h>
 #include "alaska/Configuration.hpp"
-#include "alaska/Logger.hpp"
-#include "alaska/SizeClass.hpp"
+#include "alaska/util/Logger.hpp"
+#include "alaska/heaps/SizeClass.hpp"
 #include "gtest/gtest.h"
 #include <vector>
-#include <alaska/Heap.hpp>
+#include <alaska/heaps/Heap.hpp>
 
-#include <alaska/Runtime.hpp>
+#include <alaska/core/Runtime.hpp>
 
 
 static alaska::Configuration g_config;

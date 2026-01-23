@@ -13,9 +13,9 @@
 
 #include <alaska/alaska.hpp>
 #include <alaska/Configuration.hpp>
-#include "alaska/Runtime.hpp"
+#include <alaska/core/Runtime.hpp>
 #include <ck/set.h>
-#include <alaska/RateCounter.hpp>
+#include <alaska/util/RateCounter.hpp>
 
 
 namespace alaska {

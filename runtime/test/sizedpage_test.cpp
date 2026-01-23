@@ -1,11 +1,11 @@
 #include <gtest/gtest.h>
 #include <alaska.h>
-#include "alaska/Logger.hpp"
+#include "alaska/util/Logger.hpp"
 #include "gtest/gtest.h"
 #include <vector>
-#include <alaska/Heap.hpp>
-#include <alaska/Runtime.hpp>
-#include <alaska/SizedPage.hpp>
+#include <alaska/heaps/Heap.hpp>
+#include <alaska/core/Runtime.hpp>
+#include <alaska/heaps/SizedPage.hpp>
 
 class SizedPageTest : public ::testing::Test {
  public:

@@ -19,8 +19,8 @@
 #include <ck/queue.h>
 #include <ck/vec.h>
 #include <ck/set.h>
-#include <alaska/Runtime.hpp>
-#include <alaska/ThreadCache.hpp>
+#include <alaska/core/Runtime.hpp>
+#include <alaska/core/ThreadCache.hpp>
 #include <alaska.h>
 #include <errno.h>
 #include <stdlib.h>

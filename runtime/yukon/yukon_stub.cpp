@@ -12,8 +12,8 @@
 #include <errno.h>
 #include <stdlib.h>
 #include <stdio.h>
-#include <alaska/ThreadCache.hpp>
-#include <alaska/Runtime.hpp>
+#include <alaska/core/ThreadCache.hpp>
+#include <alaska/core/Runtime.hpp>
 #include <assert.h>
 #include <sys/signal.h>
 

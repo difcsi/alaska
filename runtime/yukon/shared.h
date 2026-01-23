@@ -5,8 +5,8 @@
 
 #define _GLIBCXX_INCLUDE_NEXT_C_HEADERS
 
-#include <alaska/ThreadCache.hpp>
-#include <alaska/Runtime.hpp>
+#include <alaska/core/ThreadCache.hpp>
+#include <alaska/core/Runtime.hpp>
 #include <sys/ioctl.h>
 #include <math.h>
 

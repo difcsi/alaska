@@ -1,7 +1,7 @@
 // This file tests alaska::HugeObjectAllocator
 
-#include <alaska/HugeObjectAllocator.hpp>
-#include "alaska/utils.h"
+#include <alaska/heaps/HugeObjectAllocator.hpp>
+#include "alaska/util/utils.h"
 #include <gtest/gtest.h>
 
 

@@ -3,14 +3,14 @@
 
 
 #include <alaska.h>
-#include <alaska/Logger.hpp>
+#include <alaska/util/Logger.hpp>
 #include <vector>
 
 
-#include <alaska/HeapPage.hpp>
-#include <alaska/Heap.hpp>
-#include <alaska/Magazine.hpp>
-#include <alaska/Runtime.hpp>
+#include <alaska/heaps/HeapPage.hpp>
+#include <alaska/heaps/Heap.hpp>
+#include <alaska/heaps/Magazine.hpp>
+#include <alaska/core/Runtime.hpp>
 
 
 class MockHeapPage : public alaska::HeapPage {

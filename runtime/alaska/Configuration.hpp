@@ -12,7 +12,7 @@
 #pragma once
 
 #include <stdint.h>
-#include <alaska/HugeObjectAllocator.hpp>
+#include <alaska/heaps/HugeObjectAllocator.hpp>
 
 namespace alaska {
   // This structure is threaded through the creation of the runtime to

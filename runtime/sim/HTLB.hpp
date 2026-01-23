@@ -2,15 +2,15 @@
 
 #include <sim/TLB.hpp>
 #include <sim/StatisticsManager.hpp>
-#include <alaska/ThreadCache.hpp>
+#include <alaska/core/ThreadCache.hpp>
 #include <cstdint>
 #include <fstream>
 #include <unordered_map>
 #include <unordered_set>
-#include <alaska/Runtime.hpp>
+#include <alaska/core/Runtime.hpp>
 #include <vector>
 #include <iostream>
-#include "alaska/HeapPage.hpp"
+#include "alaska/heaps/HeapPage.hpp"
 
 namespace alaska::sim {
 
@@ -226,8 +226,8 @@ namespace alaska::sim {
       auto dump_cache = [](const auto &cache) {
         auto accesses = cache.hits + cache.misses;
         auto hit_rate = accesses == 0 ? 0 : (double)cache.hits / accesses * 100;
-        printf(
-            "   hits: %12zu, misses: %12zu, rate: %4.1f%%\n", cache.hits, cache.misses, hit_rate);
+        printf("   hits: %12zu, misses: %12zu, rate: %4.1f%%\n", cache.hits, cache.misses,
+               hit_rate);
         int set_idx = 0;
         return;
         for (const auto &set : cache.cache) {

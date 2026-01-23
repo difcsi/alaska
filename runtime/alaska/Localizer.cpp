@@ -11,10 +11,9 @@
  */
 
 
-#include <alaska/Runtime.hpp>
+#include <alaska/core/Runtime.hpp>
 #include <alaska/Localizer.hpp>
-#include <alaska/lphash_set.h>
-#include <limits.h>
+#include <alaska/util/lphash_set.h>
 #define _GLIBCXX_INCLUDE_NEXT_C_HEADERS
 #include <math.h>
 
@@ -270,7 +269,7 @@ namespace alaska {
       if (!check_handle(handle_ids[i], m, data)) continue;
 
 
-      //alaska::printf("GRADING: %p, %p\n", m, m->get_pointer());
+      // alaska::printf("GRADING: %p, %p\n", m, m->get_pointer());
       alaska::grade_locality(*m, 15, report);
       report.dump();
       // alaska::printf("    DONE GRADING: %p\n", m);

@@ -12,14 +12,14 @@
 
 #include <stdint.h>
 #include <stdlib.h>
-#include <alaska/utils.h>
+#include <alaska/util/utils.h>
 #include <ck/map.h>
 #include <ck/option.h>
 #include <ck/lock.h>
 #include <ck/vec.h>
 #include <ck/box.h>
 
-#include <alaska/RateCounter.hpp>
+#include <alaska/util/RateCounter.hpp>
 
 // Disk includes
 #include <alaska/disk/Frame.hpp>

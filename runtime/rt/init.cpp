@@ -13,13 +13,13 @@
 // This file contains the initialization and deinitialization functions for the
 // alaska::Runtime instance, as well as some other bookkeeping logic.
 
-#include <alaska/Runtime.hpp>
+#include <alaska/core/Runtime.hpp>
 #include <alaska/alaska.hpp>
 #include <rt/barrier.hpp>
 #include <pthread.h>
 #include <stdio.h>
 #include <ck/queue.h>
-#include <alaska/RateCounter.hpp>
+#include <alaska/util/RateCounter.hpp>
 
 static alaska::Runtime *the_runtime = nullptr;
 

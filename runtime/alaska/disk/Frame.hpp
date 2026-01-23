@@ -12,7 +12,7 @@
 
 #include <stdint.h>
 #include <stdlib.h>
-#include <alaska/utils.h>
+#include <alaska/util/utils.h>
 
 #include <alaska/disk/Disk.hpp>
 #include <alaska/alaska.hpp>

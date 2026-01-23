@@ -9,7 +9,7 @@
 
 #include <alaska/disk/BufferPool.hpp>
 #include <alaska/disk/Structure.hpp>
-#include <alaska/Heap.hpp>
+#include <alaska/heaps/Heap.hpp>
 
 
 namespace alaska::disk {
@@ -254,7 +254,7 @@ namespace alaska::disk {
       abort();
     }
     strncpy(header.structures[header.num_structures].name, name,
-        sizeof(header.structures[header.num_structures].name));
+            sizeof(header.structures[header.num_structures].name));
     header.structures[header.num_structures].page_id = page_id;
 
     header.num_structures++;

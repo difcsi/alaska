@@ -19,9 +19,9 @@
 #include <alaska.h>
 #include <alaska/alaska.hpp>
 #include <alaska/config.h>
-#include <alaska/utils.h>
-#include <alaska/Logger.hpp>
-#include "alaska/Runtime.hpp"
+#include <alaska/util/utils.h>
+#include <alaska/util/Logger.hpp>
+#include <alaska/core/Runtime.hpp>
 #include <dlfcn.h>
 
 /**
@@ -77,7 +77,7 @@ extern "C" __attribute__((always_inline)) void *alaska_translate_uncond(void *pt
   constexpr int mask_bits = 1;  // TODO: or more for when we use flags.
 #ifdef ENABLE_HANDLE_FAULTS
   // if the top bit is set, we should fault.
-  bool shouldFault  = m->fault_pending();
+  bool shouldFault = m->fault_pending();
   // TODO: flags based matching
   // flags = reinterpret_cast<uint64_t>(mapped) >> (64 - mask_bits);
   // shouldFault = (flagsToMatch & (1 << flags)) != 0;

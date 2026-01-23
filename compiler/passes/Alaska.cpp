@@ -147,7 +147,7 @@ class OptimisticTypesPass : public llvm::PassInfoMixin<OptimisticTypesPass> {
     alaska::OptimisticTypes ot;
     ot.analyze(M);
     ot.embed();
-    ot.dump();
+    // ot.dump();
 
     return PreservedAnalyses::all();
   }
@@ -170,56 +170,54 @@ static auto adapt(T &&fp) {
 // Register the alaska passes with the new pass manager
 extern "C" LLVM_ATTRIBUTE_WEAK ::llvm::PassPluginLibraryInfo llvmGetPassPluginInfo() {
   return {LLVM_PLUGIN_API_VERSION, "Alaska", LLVM_VERSION_STRING,  //
-      [](PassBuilder &PB) {
-        PB.registerPipelineParsingCallback([](StringRef name, ModulePassManager &MPM,
-                                               ArrayRef<llvm::PassBuilder::PipelineElement>) {
-          if (name == "alaska-type-infer") {
-            // MPM.addPass(OptimisticTypesPass());
-            return true;
-          }
+          [](PassBuilder &PB) {
+            PB.registerPipelineParsingCallback([](StringRef name, ModulePassManager &MPM,
+                                                  ArrayRef<llvm::PassBuilder::PipelineElement>) {
+              if (name == "alaska-type-infer") {
+                MPM.addPass(OptimisticTypesPass());
+                return true;
+              }
 
-          if (name == "alaska-prepare") {
-            MPM.addPass(adapt(DCEPass()));
-            MPM.addPass(adapt(DCEPass()));
-            MPM.addPass(adapt(ADCEPass()));
-            MPM.addPass(WholeProgramDevirtPass());
-            MPM.addPass(SimpleFunctionPass());
-            MPM.addPass(AlaskaNormalizePass());
+              if (name == "alaska-prepare") {
+                MPM.addPass(adapt(DCEPass()));
+                MPM.addPass(adapt(DCEPass()));
+                MPM.addPass(adapt(ADCEPass()));
+                MPM.addPass(WholeProgramDevirtPass());
+                MPM.addPass(SimpleFunctionPass());
+                MPM.addPass(AlaskaNormalizePass());
+                return true;
+              }
 
-            // MPM.addPass(OptimisticTypesPass());
-            return true;
-          }
+              REGISTER("alaska-replace", AlaskaReplacementPass);
+              if (name == "alaska-translate") {
+                MPM.addPass(AlaskaTranslatePass(true));
+                MPM.addPass(AlaskaIntentPass());
+                return true;
+              }
 
-          REGISTER("alaska-replace", AlaskaReplacementPass);
-          if (name == "alaska-translate") {
-            MPM.addPass(AlaskaTranslatePass(true));
-            MPM.addPass(AlaskaIntentPass());
-            return true;
-          }
+              if (name == "alaska-translate-nohoist") {
+                MPM.addPass(AlaskaTranslatePass(false));
+                return true;
+              }
 
-          if (name == "alaska-translate-nohoist") {
-            MPM.addPass(AlaskaTranslatePass(false));
-            return true;
-          }
+              REGISTER("alaska-escape", AlaskaEscapePass);
+              if (name == "alaska-lower") {
+                MPM.addPass(AlaskaLowerPass());
+                return true;
+              }
+              REGISTER("alaska-inline", TranslationInlinePass);
 
-          REGISTER("alaska-escape", AlaskaEscapePass);
-          if (name == "alaska-lower") {
-            MPM.addPass(AlaskaLowerPass());
-            return true;
-          }
-          REGISTER("alaska-inline", TranslationInlinePass);
-
-          if (name == "alaska-tracking") {
+              if (name == "alaska-tracking") {
 #ifdef ALASKA_DUMP_TRANSLATIONS
-            MPM.addPass(TranslationPrinterPass());
+                MPM.addPass(TranslationPrinterPass());
 #endif
-            MPM.addPass(llvm::PlaceSafepointsPass());
-            MPM.addPass(HandleFaultPass());
-            MPM.addPass(PinTrackingPass());
-            return true;
-          }
+                MPM.addPass(llvm::PlaceSafepointsPass());
+                MPM.addPass(HandleFaultPass());
+                MPM.addPass(PinTrackingPass());
+                return true;
+              }
 
-          return false;
-        });
-      }};
+              return false;
+            });
+          }};
 }

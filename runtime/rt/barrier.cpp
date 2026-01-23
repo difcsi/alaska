@@ -13,18 +13,18 @@
 #ifdef ALASKA_HAS_LIBUNWIND
 #include <libunwind.h>
 #endif
-#include <alaska/StackMapParser.h>
+#include "./StackMapParser.h"
 #include <alaska/config.h>
 
 
 #include <dlfcn.h>
 
 #include <alaska.h>
-#include <alaska/utils.h>
+#include <alaska/util/utils.h>
 #include <alaska/alaska.hpp>
 #include <rt/barrier.hpp>
-#include <alaska/Runtime.hpp>
-#include <alaska/ThreadRegistry.hpp>
+#include <alaska/core/Runtime.hpp>
+#include <alaska/core/ThreadRegistry.hpp>
 
 #include <ck/lock.h>
 #include <ck/map.h>
@@ -35,7 +35,7 @@
 #include <ucontext.h>
 #include <execinfo.h>
 #include <pthread.h>
-#include <alaska/list_head.h>
+#include <alaska/util/list_head.h>
 #include <stdbool.h>
 #include <sys/signal.h>
 #include <sys/mman.h>
@@ -117,7 +117,7 @@ enum class JoinReason { Signal, Safepoint };
 
 #define ALASKA_THREAD_TRACK_STATE_T AlaskaThreadState
 #define ALASKA_THREAD_TRACK_INIT setup_signal_handlers();
-#include <alaska/thread_tracking.in.hpp>
+#include <alaska/util/thread_tracking.in.hpp>
 
 
 

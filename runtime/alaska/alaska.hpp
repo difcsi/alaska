@@ -17,11 +17,11 @@
 #include <sys/types.h>
 #include <alaska/config.h>
 
-#include <alaska/utils.h>
-#include <alaska/list_head.h>
-#include <alaska/alaska_internal_malloc.h>
-#include <alaska/PersistentAllocation.h>
-#include <alaska/Logger.hpp>
+#include <alaska/util/utils.h>
+#include <alaska/util/list_head.h>
+#include <alaska/internal/alaska_internal_malloc.h>
+#include <alaska/util/PersistentAllocation.h>
+#include <alaska/util/Logger.hpp>
 
 #include <ck/utility.h>
 

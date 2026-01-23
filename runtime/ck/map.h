@@ -3,7 +3,7 @@
 #include <ck/template_lib.h>
 #include <ck/single_list.h>
 #include <ck/vec.h>
-#include <alaska/utils.h>
+#include <alaska/util/utils.h>
 #include <alaska/alaska.hpp>
 
 namespace ck {
@@ -18,9 +18,7 @@ namespace ck {
         , m_old_value(variable) {
       m_variable = value;
     }
-    ~TemporaryChange() {
-      m_variable = m_old_value;
-    }
+    ~TemporaryChange() { m_variable = m_old_value; }
 
    private:
     T& m_variable;
@@ -38,15 +36,9 @@ namespace ck {
       return &m_table != &other.m_table || m_is_end != other.m_is_end ||
              m_bucket_index != other.m_bucket_index || m_bucket_iterator != other.m_bucket_iterator;
     }
-    bool operator==(const HashTableIterator& other) const {
-      return !(*this != other);
-    }
-    ElementType& operator*() {
-      return *m_bucket_iterator;
-    }
-    ElementType* operator->() {
-      return m_bucket_iterator.operator->();
-    }
+    bool operator==(const HashTableIterator& other) const { return !(*this != other); }
+    ElementType& operator*() { return *m_bucket_iterator; }
+    ElementType* operator->() { return m_bucket_iterator.operator->(); }
     HashTableIterator& operator++() {
       skip_to_next();
       return *this;
@@ -71,7 +63,8 @@ namespace ck {
    private:
     friend HashTableType;
 
-    explicit HashTableIterator(HashTableType& table, bool is_end,
+    explicit HashTableIterator(
+        HashTableType& table, bool is_end,
         BucketIteratorType bucket_iterator = BucketIteratorType::universal_end(),
         int bucket_index = 0)
         : m_table(table)
@@ -99,8 +92,7 @@ namespace ck {
     using Bucket = ck::single_list<T>;
 
    public:
-    HashTable() {
-    }
+    HashTable() {}
     HashTable(const HashTable& other) {
       ensure_capacity(other.size());
       for (auto& it : other)
@@ -136,18 +128,10 @@ namespace ck {
       return *this;
     }
 
-    ~HashTable() {
-      clear();
-    }
-    bool is_empty() const {
-      return !m_size;
-    }
-    int size() const {
-      return m_size;
-    }
-    int capacity() const {
-      return m_capacity;
-    }
+    ~HashTable() { clear(); }
+    bool is_empty() const { return !m_size; }
+    int size() const { return m_size; }
+    int capacity() const { return m_capacity; }
 
     void ensure_capacity(int capacity) {
       ALASKA_ASSERT(capacity >= size(), "can only grow a map");
@@ -163,22 +147,14 @@ namespace ck {
 
     using Iterator = HashTableIterator<HashTable, T, typename Bucket::Iterator>;
     friend Iterator;
-    Iterator begin() {
-      return Iterator(*this, is_empty());
-    }
-    Iterator end() {
-      return Iterator(*this, true);
-    }
+    Iterator begin() { return Iterator(*this, is_empty()); }
+    Iterator end() { return Iterator(*this, true); }
 
     using ConstIterator =
         HashTableIterator<const HashTable, const T, typename Bucket::ConstIterator>;
     friend ConstIterator;
-    ConstIterator begin() const {
-      return ConstIterator(*this, is_empty());
-    }
-    ConstIterator end() const {
-      return ConstIterator(*this, true);
-    }
+    ConstIterator begin() const { return ConstIterator(*this, is_empty()); }
+    ConstIterator end() const { return ConstIterator(*this, true); }
 
     template <typename Finder>
     Iterator find(hash_t hash, Finder finder) {
@@ -239,12 +215,8 @@ namespace ck {
     void insert(const T&);
     void insert(T&&);
 
-    Bucket& bucket(int index) {
-      return m_buckets[index];
-    }
-    const Bucket& bucket(int index) const {
-      return m_buckets[index];
-    }
+    Bucket& bucket(int index) { return m_buckets[index]; }
+    const Bucket& bucket(int index) const { return m_buckets[index]; }
 
     Bucket* m_buckets{nullptr};
 
@@ -384,12 +356,8 @@ namespace ck {
     };
 
     struct EntryTraits {
-      static hash_t hash(const Entry& entry) {
-        return KeyTraits::hash(entry.key);
-      }
-      static bool equals(const Entry& a, const Entry& b) {
-        return KeyTraits::equals(a.key, b.key);
-      }
+      static hash_t hash(const Entry& entry) { return KeyTraits::hash(entry.key); }
+      static bool equals(const Entry& a, const Entry& b) { return KeyTraits::equals(a.key, b.key); }
       static void dump(const Entry& entry) {
         KeyTraits::dump(entry.key);
         Traits<V>::dump(entry.value);
@@ -397,71 +365,44 @@ namespace ck {
     };
 
    public:
-    map() {
-    }
+    map() {}
 
-    bool is_empty() const {
-      return m_table.is_empty();
-    }
-    int size() const {
-      return m_table.size();
-    }
-    int capacity() const {
-      return m_table.capacity();
-    }
-    void clear() {
-      m_table.clear();
-    }
+    bool is_empty() const { return m_table.is_empty(); }
+    int size() const { return m_table.size(); }
+    int capacity() const { return m_table.capacity(); }
+    void clear() { m_table.clear(); }
 
-    void set(const K& key, const V& value) {
-      m_table.set({key, value});
-    }
-    void set(const K& key, V&& value) {
-      m_table.set({key, move(value)});
-    }
+    void set(const K& key, const V& value) { m_table.set({key, value}); }
+    void set(const K& key, V&& value) { m_table.set({key, move(value)}); }
     void remove(const K& key) {
       auto it = find(key);
       if (it != end()) m_table.remove(it);
     }
-    void remove_one_randomly() {
-      m_table.remove(m_table.begin());
-    }
+    void remove_one_randomly() { m_table.remove(m_table.begin()); }
 
     typedef HashTable<Entry, EntryTraits> HashTableType;
     typedef typename HashTableType::Iterator IteratorType;
     typedef typename HashTableType::ConstIterator ConstIteratorType;
 
-    IteratorType begin() {
-      return m_table.begin();
-    }
-    IteratorType end() {
-      return m_table.end();
-    }
+    IteratorType begin() { return m_table.begin(); }
+    IteratorType end() { return m_table.end(); }
     IteratorType find(const K& key) {
       return m_table.find(KeyTraits::hash(key), [&](auto& entry) {
         return KeyTraits::equals(key, entry.key);
       });
     }
 
-    ConstIteratorType begin() const {
-      return m_table.begin();
-    }
-    ConstIteratorType end() const {
-      return m_table.end();
-    }
+    ConstIteratorType begin() const { return m_table.begin(); }
+    ConstIteratorType end() const { return m_table.end(); }
     ConstIteratorType find(const K& key) const {
       return m_table.find(KeyTraits::hash(key), [&](auto& entry) {
         return KeyTraits::equals(key, entry.key);
       });
     }
 
-    void ensure_capacity(int capacity) {
-      m_table.ensure_capacity(capacity);
-    }
+    void ensure_capacity(int capacity) { m_table.ensure_capacity(capacity); }
 
-    void dump() const {
-      m_table.dump();
-    }
+    void dump() const { m_table.dump(); }
 
     V& get(const K& key) {
       auto it = find(key);
@@ -472,21 +413,13 @@ namespace ck {
       return (*it).value;
     }
 
-    V& operator[](K&& key) {
-      return get(key);
-    }
+    V& operator[](K&& key) { return get(key); }
 
-    V& operator[](const K& key) {
-      return get(key);
-    }
+    V& operator[](const K& key) { return get(key); }
 
-    bool contains(const K& key) const {
-      return find(key) != end();
-    }
+    bool contains(const K& key) const { return find(key) != end(); }
 
-    void remove(IteratorType it) {
-      m_table.remove(it);
-    }
+    void remove(IteratorType it) { m_table.remove(it); }
 
     V& ensure(const K& key) {
       auto it = find(key);

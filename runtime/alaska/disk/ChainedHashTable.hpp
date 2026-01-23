@@ -13,9 +13,9 @@
 
 #include <alaska/disk/Disk.hpp>
 #include <alaska/disk/Structure.hpp>
-#include <alaska/Logger.hpp>
+#include <alaska/util/Logger.hpp>
 #include <ck/template_lib.h>
-#include <alaska/RateCounter.hpp>
+#include <alaska/util/RateCounter.hpp>
 #include <alaska/disk/impl/MurmurHash3.hpp>
 
 namespace alaska::disk {
@@ -182,8 +182,8 @@ namespace alaska::disk {
 
 
    private:
-    ck::opt<uint32_t> getEntry(
-        const K &key, FrameGuard *chainNodeOut, Latch *chainNodeLatchOut, bool create = false) {
+    ck::opt<uint32_t> getEntry(const K &key, FrameGuard *chainNodeOut, Latch *chainNodeLatchOut,
+                               bool create = false) {
       auto h = hash(key);
       uint32_t bucket;
       uint64_t chain_page_id = 0;

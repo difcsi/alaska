@@ -1,19 +1,19 @@
 #include <filesystem>
 #include <new>
-#include <alaska/Runtime.hpp>
-#include <alaska/ThreadCache.hpp>
+#include <alaska/core/Runtime.hpp>
+#include <alaska/core/ThreadCache.hpp>
 #include <sim/HTLB.hpp>
 #include <stdlib.h>
 #include <stdio.h>
 #include <unordered_map>
 #include <vector>
 #include "alaska.h"
-#include "alaska/ObjectHeader.hpp"
-#include "alaska/RateCounter.hpp"
+#include "alaska/handles/ObjectHeader.hpp"
+#include "alaska/util/RateCounter.hpp"
 #include "alaska/alaska.hpp"
-#include "alaska/utils.h"
+#include "alaska/util/utils.h"
 #include <sys/wait.h>
-#include <alaska/HugeObjectAllocator.hpp>
+#include <alaska/heaps/HugeObjectAllocator.hpp>
 #include <getopt.h>
 #include <math.h>
 
@@ -335,7 +335,7 @@ class TraceRunner {
     double time_remaining_seconds = remaining_percent / percent_per_second;
 
     printf("[%s %12fs %6.2f%%] %'10ld ev/s  | ~%6lds remaining\n", run_name.c_str(), time_seconds,
-        progress * 100.0, (long)events_per_second, (long)time_remaining_seconds);
+           progress * 100.0, (long)events_per_second, (long)time_remaining_seconds);
 
     // float progress = printf(
     //     "[%16.8fs %3.0f%%] processed %15zu events %15.0f/s, %12.0fcyc/s, alloc:%8.0f/s, "
