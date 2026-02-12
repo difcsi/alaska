@@ -56,8 +56,8 @@ def exec(cmd):
 tempdir = tempfile.mkdtemp(prefix="alaska_")
 
 
-exec(f"opt --strip-debug {local}/lib/alaska_stub.bc -o {tempdir}/stub.bc")
-exec(f"opt --strip-debug {local}/lib/alaska_translate.bc -o {tempdir}/translate.bc")
+exec(f"opt -strip-debug {local}/lib/alaska_stub.bc -o {tempdir}/stub.bc")
+exec(f"opt {local}/lib/alaska_translate.bc -o {tempdir}/translate.bc")
 
 if not args.baseline:
     exec(f"llvm-link {args.input} --internalize {tempdir}/stub.bc -o {bitcode}")
