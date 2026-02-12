@@ -15,8 +15,6 @@
 #include <alaska/core/Runtime.hpp>
 
 #include <sys/mman.h>
-#include <errno.h>
-#include <signal.h>
 
 namespace alaska {
 

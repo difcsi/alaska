@@ -57,7 +57,7 @@ extern void alaska_htlb_sim_track(uintptr_t handle);
 
 
 
-#define ENABLE_HANDLE_FAULTS
+// #define ENABLE_HANDLE_FAULTS
 
 uint32_t flagsToMatch = 0;
 
