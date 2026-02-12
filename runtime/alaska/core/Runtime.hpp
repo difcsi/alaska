@@ -14,6 +14,7 @@
 #include <alaska/work/BarrierManager.hpp>
 #include <alaska/util/Logger.hpp>
 #include <alaska/core/ThreadCache.hpp>
+#include <alaska/work/WorkScheduler.hpp>
 #include <alaska/heaps/Heap.hpp>
 #include <alaska/alaska.hpp>
 #include <ck/set.h>
@@ -58,6 +59,9 @@ namespace alaska {
     alaska::BarrierManager *barrier_manager;
     alaska::RateCounter stat_barriers;
     struct list_head barrier_workers = LIST_HEAD_INIT(barrier_workers);
+
+    // The work scheduler
+    alaska::WorkScheduler scheduler;
 
     // Return the singleton instance of the Runtime if it has been allocated. Abort otherwise.
     static Runtime &get();

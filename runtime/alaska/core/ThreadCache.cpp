@@ -450,6 +450,10 @@ namespace alaska {
       return nullptr;
     }
 
+    if (current_slab != nullptr) {
+      current_slab->schedule_deferred();
+    }
+
     // Update our current slab
     this->current_slab = new_slab;
 

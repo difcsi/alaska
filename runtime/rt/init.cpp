@@ -32,38 +32,20 @@ struct CompilerRuntimeBarrierManager : public alaska::BarrierManager {
 
 static CompilerRuntimeBarrierManager the_barrier_manager;
 
-extern "C" void alaska_dump(void) { the_runtime->dump(stderr); }
-
-
 static pthread_t barrier_thread;
 static void *barrier_thread_func(void *) {
   bool in_marking_state = true;
 
 
 
+  float toWait = 1.0;  // Wait a second at the start... Update
   while (1) {
     auto &rt = alaska::Runtime::get();
-    usleep(75 * 1000);
-    continue;
-
-    long already_invalid = 0;
-    long total_handles = 0;
-    long newly_marked = 0;
-
-    float cold_perc = 0;
-    // Linear Congruential Generator parameters
-    unsigned int seed = 123456789;  // You can set this to any initial value
-
-
-    int stride = 20;
-    int offset = 0;
+    useconds_t sleep_time = (useconds_t)(toWait * 1000000);
+    usleep(sleep_time);
 
     rt.with_barrier([&]() {
-      // printf("\033[2J\033[H");
-      // // rt.handle_table.dump(stdout);
-      rt.heap.dump(stdout);
-      rt.heap.compact_sizedpages();
-      return;
+      toWait = rt.scheduler.tick(toWait);
     });
   }
 

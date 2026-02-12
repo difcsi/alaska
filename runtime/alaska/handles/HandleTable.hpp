@@ -19,6 +19,7 @@
 #include <ck/lock.h>
 #include <alaska/util/SizedAllocator.hpp>
 #include <alaska/Configuration.hpp>
+#include <alaska/work/WorkScheduler.hpp>
 
 namespace alaska {
 
@@ -43,13 +44,16 @@ namespace alaska {
   // mappings. It is a fixed size, and no two threads will allocate from the
   // same slab at the same time.
   struct HandleSlab final : public alaska::OwnedBy<alaska::ThreadCache>,
-                            public alaska::PersistentAllocation {
+                            public alaska::PersistentAllocation,
+                            public alaska::Worker {
    private:
     alaska::ShardedFreeList<DefaultFreeListBlock> free_list;  // A free list for tracking releases
     alaska::Mapping *start;
     alaska::Mapping *end;
     alaska::Mapping *next_free;  // Bump allocator.
 
+    void periodic_work(float deltaTime) override;
+    void deferred_work(void) override;
 
    public:
     slabidx_t idx;                           // Which slab is this?
@@ -65,6 +69,7 @@ namespace alaska {
 
     // -- Methods --
     HandleSlab(HandleTable &table, slabidx_t idx);
+    virtual ~HandleSlab(void);
 
 
     // Implemented at the bottom of this file...

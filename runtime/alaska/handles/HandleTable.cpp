@@ -265,7 +265,11 @@ namespace alaska {
     this->end = (alaska::Mapping *)memory + HandleTable::slab_capacity;
     // alaska::printf("Allocated new handle slab %p at idx %d (%p - %p)\n", this, idx, start,
     // end);
+
+    this->register_periodic_work(alaska::Runtime::get().scheduler);
   }
+
+  HandleSlab::~HandleSlab(void) {}
 
 
   __attribute__((noinline)) alaska::Mapping *HandleSlab::alloc_slow(void) {
@@ -297,6 +301,17 @@ namespace alaska {
     // auto start = table.get_slab_start(idx);
     // ::mlock((void *)start, sizeof(alaska::Mapping) * HandleTable::slab_capacity);
   }
+
+  void HandleSlab::periodic_work(float deltaTime) {
+    // alaska::printf("HandleSlab::periodic_work %p %f\n", this, deltaTime);
+    // No-op for now
+  }
+
+  void HandleSlab::deferred_work(void) {
+    // alaska::printf("HandleSlab::deferred_work %p\n", this);
+  }
+
+
 
   bool check_mapping(handle_id_t hid, alaska::Mapping *&out_m, void *&out_data) {
     void *handle = alaska::Mapping::handle_from_hid(hid);
