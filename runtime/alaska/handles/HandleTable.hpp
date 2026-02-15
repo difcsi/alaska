@@ -277,12 +277,16 @@ namespace alaska {
     if (unlikely(m == nullptr)) {
       m = alloc_slow();
     }
+    m->inc_refcount();
     return m;
   }
 
   // Thread-safe free operation that can be called from any thread.
   // Uses atomic operations to safely return a mapping to this slab.
-  inline void HandleSlab::free(Mapping *m) { free_list.free_local_atomic((void *)m); }
+  inline void HandleSlab::free(Mapping *m) {
+    m->dec_refcount();
+    free_list.free_local_atomic((void *)m);
+  }
 
 
 

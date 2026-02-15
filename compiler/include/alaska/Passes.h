@@ -103,3 +103,24 @@ class AlaskaArgumentTracePass : public llvm::PassInfoMixin<AlaskaArgumentTracePa
  public:
   llvm::PreservedAnalyses run(llvm::Module &M, llvm::ModuleAnalysisManager &AM);
 };
+
+/**
+ * RefcountIncPass - Increment refcount when a handle is written to memory.
+ * This pass instruments stores of pointer values to insert calls to
+ * alaska_inc_refcount, ensuring proper reference counting for handles.
+ */
+class RefcountIncPass : public llvm::PassInfoMixin<RefcountIncPass> {
+ public:
+  llvm::PreservedAnalyses run(llvm::Module &M, llvm::ModuleAnalysisManager &AM);
+};
+
+/**
+ * RefcountDecPass - Decrement refcount when a handle is overwritten.
+ * This pass instruments stores of pointer values to insert calls to
+ * alaska_dec_refcount for the old value being replaced, ensuring proper
+ * reference counting when handles are overwritten.
+ */
+class RefcountDecPass : public llvm::PassInfoMixin<RefcountDecPass> {
+ public:
+  llvm::PreservedAnalyses run(llvm::Module &M, llvm::ModuleAnalysisManager &AM);
+};

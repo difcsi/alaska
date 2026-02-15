@@ -401,7 +401,16 @@ extern "C" LLVM_ATTRIBUTE_WEAK ::llvm::PassPluginLibraryInfo llvmGetPassPluginIn
               }
               REGISTER("alaska-inline", TranslationInlinePass);
 
-              if (name == "alaska-tracking") {
+          REGISTER("alaska-escape", AlaskaEscapePass);
+          if (name == "alaska-lower") {
+            MPM.addPass(AlaskaLowerPass());
+            return true;
+          }
+          REGISTER("alaska-inline", TranslationInlinePass);
+          REGISTER("alaska-refcount-inc", RefcountIncPass);
+          REGISTER("alaska-refcount-dec", RefcountDecPass);
+
+          if (name == "alaska-tracking") {
 #ifdef ALASKA_DUMP_TRANSLATIONS
                 MPM.addPass(TranslationPrinterPass());
 #endif

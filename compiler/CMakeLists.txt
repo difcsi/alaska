@@ -73,6 +73,8 @@ add_llvm_library(Alaska MODULE
 	passes/PlaceSafepoints.cpp
   passes/ArgumentTrace.cpp
   passes/IntentPass.cpp
+  passes/RefcountInc.cpp
+  passes/RefcountDec.cpp
 
 	PLUGIN_TOOL
 	opt

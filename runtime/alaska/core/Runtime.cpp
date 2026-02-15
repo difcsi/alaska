@@ -28,6 +28,25 @@ namespace alaska {
   static Runtime *g_runtime = nullptr;
   static volatile bool runtime_initialized = false;
 
+  // Atomically increment the reference count
+  int Mapping::inc_refcount(void) {
+    //alaska::printf("incrc this->data = 0x%lx\n", *(uint64_t*)&this->data);
+    return ++this->data.refcount; // ensure we have the real mapping
+  }
+
+  // Atomically decrement the reference count and return the new value
+  int Mapping::dec_refcount(void) {
+    //alaska::printf("decrc this->data = 0x%lx\n", *(uint64_t*)&this->data);
+    return --this->data.refcount; // ensure we have the real mapping
+  }
+
+  // Get the current reference count
+  uint64_t Mapping::get_refcount(void) {
+    //alaska::printf("getrc this->data = 0x%lx\n", *(uint64_t*)&this->data);
+    return this->data.refcount; // ensure we have the real mapping
+  }
+
+
 
   Runtime::Runtime(alaska::Configuration config)
       : config(config)
@@ -303,6 +322,8 @@ namespace alaska {
     grade_locality(root, max_depth, report);
     return report;
   }
+
+
 
 }  // namespace alaska
 

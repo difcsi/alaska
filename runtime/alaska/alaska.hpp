@@ -76,20 +76,29 @@ namespace alaska {
 
   class Mapping {
    private:
-    union {
-      struct {
-        uint64_t _value : 62;
+    static constexpr uint64_t MAPPING_BIT_PINNED = (1UL << 63);
+    struct MappingData {
+        uint64_t reserved : 2;
+        uint64_t refcount : 12;
+        uint64_t value : 48;
         uint64_t pinned : 1;
-        uint64_t pending_fault : 1;
-      };
-      uint64_t value;
-    };
+        uint64_t pending_fault: 1;
+    } data;
+
+
 
 
    public:
-    ALASKA_INLINE void *get_pointer(void) const { return (void *)(uint64_t)this->_value; }
+    ALASKA_INLINE void *get_pointer(void) const {
+      // Synthesize pointer as: reserved | always_zeros | value
+      uint64_t ptr = ((uint64_t)this->data.reserved << 62) | (this->data.value & 0xFFFFFFFFFFFF);
+      return (void *)ptr;
+    }
 
-    ALASKA_INLINE void *get_pointer_fast(void) const { return (void *)this->value; }
+    ALASKA_INLINE void *get_pointer_fast(void) const {
+      uint64_t ptr = ((uint64_t)this->data.reserved << 62) | (this->data.value & 0xFFFFFFFFFFFF);
+      return (void *)ptr;
+    }
 
     inline void invalidate(void) {
 #if defined(__riscv) && !defined(ALASKA_YUKON_NO_HARDWARE)
@@ -100,9 +109,13 @@ namespace alaska {
     }
 
     void set_pointer(void *ptr) {
+      alaska::printf("Setting pointer of mapping %p to %p . Refcount is : %lu\n", this, ptr, this->data.refcount);
       // reset();
-
-      this->value = (uint64_t)ptr;
+      uint64_t ptr_val = (uint64_t)ptr;
+      // Extract reserved bits from pointer (top 2 bits)
+      this->data.reserved = (ptr_val >> 62) & 0x3;
+      // Store only the lower 48 bits in value
+      this->data.value = ptr_val & 0xFFFFFFFFFFFF;
       invalidate();
     }
 
@@ -112,18 +125,18 @@ namespace alaska {
     // if this isn't a free handle
     alaska::Mapping *get_next(void) {
       if (is_free()) return NULL;
-      return (alaska::Mapping *)this->value;
+      return (alaska::Mapping *)get_pointer();
     }
 
     bool is_free(void) const {
       // A mapping is free if the pointer is NULL, or if the pointer points to a location within the
       // same 2mb page as the mapping itself.
 
-      if (this->value == 0) return true;
+      if (this->data.value == 0) return true;
 
       // Check if the pointer is within the same 2mb page as the mapping itself
       uintptr_t mapping_addr = (uintptr_t)this;
-      uintptr_t ptr_addr = (uintptr_t)this->value;
+      uintptr_t ptr_addr = (uintptr_t)get_pointer();
       uintptr_t mapping_page = mapping_addr & ~(0x1fffff);  // 2MB page size
       uintptr_t ptr_page = ptr_addr & ~(0x1fffff);          // 2MB page size
       if (mapping_page == ptr_page) {
@@ -136,17 +149,32 @@ namespace alaska {
 
 
     // TODO: should these be atomic?
-    bool is_pinned(void) const { return this->pinned; }
-    void set_pinned(bool to) { this->pinned = to; }
+    bool is_pinned(void) const {
+      return this->data.pinned;
+    }
+    void set_pinned(bool to) {
+      this->data.pinned = to;
+    }
 
 
-    bool fault_pending(void) const { return this->pending_fault; }
-    void set_fault_pending(bool to) { this->pending_fault = to; }
+    bool fault_pending(void) const { return this->data.pending_fault; }
+    void set_fault_pending(bool to) { this->data.pending_fault = to; }
 
     void reset(void) {
-      this->value = 0;
+      this->data.value = 0;
+      this->data.refcount = 0;
       invalidate();
     }
+
+
+    // Atomically increment the reference count
+    int inc_refcount(void);
+
+    // Atomically decrement the reference count and return the new value
+    int dec_refcount(void);
+
+    // Get the current reference count
+    uint64_t get_refcount(void);
 
 
     // Encode a handle into the representation used in the
@@ -182,10 +210,18 @@ namespace alaska {
     // Extract an encoded mapping out of the bits of a handle. WARNING: this function does not
     // perform any checking, and will blindly translate any pointer regardless of if it really
     // contains a handle internally.
+
     static ALASKA_INLINE alaska::Mapping *from_handle(void *handle) {
-      return WORD_ALIGNED(
+      auto ret = WORD_ALIGNED(
           (alaska::Mapping *)((uint64_t)handle >> (ALASKA_SIZE_BITS - ALASKA_SQUEEZE_BITS)));
+    
+
+      // alaska::printf("from_handle: handle=%p -> mapping refcount=%d\n", handle,
+      // ret->get_refcount()); alaska::printf("Valid? %s\n",
+      // alaska::Runtime::get().handle_table.valid_handle(ret) ? "yes" : "no");
+      return ret;
     }
+
 
     static ALASKA_INLINE uint64_t offset_from_handle(void *handle) {
       return (uint64_t)handle & ((1UL << ALASKA_SIZE_BITS) - 1);
@@ -197,11 +233,12 @@ namespace alaska {
     // return null.
     static ALASKA_INLINE alaska::Mapping *from_handle_safe(void *ptr) {
       if (alaska::Mapping::is_handle_slow(ptr)) {
-        return (alaska::Mapping *)((uint64_t)ptr >> (ALASKA_SIZE_BITS - ALASKA_SQUEEZE_BITS));
+        return from_handle(ptr);
       }
       // Return null if the pointer is not really a handle
       return nullptr;
     }
+
 
     static void *handle_from_hid(handle_id_t id) {
       uint64_t handle = (1UL << 63) | ((uint64_t)id << ALASKA_SIZE_BITS);
@@ -209,8 +246,7 @@ namespace alaska {
     }
 
     static ALASKA_INLINE alaska::Mapping *from_handle_id(handle_id_t id) {
-      uint64_t handle = (1UL << 63) | ((uint64_t)id << ALASKA_SIZE_BITS);
-      return from_handle((void *)handle);
+      return from_handle(handle_from_hid(id));
     }
 
     // Check if a pointer is a handle or not (is the top bit is set?)

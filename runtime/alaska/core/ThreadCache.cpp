@@ -229,12 +229,15 @@ namespace alaska {
     auto original_size = this->get_size(handle);
 
     void *new_handle = this->halloc(new_size);
-
+    
     // We should copy the minimum of the two sizes between the allocations.
     size_t copy_size = original_size > new_size ? new_size : original_size;
 
     handle_memcpy(new_handle, handle, copy_size);
 
+    //new_handle->copy_refcount_from(handle);
+
+    alaska::printf("User called realloc, ignore next free warning\n");
     this->hfree(handle);
 
     return new_handle;
@@ -266,6 +269,11 @@ namespace alaska {
     bool heap_owned = heap_page->is_owned_by(this);
 
     // Now the slow path.
+
+    if(unlikely(m->get_refcount() > 0 )){
+      alaska::printf("Warning: Freeing handle %p with non-zero refcount %lu\n", handle, m->get_refcount());
+    }
+
 
     if (likely(heap_owned)) {
       heap_page->release_local(*m, ptr);
