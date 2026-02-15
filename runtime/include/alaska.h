@@ -49,6 +49,16 @@ void alaska_blob_init(struct alaska_blob_config *cfg);
 // Not a good function to call. This is always an external function in the compiler's eyes
 extern void *__alaska_leak(void *);
 
+// Reference counting functions for handles
+// These are called automatically by the compiler's refcount passes
+void alaska_inc_refcount(void *ptr);
+void alaska_dec_refcount(void *ptr);
+
+// Get the current reference count of a handle
+// Returns the refcount if ptr is a valid handle, or 0 if ptr is NULL or not a handle
+unsigned long alaska_get_refcount(void *ptr);
+
+
 #ifdef __cplusplus
 }
 #endif

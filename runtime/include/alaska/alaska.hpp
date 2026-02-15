@@ -60,22 +60,29 @@ namespace alaska {
     // Represent the fact that a handle is just a pointer w/ "important bit patterns"
     // as a simple union.
     union {
-      void *ptr;  // Raw pointer memory
+      struct {
+        uint64_t reserved: 2;
+        uint64_t refcount: 14;
+        uint64_t value: 48; // The actual base pointer (to which the offset is added later)
+      } rc __attribute__((packed));
       struct {
         uint64_t misc : 61;   // Some kind of extra info (usually just a pointer)
-        unsigned pinned : 1;  // If this handle is pinned currently.
-        unsigned invl : 1;    // This handle is not mapped. ptr is a free list
-        unsigned swap : 1;    // This handle is swapped
+        uint64_t pinned : 1;  // If this handle is pinned currently.
+        uint64_t invl : 1;    // This handle is not mapped. ptr is a free list
+        uint64_t swap : 1;    // This handle is swapped
       } alt __attribute__((packed));
     };
+  public:
 
-   public:
-    ALASKA_INLINE void *get_pointer(void) const {
-      return (void*)(uint64_t)alt.misc;
+   ALASKA_INLINE void *get_pointer(void) const {
+      // Synthesize pointer as: reserved | always_zeros | value
+      uint64_t ptr = ((uint64_t)this->rc.reserved << 62) | (this->rc.value & 0xFFFFFFFFFFFF);
+      return (void *)ptr;
     }
 
     ALASKA_INLINE void *get_pointer_fast(void) const {
-      return ptr;
+      uint64_t ptr = ((uint64_t)this->rc.reserved << 62) | (this->rc.value & 0xFFFFFFFFFFFF);
+      return (void *)ptr;
     }
 
     inline void invalidate(void) {
@@ -87,9 +94,11 @@ namespace alaska {
     }
 
     void set_pointer(void *ptr) {
+      uint64_t saved_refcount = this->rc.refcount;
       reset();
-      this->ptr = ptr;
-      alt.invl = 0;
+      this->rc.reserved = ((uint64_t)ptr >> 62) & 0x3;
+      this->rc.value = (uint64_t)ptr & 0xFFFFFFFFFFFF;
+      this->rc.refcount = saved_refcount;
       invalidate();
     }
 
@@ -117,11 +126,19 @@ namespace alaska {
 
 
     void reset(void) {
-      ptr = NULL;
-      alt.invl = 0;
-      alt.swap = 0;
+      this->rc.value = 0;
+      this->rc.refcount = 0;
       invalidate();
     }
+
+     // Atomically increment the reference count
+    int inc_refcount(void);
+
+    // Atomically decrement the reference count and return the new value
+    int dec_refcount(void);
+
+    // Get the current reference count
+    uint64_t get_refcount(void);
 
 
     // Encode a handle into the representation used in the
@@ -147,7 +164,9 @@ namespace alaska {
     }
 
     static void *translate(void *handle) {
-      return alaska::Mapping::from_handle(handle)->ptr;
+      auto h = alaska::Mapping::from_handle_safe(handle);
+      if (h == nullptr) return handle;
+      return h->get_pointer();
     }
 
     // Extract an encoded mapping out of the bits of a handle. WARNING: this function does not
@@ -174,30 +193,13 @@ namespace alaska {
     }
   };
 
+
+  static_assert(sizeof(alaska::Mapping) == 8,
+                "Mapping must be 8 bytes to fit in a handle. Please fix this.");
+
   // runtime.cpp
   extern void record_translation_info(bool hit);
 
-
-
-
-  // template <typename T, typename... Args>
-  // T *make_object(Args &&...args) {
-  //   // Allocate raw memory for the object
-  //   void *ptr = alaska_internal_malloc(sizeof(T));
-  //   // Use placement new to construct the object in the allocated memory
-  //   new (ptr) T(args...);
-  //   return (T *)ptr;
-  // }
-
-  // template <typename T>
-  // void delete_object(T *ptr) {
-  //   if (ptr) {
-  //     // Call the destructor explicitly
-  //     ptr->~T();
-  //     // Free the raw memory
-  //     alaska_internal_free(ptr);
-  //   }
-  // }
 
 
   // Construct an array of length `length` with default constructors

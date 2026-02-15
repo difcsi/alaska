@@ -27,6 +27,24 @@ namespace alaska {
   static Runtime *g_runtime = nullptr;
   static volatile bool runtime_initialized = false;
 
+  // ZMTODO: These are temporarily here so that printf works. They can be move to the header later.
+  // Atomically increment the reference count
+  int Mapping::inc_refcount(void) {
+    //alaska::printf("incrc this->data = 0x%lx\n", *(uint64_t*)&this->data);
+    return ++this->rc.refcount; // ensure we have the real mapping
+  }
+
+  // Atomically decrement the reference count and return the new value
+  int Mapping::dec_refcount(void) {
+    //alaska::printf("decrc this->data = 0x%lx\n", *(uint64_t*)&this->data);
+    return --this->rc.refcount; // ensure we have the real mapping
+  }
+
+  // Get the current reference count
+  uint64_t Mapping::get_refcount(void) {
+    //alaska::printf("getrc this->data = 0x%lx\n", *(uint64_t*)&this->data);
+    return this->rc.refcount; // ensure we have the real mapping
+  }
 
   Runtime::Runtime(alaska::Configuration config)
       : config(config)

@@ -143,6 +143,7 @@ if(NOT ALASKA_CORE_ONLY) # -----------------------------------------------------
     rt/halloc.cpp
     rt/compat.c
     rt/barrier.cpp
+    rt/refcount.cpp
   )
 
 

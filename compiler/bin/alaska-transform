@@ -86,7 +86,13 @@ if not args.baseline:
     passes.append('alaska-tracking')
 
   passes.append('alaska-lower')
-  if not args.disable_inlining:
+  
+  # Add refcount passes after lowering (when pointers are converted to handles)
+  passes.append('alaska-refcount-inc')
+  passes.append('alaska-refcount-dec')
+
+  # Inlining messes up reference counting (for now), so skip it
+  if not args.disable_inlining and False:
     passes.append('alaska-inline')
 
 

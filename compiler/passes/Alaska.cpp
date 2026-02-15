@@ -205,6 +205,9 @@ extern "C" LLVM_ATTRIBUTE_WEAK ::llvm::PassPluginLibraryInfo llvmGetPassPluginIn
             return true;
           }
           REGISTER("alaska-inline", TranslationInlinePass);
+          REGISTER("alaska-refcount-inc", RefcountIncPass);
+          REGISTER("alaska-refcount-dec", RefcountDecPass);
+
 
           if (name == "alaska-tracking") {
 #ifdef ALASKA_DUMP_TRANSLATIONS

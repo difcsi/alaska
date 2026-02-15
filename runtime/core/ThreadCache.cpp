@@ -115,6 +115,9 @@ namespace alaska {
     // Allocate a new mapping
     Mapping *m = new_mapping();
     log_info("ThreadCache::halloc mapping=%p", m);
+    
+    // Initialize the mapping with zero refcount for compiler's refcount tracking
+    m->reset();
 
     void *ptr = allocate_backing_data(*m, size);
     if (zero) {
@@ -202,6 +205,10 @@ namespace alaska {
       (void)worked;
       // ALASKA_ASSERT(worked, "huge free failed");
       return;
+    }
+    
+    if(unlikely(m->get_refcount() > 0 )){
+      alaska::printf("Warning: Freeing handle %p with non-zero refcount %lu\n", handle, m->get_refcount());
     }
     // Free the allocation behind a mapping
     free_allocation(*m);

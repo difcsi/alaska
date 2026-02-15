@@ -256,16 +256,19 @@ namespace alaska {
     auto *m = (Mapping *)allocator.alloc();
 
     if (unlikely(m == nullptr)) return nullptr;
+    m->inc_refcount();
     update_state();
     return m;
   }
 
   void HandleSlab::release_remote(Mapping *m) {
+    m->dec_refcount(); // ZM: this really should zero the refcount here, TODO
     allocator.release_remote(m);
     update_state();
   }
 
   void HandleSlab::release_local(Mapping *m) {
+    m->dec_refcount(); // ZM: this really should zero the refcount here, TODO
     allocator.release_local(m);
     update_state();
   }
