@@ -67,3 +67,9 @@ __pycache__/
 
 # Make sure to avoid committihng SPEC. That would violate their license (oh no!)
 SPEC2017.tar.gz
+_deps
+CMakeFiles
+*.cmake
+CMakeCache.txt
+*.a
+*.so*

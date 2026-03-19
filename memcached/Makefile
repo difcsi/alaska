@@ -12,9 +12,9 @@ libevent:
 
 
 MCD_FLAGS=CC=gclang 'CFLAGS=-O0 -gdwarf-4'
-src/memcached: | src bin/libevent.bc
+src/memcached: | src libevent
 	cd src/ && ./autogen.sh ${MCD_FLAGS}
-	cd src/ && ./configure ${MCD_FLAGS}
+	cd src/ && ./configure ${MCD_FLAGS} --with-libevent=$(CURDIR)/libevent
 	cd src/ && make -j ${MCD_FLAGS}
 
 

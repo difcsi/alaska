@@ -17,7 +17,9 @@ from matplotlib.lines import Line2D
 from matplotlib import cm
 import matplotlib.pyplot as plt
 
-from .utils import find_spec, get_spec_size
+from .utils import activate_local_toolchain, find_spec, get_spec_size
+
+activate_local_toolchain()
 
 # Construct the waterline workspace in the folder, `bench/`.
 # This is where all benchmark sourcefiles and results will be saved.

@@ -11,7 +11,7 @@ touch $ROOT/opt/enable-toolchain
 
 
 
-LLVM_VERSION=15.0.2
+LLVM_VERSION=16.0.3
 
 PREFIX_LLVM=$(realpath "$ROOT/opt/llvm")
 PREFIX_GLLVM=$(realpath "$ROOT/opt/gllvm")
@@ -35,7 +35,7 @@ if [ ! -f ${PREFIX_GLLVM}/bin/gclang ]; then
 	# install go
 	KERNEL=$(uname | tr '[:upper:]' '[:lower:]')
 
-	case $(uname -p) in
+	case $(uname -m) in
 		x86_64)
 			ARCH=amd64
 			;;
@@ -65,16 +65,14 @@ if [ ! -f "${PREFIX_LLVM}/bin/clang" ]; then
 	if [ "$(uname)" == "Linux" ]; then
 		case $(uname -m) in
 			x86_64)
-				# the RHEL version is more stable on other distributions, it seems
-				LLVM_FILE=clang+llvm-15.0.2-x86_64-unknown-linux-gnu-rhel86.tar.xz
-				# LLVM_FILE=clang+llvm-16.0.3-x86_64-linux-gnu-ubuntu-22.04.tar.xz
+				LLVM_FILE=clang+llvm-${LLVM_VERSION}-x86_64-linux-gnu-ubuntu-22.04.tar.xz
 				;;
 			arm)
-				LLVM_FILE=clang+llvm-15.0.2-aarch64-linux-gnu.tar.xz
+				LLVM_FILE=clang+llvm-${LLVM_VERSION}-aarch64-linux-gnu.tar.xz
 				# LLVM_FILE=clang+llvm-16.0.3-aarch64-linux-gnu.tar.xz
 				;;
 			aarch64)
-				LLVM_FILE=clang+llvm-15.0.2-aarch64-linux-gnu.tar.xz
+				LLVM_FILE=clang+llvm-${LLVM_VERSION}-aarch64-linux-gnu.tar.xz
 				# LLVM_FILE=clang+llvm-16.0.3-aarch64-linux-gnu.tar.xz
 				;;
 		esac
@@ -84,7 +82,7 @@ if [ ! -f "${PREFIX_LLVM}/bin/clang" ]; then
 	if [ "$(uname)" == "Darwin" ]; then
 		case $(uname -m) in
 			arm64)
-		LLVM_FILE=clang+llvm-15.0.2-arm64-apple-darwin21.0.tar.xz
+		LLVM_FILE=clang+llvm-${LLVM_VERSION}-arm64-apple-darwin21.0.tar.xz
 				;;
 		esac
 	fi

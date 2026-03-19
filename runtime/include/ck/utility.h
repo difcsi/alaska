@@ -972,7 +972,7 @@ namespace ck {
 
 
   template <typename _Tp>
-  inline constexpr bool is_lvalue_reference_v = is_lvalue_reference<_Tp>::value;
+  constexpr bool is_lvalue_reference_v = is_lvalue_reference<_Tp>::value;
 
 
   // /**

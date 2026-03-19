@@ -26,13 +26,14 @@ confirm_continue() {
   fi
 }
 
-if [ -z "$TMUX" ]; then
-  # $TMUX is empty or not defined
-  echo "We have detected you are not running in a tmux session. This is highly recommended,"
-  echo "as running the entire artifact could take a day or more, if SPEC is enabled."
-  echo "Note: This may be a false positive if you are in a docker container"
-  confirm_continue "Are you sure you want to continue without TMUX?"
-fi
+#if [ -z "$TMUX" ]; then
+#  # $TMUX is empty or not defined
+#  echo "We have detected you are not running in a tmux session. This is highly recommended,"
+#  echo "as running the entire artifact could take a day or more, if SPEC is enabled."
+#  echo "Note: This may be a false positive if you are in a docker container"
+#  confirm_continue "Are you sure you want to continue without TMUX?"
+#fi
+
 
 
 
@@ -50,20 +51,23 @@ if [[ "$spec_location" == "" ]]; then
   echo "We didn't find a SPEC install in any of these locations: /SPEC2017.tar.gz, ./SPEC2017.tar.gz, or ~/SPEC2017.tar.gz."
   echo "The artifact will work correctly but figure 7 will not contain SPEC, and figure 8 will not be generated."
   printf "\e[0m"
-  confirm_continue "Would you like to continue?"
+  # confirm_continue "Would you like to continue?"
 else
   echo "Found SPEC here: $spec_location"
 fi
 
+$spec_location="" 
 
+#memory=$(free -h | grep Mem | awk '{print $7}')
+#generate_figure11=false
+#read -p "Would you like to generate figure 11? It requires upwards of 200GiB of memory. You have ${memory}B free now. (y/N) " answer
+#if [[ $answer =~ ^[Yy]$ ]]; then
+#  generate_figure11=true
+#fi
+#echo $generate_figure11
 
-memory=$(free -h | grep Mem | awk '{print $7}')
 generate_figure11=false
-read -p "Would you like to generate figure 11? It requires upwards of 200GiB of memory. You have ${memory}B free now. (y/N) " answer
-if [[ $answer =~ ^[Yy]$ ]]; then
-  generate_figure11=true
-fi
-echo $generate_figure11
+
 
 
 
@@ -72,7 +76,7 @@ echo $generate_figure11
 echo "Setting up virtual environment"
 make venv
 
-./build.sh
+#./build.sh
 
 make results/figure7.pdf
 

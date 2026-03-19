@@ -69,6 +69,11 @@ local/bin/clang:
 redis: FORCE
 	nix develop --command bash -c "source enable && make -C test/redis"
 
+venv: venv/touchfile
+venv/touchfile: requirements.txt
+	test -d venv || virtualenv venv
+	. venv/bin/activate; pip install -Ur requirements.txt
+	touch venv/touchfile
 
 
 # Build memcached w/ anchorage
@@ -87,6 +92,41 @@ redis/bin/redis-server-ad: venv opt/enable-alaska-anchorage
 		. opt/enable-alaska-anchorage \
 		&& $(MAKE) -C redis redis
 
+results/figure7.csv: venv
+	@echo "Generating data for figure 7"
+	@. venv/bin/activate \
+	   && . opt/enable-alaska-noservice \
+		 && ulimit -s unlimited \
+		 && python3 -m benchmarks.figure7
+	mkdir -p results
+	cp bench/results/figure7/all.csv results/figure7.csv
+
+
+results/figure7.pdf: venv results/figure7.csv
+	@echo "Generating figure 7"
+	@mkdir -p results
+	@. venv/bin/activate \
+		&& python3 plotgen/figure7.py
+
+
+
+# Figure8 is a superset of figure 7, so we generate partial data then
+# merge them in the plotting script.
+# It wouldn't make sense to re-run spec's baseline.
+results/figure8.csv: venv
+	@echo "Generating data for figure 8"
+	@. venv/bin/activate \
+	   && . opt/enable-alaska-noservice \
+		 && ulimit -s unlimited \
+		 && python3 -m benchmarks.figure8
+	cp bench/results/figure8/all.csv results/figure8.csv
+
+
+results/figure8.pdf: venv results/figure8.csv | results/figure7.csv
+	@echo "Generating figure 8"
+	@mkdir -p results
+	@. venv/bin/activate \
+		&& python3 plotgen/figure8.py
 
 
 

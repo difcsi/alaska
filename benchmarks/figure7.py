@@ -14,7 +14,13 @@ from matplotlib import cm
 import matplotlib.pyplot as plt
 
 
-from .utils import find_spec, get_spec_size
+try:
+  from .utils import activate_local_toolchain, find_spec, get_spec_size
+except ImportError:
+  # Support running this file directly: `python benchmarks/figure7.py`.
+  from utils import activate_local_toolchain, find_spec, get_spec_size
+
+activate_local_toolchain()
 
 # Construct the waterline workspace in the folder, `bench/`.
 # This is where all benchmark sourcefiles and results will be saved.

@@ -32,6 +32,8 @@
             file
 
             getconf
+            libevent
+            systemd.dev 
           ];
 
           buildInputs = with pkgs; runInputs ++ [
