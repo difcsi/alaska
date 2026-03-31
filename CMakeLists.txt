@@ -143,6 +143,45 @@ set(ALASKA_MEMCACHED_SWEEP_CSV ${ALASKA_RESULTS_DIR}/memcached-sweep.csv)
 set(ALASKA_MEMCACHED_FIG12_PDF ${ALASKA_RESULTS_DIR}/figure12.pdf)
 set(ALASKA_VENV_TOUCHFILE ${CMAKE_SOURCE_DIR}/venv/touchfile)
 
+# venv setup
+add_custom_command(
+  OUTPUT ${ALASKA_VENV_TOUCHFILE}
+  COMMAND /bin/bash -lc "test -d ${CMAKE_SOURCE_DIR}/venv || virtualenv ${CMAKE_SOURCE_DIR}/venv"
+  COMMAND /bin/bash -lc ". ${CMAKE_SOURCE_DIR}/venv/bin/activate && pip install -Ur ${CMAKE_SOURCE_DIR}/requirements.txt && touch ${ALASKA_VENV_TOUCHFILE}"
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+  DEPENDS ${CMAKE_SOURCE_DIR}/requirements.txt
+  USES_TERMINAL
+  VERBATIM
+)
+add_custom_target(venv DEPENDS ${ALASKA_VENV_TOUCHFILE})
+
+# Build redis w/ anchorage
+set(ALASKA_REDIS_SERVER_ALASKA ${CMAKE_SOURCE_DIR}/redis/bin/redis-server-alaska)
+add_custom_command(
+  OUTPUT ${ALASKA_REDIS_SERVER_ALASKA}
+  COMMAND /bin/bash -lc ". ${CMAKE_SOURCE_DIR}/venv/bin/activate && . ${CMAKE_SOURCE_DIR}/opt/enable-alaska-anchorage && make -C ${CMAKE_SOURCE_DIR}/redis redis"
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+  DEPENDS
+    ${ALASKA_VENV_TOUCHFILE}
+    ${CMAKE_SOURCE_DIR}/redis/Makefile
+  USES_TERMINAL
+  VERBATIM
+)
+add_custom_target(redis_alaska DEPENDS ${ALASKA_REDIS_SERVER_ALASKA})
+
+# Build memcached w/ anchorage
+set(ALASKA_MEMCACHED_ALASKA ${CMAKE_SOURCE_DIR}/memcached/bin/memcached-alaska)
+add_custom_command(
+  OUTPUT ${ALASKA_MEMCACHED_ALASKA}
+  COMMAND /bin/bash -lc ". ${CMAKE_SOURCE_DIR}/opt/enable-alaska-anchorage && make -C ${CMAKE_SOURCE_DIR}/memcached memcached"
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+  DEPENDS
+    ${CMAKE_SOURCE_DIR}/memcached/Makefile
+  USES_TERMINAL
+  VERBATIM
+)
+add_custom_target(memcached_alaska DEPENDS ${ALASKA_MEMCACHED_ALASKA})
+
 add_custom_command(
   OUTPUT ${ALASKA_FIG7_CSV}
   COMMAND ${CMAKE_COMMAND} -E echo "Generating data for figure 7"
@@ -210,6 +249,21 @@ add_custom_command(
 
 add_custom_target(figure8_pdf DEPENDS ${ALASKA_FIG8_PDF})
 
+set(ALASKA_RSSTRACKER_SO ${CMAKE_SOURCE_DIR}/opt/alaska-anchorage/lib/librsstracker.so)
+
+add_custom_command(
+  OUTPUT ${ALASKA_RSSTRACKER_SO}
+  COMMAND cc -shared -fPIC -pthread
+          -o ${ALASKA_RSSTRACKER_SO}
+          ${CMAKE_SOURCE_DIR}/runtime/extra/rsstracker.c
+          -lpthread
+  DEPENDS ${CMAKE_SOURCE_DIR}/runtime/extra/rsstracker.c
+  COMMENT "Building librsstracker.so"
+  VERBATIM
+)
+
+add_custom_target(rsstracker DEPENDS ${ALASKA_RSSTRACKER_SO})
+
 add_custom_command(
   OUTPUT ${ALASKA_REDIS_FIG9_PDF}
   COMMAND ${CMAKE_COMMAND} -E echo "Compiling redis"
@@ -220,6 +274,7 @@ add_custom_command(
   WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
   DEPENDS
     ${ALASKA_VENV_TOUCHFILE}
+    ${ALASKA_RSSTRACKER_SO}
     ${CMAKE_SOURCE_DIR}/redis/Makefile
     ${CMAKE_SOURCE_DIR}/redis/frag.py
     ${CMAKE_SOURCE_DIR}/plotgen/figure9.py
@@ -255,6 +310,7 @@ add_custom_command(
   WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
   DEPENDS
     ${ALASKA_VENV_TOUCHFILE}
+    ${ALASKA_RSSTRACKER_SO}
     ${CMAKE_SOURCE_DIR}/redis/Makefile
     ${CMAKE_SOURCE_DIR}/redis/frag_large.py
     ${CMAKE_SOURCE_DIR}/redis/bin/redis-server-alaska
