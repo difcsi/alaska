@@ -1,10 +1,22 @@
 import time
+import socket
 import pandas as pd
 import subprocess
 from pathlib import Path
 import os
 import re
 import pathlib
+
+
+def wait_for_port(host, port, timeout=1.0):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            with socket.create_connection((host, port), timeout=0.5):
+                return True
+        except OSError:
+            time.sleep(0.1)
+    return False
 
 
 if not 'ALASKA' in os.environ:
@@ -74,7 +86,9 @@ def run_workload(command, name, workload, trials=10, with_defrag=True, env={}):
       os.system(f'killall {command[0]} 2>/dev/null')
       # env['ALASKA_LOG'] = f'alaska_{trial}.log'
       server_cmd = subprocess.Popen(command, env=environ, shell=False)
-      time.sleep(.1) # Wait for the server to start
+      if not wait_for_port('127.0.0.1', 11211, timeout=10.0):
+          print('WARNING: memcached did not become ready in time, proceeding anyway')
+      time.sleep(.1)  # brief settle time after port is open
 
 
       res = ycsb('memcached', name, workload, {
