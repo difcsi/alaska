@@ -37,6 +37,10 @@ def activate_local_toolchain(repo_root=None):
       # Ensure linker-time lookup for -lomp and other LLVM-provided libs.
       _prepend_env_path("LIBRARY_PATH", str(path))
 
+  llvm_bin = repo_root / "opt" / "llvm" / "bin"
+  if llvm_bin.is_dir():
+    os.environ["LLVM_COMPILER_PATH"] = str(llvm_bin)
+
 def get_spec_size():
   size = os.getenv("SPEC_SIZE")
 

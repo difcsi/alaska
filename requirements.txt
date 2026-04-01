@@ -1,4 +1,4 @@
-waterline @ git+https://github.com/difcsi/waterline
+waterline @ file:waterline
 seaborn
 numpy
 pandas
