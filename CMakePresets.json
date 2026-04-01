@@ -7,7 +7,8 @@
       "binaryDir": "${sourceDir}/build",
       "cacheVariables": {
         "CMAKE_C_COMPILER": "${sourceDir}/local/bin/clang",
-        "CMAKE_CXX_COMPILER": "${sourceDir}/local/bin/clang++"
+        "CMAKE_CXX_COMPILER": "${sourceDir}/local/bin/clang++",
+        "LLVM_DIR": "${sourceDir}/local/lib/cmake/llvm"
       }
     },
     {
@@ -16,6 +17,7 @@
       "cacheVariables": {
         "CMAKE_C_COMPILER": "${sourceDir}/opt/llvm/bin/clang",
         "CMAKE_CXX_COMPILER": "${sourceDir}/opt/llvm/bin/clang++",
+        "LLVM_DIR": "${sourceDir}/opt/llvm/lib/cmake/llvm",
         "CMAKE_CXX_FLAGS": "-stdlib=libc++",
         "CMAKE_EXE_LINKER_FLAGS": "-stdlib=libc++ -L${sourceDir}/opt/llvm/lib/x86_64-unknown-linux-gnu -Wl,-rpath,${sourceDir}/opt/llvm/lib/x86_64-unknown-linux-gnu",
         "CMAKE_SHARED_LINKER_FLAGS": "-stdlib=libc++ -L${sourceDir}/opt/llvm/lib/x86_64-unknown-linux-gnu -Wl,-rpath,${sourceDir}/opt/llvm/lib/x86_64-unknown-linux-gnu",
