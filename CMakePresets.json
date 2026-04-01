@@ -1,0 +1,61 @@
+{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "default",
+      "displayName": "Default (local clang)",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "${sourceDir}/local/bin/clang",
+        "CMAKE_CXX_COMPILER": "${sourceDir}/local/bin/clang++"
+      }
+    },
+    {
+      "name": "base-llvm",
+      "hidden": true,
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "${sourceDir}/opt/llvm/bin/clang",
+        "CMAKE_CXX_COMPILER": "${sourceDir}/opt/llvm/bin/clang++",
+        "CMAKE_CXX_FLAGS": "-stdlib=libc++",
+        "CMAKE_EXE_LINKER_FLAGS": "-stdlib=libc++ -L${sourceDir}/opt/llvm/lib/x86_64-unknown-linux-gnu -Wl,-rpath,${sourceDir}/opt/llvm/lib/x86_64-unknown-linux-gnu",
+        "CMAKE_SHARED_LINKER_FLAGS": "-stdlib=libc++ -L${sourceDir}/opt/llvm/lib/x86_64-unknown-linux-gnu -Wl,-rpath,${sourceDir}/opt/llvm/lib/x86_64-unknown-linux-gnu",
+        "CMAKE_CXX_STANDARD_INCLUDE_DIRECTORIES": "${sourceDir}/opt/llvm/include/c++/v1;${sourceDir}/opt/llvm/include/x86_64-unknown-linux-gnu/c++/v1;$env{LLVM_RESOURCE_DIR}/include;/usr/local/include;/usr/include/x86_64-linux-gnu;/usr/include",
+        "ALASKA_ENABLE_TESTING": "OFF"
+      }
+    },
+    {
+      "name": "noservice",
+      "displayName": "Alaska (noservice)",
+      "inherits": "base-llvm",
+      "binaryDir": "${sourceDir}/build/noservice",
+      "cacheVariables": {
+        "CMAKE_INSTALL_PREFIX": "${sourceDir}/opt/alaska-noservice",
+        "ALASKA_CONFIG": "${sourceDir}/configs/config.noservice.cmake"
+      }
+    },
+    {
+      "name": "anchorage",
+      "displayName": "Alaska (anchorage)",
+      "inherits": "base-llvm",
+      "binaryDir": "${sourceDir}/build/anchorage",
+      "cacheVariables": {
+        "CMAKE_INSTALL_PREFIX": "${sourceDir}/opt/alaska-anchorage",
+        "ALASKA_CONFIG": "${sourceDir}/configs/config.anchorage.cmake"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "default",
+      "configurePreset": "default"
+    },
+    {
+      "name": "noservice",
+      "configurePreset": "noservice"
+    },
+    {
+      "name": "anchorage",
+      "configurePreset": "anchorage"
+    }
+  ]
+}

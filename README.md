@@ -1,6 +1,7 @@
 <div style="text-align:center"><img src="https://i.imgur.com/SOLIBp6.png"/></div>
 
 # Alaska
+
 A compiler and runtime framework for handle based memory management.
 
 ## Releases + Development
@@ -18,8 +19,6 @@ Alaska requires two main dependencies: `clang`, `llvm 16` and [`gclang`](https:/
 We provide both a nix flake, and tools to download these dependencies for you, but if you already have them in your path you don't need to worry.
 You can test this by simply running `make`, and you may get this output:
 
-```
-...
 -- Detecting CXX compile features
 -- Detecting CXX compile features - done
 CMake Error at CMakeLists.txt:36 (find_package):
@@ -31,55 +30,66 @@ CMake Error at CMakeLists.txt:36 (find_package):
     /usr/lib/llvm-14/cmake/LLVMConfig.cmake, version: 14.0.0
     /lib/llvm-14/cmake/LLVMConfig.cmake, version: 14.0.0
 
-...
-```
-
 If this is the case, CMake was unable to find clang 16 in your environment, and you should use one of the following steps.
 
 ### Dependencies with `nix`
 
 We prefer to manage Alaska's dependencies through [nix](https://nixos.org/) if you have it installed.
 The main way to develop alaska with `nix` is to use flakes, and the following commands can be used to build alaska:
+
 ```bash
-$ nix develop
+nix develop
 # in the development shell, with with all the dependencies installed
-$ make
+make
 ```
 
 Alternatively, you can run `nix shell .` to automatically compile alaska and include it in your shell.
 
-
 ### Dependencies without `nix`
 
-Alaska can manage it's own dependencies by simply running `make deps`.
-This will download and install a copy of `clang-16`, as well as a copy of `gclang` into `./local` automatically.
-Once this is done, re-run `make` to compile alaska.
+Alaska can manage its own dependencies by running the `deps` target.
+This will download and install a copy of `clang-16` and `gclang` into `./local` automatically:
 
+```bash
+cmake -B build
+cmake --build build --target deps
+```
 
+After `deps` completes, the default CMake preset picks up the local clang automatically:
+
+```bash
+cmake --preset default
+cmake --build build --target sanity
+```
+
+The `default` preset (defined in `CMakePresets.json`) sets `CMAKE_C_COMPILER` and
+`CMAKE_CXX_COMPILER` to `local/bin/clang` and `local/bin/clang++` respectively, so
+no extra `-D` flags are needed.
 
 ---
-
 
 ## Using Alaska
 
 Once built, `local/bin/alaska` functions as a drop-in replacement for `clang`. You can test alaska with the following commands:
-```
+
+```bash
 local/bin/alaska -O3 test/sanity.c -o build/sanity && build/sanity
 ```
+
 You can also run `make sanity`, which will do it for you.
 
 ## Developing
-
 
 # Compilation for RISCV under a yukon-capable core
 
 The runtime can be compiled for our yukon core easily.
 First, you must compile the [riscv-gnu-toolchain](https://github.com/riscv-collab/riscv-gnu-toolchain) with `make linux` and install it somewhere (`/opt/riscv` is prefered).
 Then, compilation for yukon can be done using a provided script:
+
 ```bash
-$ mkdir -p build-yukon
-$ cd build-yukon
-$ RISCV=/opt/riscv ../tools/build_yukon.sh
+mkdir -p build-yukon
+cd build-yukon
+RISCV=/opt/riscv ../tools/build_yukon.sh
 ```
 
 This produces `runtime/libyukon.so.2`, which can be used as a `LD_PRELOAD` library.

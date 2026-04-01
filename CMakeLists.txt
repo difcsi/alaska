@@ -367,3 +367,57 @@ add_custom_command(
 )
 
 add_custom_target(figure12_pdf DEPENDS ${ALASKA_MEMCACHED_FIG12_PDF})
+# ---------------------------------------------------------------------------
+# Convenience targets (mirrors of the former Makefile)
+# ---------------------------------------------------------------------------
+
+# sanity: build and run test/sanity.c with the installed alaska compiler
+add_custom_target(sanity
+  COMMAND ${CMAKE_INSTALL_PREFIX}/bin/alaska -O3 ${CMAKE_SOURCE_DIR}/test/sanity.c -o ${CMAKE_BINARY_DIR}/sanity
+  COMMAND ${CMAKE_INSTALL_PREFIX}/bin/alaska     ${CMAKE_SOURCE_DIR}/test/sanity.c -o ${CMAKE_BINARY_DIR}/sanity
+  COMMAND ${CMAKE_BINARY_DIR}/sanity
+  COMMENT "Building and running sanity test"
+)
+
+# unit: run the compiler unit-test suite via tools/unittest.py
+add_custom_target(unit
+  COMMAND ${CMAKE_SOURCE_DIR}/tools/unittest.py
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+  COMMENT "Running compiler unit tests"
+)
+
+# docs: generate Doxygen documentation
+add_custom_target(docs
+  COMMAND doxygen ${CMAKE_SOURCE_DIR}/Doxyfile
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+  COMMENT "Generating Doxygen documentation"
+)
+
+# docker: build and enter the Docker image
+add_custom_target(docker
+  COMMAND docker build -t alaska ${CMAKE_SOURCE_DIR}
+  COMMAND docker run -it --rm alaska bash
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+  COMMENT "Building and running Alaska Docker image"
+)
+
+# deps: fetch clang and gclang if not already present
+add_custom_target(deps
+  COMMAND ${CMAKE_SOURCE_DIR}/tools/get_llvm.sh
+  COMMAND ${CMAKE_SOURCE_DIR}/tools/build_gclang.sh
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+  COMMENT "Fetching dependencies (LLVM/clang and gclang)"
+)
+
+# redis: build the redis test under Nix
+add_custom_target(redis
+  COMMAND nix develop --command bash -c "source ${CMAKE_SOURCE_DIR}/enable && make -C ${CMAKE_SOURCE_DIR}/test/redis"
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+  COMMENT "Building redis test"
+)
+
+# mrproper: remove the entire build directory
+add_custom_target(mrproper
+  COMMAND ${CMAKE_COMMAND} -E rm -rf ${CMAKE_BINARY_DIR}
+  COMMENT "Removing build directory (mrproper)"
+)
