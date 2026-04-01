@@ -9,7 +9,7 @@ src-ad:
 	git clone https://github.com/redis/redis.git --recursive src-ad
 
 compilation:
-	$(MAKE) -C src USE_JEMALLOC=no CC=gclang OPTIMIZATION=-O0 "CFLAGS=-gdwarf-4 -Wno-strict-prototypes $(shell alaska-config --cflags)" "LDFLAGS=$(shell alaska-config --ldflags)"
+	$(MAKE) -C src USE_JEMALLOC=no CC=gclang OPTIMIZATION=-O0 "CFLAGS=-gdwarf-4 -Wno-strict-prototypes $(shell alaska-config --cflags)" "LDFLAGS=$(shell alaska-config --ldflags)" redis-server
 
 bin/redis-server.bc: | src compilation
 	@mkdir -p bin
@@ -25,7 +25,7 @@ bin/redis-server-alaska: bin/redis-server.bc
 	opt -O3 bin/alaska.bc -o bin/alaska.bc
 	alaska-transform bin/alaska.bc -o bin/alaska-transformed.bc
 	llc -O3 bin/alaska-transformed.bc --relocation-model=pic --filetype=obj -o bin/alaska.o
-	clang bin/alaska.o $(shell alaska-config --ldflags --cflags) -lm -ldl -o bin/redis-server-alaska
+	clang bin/alaska.o $(shell alaska-config --ldflags --cflags) src/deps/fast_float/libfast_float.a -lm -ldl -lsystemd -o bin/redis-server-alaska
 
 
 bin/redis-server-ad: | src-ad
@@ -39,7 +39,7 @@ bin/redis-server-baseline: bin/redis-server.bc
 	opt -O3 bin/baseline.bc -o bin/baseline.bc
 	alaska-transform --baseline bin/baseline.bc -o bin/baseline-transformed.bc
 	llc -O3 bin/baseline-transformed.bc --relocation-model=pic --filetype=obj -o bin/baseline.o
-	clang bin/baseline.o $(shell alaska-config --cflags) -lm -ldl -o bin/redis-server-baseline
+	clang bin/baseline.o $(shell alaska-config --cflags) src/deps/fast_float/libfast_float.a -lm -ldl -lsystemd -o bin/redis-server-baseline
 
 
 

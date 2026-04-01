@@ -100,7 +100,9 @@ include(LLVMIRUtil)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON CACHE INTERNAL "")
 # https://discourse.nixos.org/t/get-clangd-to-find-standard-headers-in-nix-shell/11268/10
 if(CMAKE_EXPORT_COMPILE_COMMANDS)
-  set(CMAKE_CXX_STANDARD_INCLUDE_DIRECTORIES ${CMAKE_CXX_IMPLICIT_INCLUDE_DIRECTORIES})
+  if(NOT CMAKE_CXX_STANDARD_INCLUDE_DIRECTORIES)
+    set(CMAKE_CXX_STANDARD_INCLUDE_DIRECTORIES ${CMAKE_CXX_IMPLICIT_INCLUDE_DIRECTORIES})
+  endif()
 endif(CMAKE_EXPORT_COMPILE_COMMANDS)
 
 
@@ -127,3 +129,241 @@ if(ALASKA_ENABLE_COMPILER)
   include(AddLLVM)
   add_subdirectory(compiler)
 endif(ALASKA_ENABLE_COMPILER)
+
+set(ALASKA_RESULTS_DIR ${CMAKE_SOURCE_DIR}/results)
+set(ALASKA_FIG7_CSV ${ALASKA_RESULTS_DIR}/figure7.csv)
+set(ALASKA_FIG7_PDF ${ALASKA_RESULTS_DIR}/figure7.pdf)
+set(ALASKA_FIG8_CSV ${ALASKA_RESULTS_DIR}/figure8.csv)
+set(ALASKA_FIG8_PDF ${ALASKA_RESULTS_DIR}/figure8.pdf)
+set(ALASKA_REDIS_FIG9_PDF ${ALASKA_RESULTS_DIR}/figure9.pdf)
+set(ALASKA_REDIS_FIG10_PDF ${ALASKA_RESULTS_DIR}/figure10.pdf)
+set(ALASKA_REDIS_LARGE_CSV ${ALASKA_RESULTS_DIR}/redis-alaska-large.csv)
+set(ALASKA_REDIS_FIG11_PDF ${ALASKA_RESULTS_DIR}/figure11.pdf)
+set(ALASKA_MEMCACHED_SWEEP_CSV ${ALASKA_RESULTS_DIR}/memcached-sweep.csv)
+set(ALASKA_MEMCACHED_FIG12_PDF ${ALASKA_RESULTS_DIR}/figure12.pdf)
+set(ALASKA_VENV_TOUCHFILE ${CMAKE_SOURCE_DIR}/venv/touchfile)
+
+# venv setup
+add_custom_command(
+  OUTPUT ${ALASKA_VENV_TOUCHFILE}
+  COMMAND /bin/bash -lc "test -d ${CMAKE_SOURCE_DIR}/venv || virtualenv ${CMAKE_SOURCE_DIR}/venv"
+  COMMAND /bin/bash -lc ". ${CMAKE_SOURCE_DIR}/venv/bin/activate && pip install -Ur ${CMAKE_SOURCE_DIR}/requirements.txt && touch ${ALASKA_VENV_TOUCHFILE}"
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+  DEPENDS ${CMAKE_SOURCE_DIR}/requirements.txt
+  USES_TERMINAL
+  VERBATIM
+)
+add_custom_target(venv DEPENDS ${ALASKA_VENV_TOUCHFILE})
+
+# Build redis w/ anchorage
+set(ALASKA_REDIS_SERVER_ALASKA ${CMAKE_SOURCE_DIR}/redis/bin/redis-server-alaska)
+add_custom_command(
+  OUTPUT ${ALASKA_REDIS_SERVER_ALASKA}
+  COMMAND /bin/bash -lc ". ${CMAKE_SOURCE_DIR}/venv/bin/activate && . ${CMAKE_SOURCE_DIR}/opt/enable-alaska-anchorage && make -C ${CMAKE_SOURCE_DIR}/redis redis"
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+  DEPENDS
+    ${ALASKA_VENV_TOUCHFILE}
+    ${CMAKE_SOURCE_DIR}/redis/Makefile
+  USES_TERMINAL
+  VERBATIM
+)
+add_custom_target(redis_alaska DEPENDS ${ALASKA_REDIS_SERVER_ALASKA})
+
+# Build memcached w/ anchorage
+set(ALASKA_MEMCACHED_ALASKA ${CMAKE_SOURCE_DIR}/memcached/bin/memcached-alaska)
+add_custom_command(
+  OUTPUT ${ALASKA_MEMCACHED_ALASKA}
+  COMMAND /bin/bash -lc ". ${CMAKE_SOURCE_DIR}/opt/enable-alaska-anchorage && make -C ${CMAKE_SOURCE_DIR}/memcached memcached"
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+  DEPENDS
+    ${CMAKE_SOURCE_DIR}/memcached/Makefile
+  USES_TERMINAL
+  VERBATIM
+)
+add_custom_target(memcached_alaska DEPENDS ${ALASKA_MEMCACHED_ALASKA})
+
+add_custom_command(
+  OUTPUT ${ALASKA_FIG7_CSV}
+  COMMAND ${CMAKE_COMMAND} -E echo "Generating data for figure 7"
+  COMMAND /bin/bash -lc ". ${CMAKE_SOURCE_DIR}/venv/bin/activate && . ${CMAKE_SOURCE_DIR}/opt/enable-alaska-noservice && ulimit -s unlimited && python3 -m benchmarks.figure7"
+  COMMAND ${CMAKE_COMMAND} -E make_directory ${ALASKA_RESULTS_DIR}
+  COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/bench/results/figure7/all.csv ${ALASKA_FIG7_CSV}
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+  DEPENDS
+    ${ALASKA_VENV_TOUCHFILE}
+    ${CMAKE_SOURCE_DIR}/benchmarks/figure7.py
+    ${CMAKE_SOURCE_DIR}/plotgen/figure7.py
+  USES_TERMINAL
+  VERBATIM
+)
+
+add_custom_target(figure7_csv DEPENDS ${ALASKA_FIG7_CSV})
+
+add_custom_command(
+  OUTPUT ${ALASKA_FIG7_PDF}
+  COMMAND ${CMAKE_COMMAND} -E echo "Generating figure 7"
+  COMMAND ${CMAKE_COMMAND} -E make_directory ${ALASKA_RESULTS_DIR}
+  COMMAND /bin/bash -lc ". ${CMAKE_SOURCE_DIR}/venv/bin/activate && python3 ${CMAKE_SOURCE_DIR}/plotgen/figure7.py"
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+  DEPENDS
+    ${ALASKA_VENV_TOUCHFILE}
+    ${ALASKA_FIG7_CSV}
+    ${CMAKE_SOURCE_DIR}/plotgen/figure7.py
+  USES_TERMINAL
+  VERBATIM
+)
+
+add_custom_target(figure7_pdf DEPENDS ${ALASKA_FIG7_PDF})
+
+add_custom_command(
+  OUTPUT ${ALASKA_FIG8_CSV}
+  COMMAND ${CMAKE_COMMAND} -E echo "Generating data for figure 8"
+  COMMAND /bin/bash -lc ". ${CMAKE_SOURCE_DIR}/venv/bin/activate && . ${CMAKE_SOURCE_DIR}/opt/enable-alaska-noservice && ulimit -s unlimited && python3 -m benchmarks.figure8"
+  COMMAND ${CMAKE_COMMAND} -E make_directory ${ALASKA_RESULTS_DIR}
+  COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/bench/results/figure8/all.csv ${ALASKA_FIG8_CSV}
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+  DEPENDS
+    ${ALASKA_VENV_TOUCHFILE}
+    ${CMAKE_SOURCE_DIR}/benchmarks/figure8.py
+    ${CMAKE_SOURCE_DIR}/plotgen/figure8.py
+  USES_TERMINAL
+  VERBATIM
+)
+
+add_custom_target(figure8_csv DEPENDS ${ALASKA_FIG8_CSV})
+
+add_custom_command(
+  OUTPUT ${ALASKA_FIG8_PDF}
+  COMMAND ${CMAKE_COMMAND} -E echo "Generating figure 8"
+  COMMAND ${CMAKE_COMMAND} -E make_directory ${ALASKA_RESULTS_DIR}
+  COMMAND /bin/bash -lc ". ${CMAKE_SOURCE_DIR}/venv/bin/activate && python3 ${CMAKE_SOURCE_DIR}/plotgen/figure8.py"
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+  DEPENDS
+    ${ALASKA_VENV_TOUCHFILE}
+    ${ALASKA_FIG8_CSV}
+    ${ALASKA_FIG7_CSV}
+    ${CMAKE_SOURCE_DIR}/plotgen/figure8.py
+  USES_TERMINAL
+  VERBATIM
+)
+
+add_custom_target(figure8_pdf DEPENDS ${ALASKA_FIG8_PDF})
+
+set(ALASKA_RSSTRACKER_SO ${CMAKE_SOURCE_DIR}/opt/alaska-anchorage/lib/librsstracker.so)
+
+add_custom_command(
+  OUTPUT ${ALASKA_RSSTRACKER_SO}
+  COMMAND cc -shared -fPIC -pthread
+          -o ${ALASKA_RSSTRACKER_SO}
+          ${CMAKE_SOURCE_DIR}/runtime/extra/rsstracker.c
+          -lpthread
+  DEPENDS ${CMAKE_SOURCE_DIR}/runtime/extra/rsstracker.c
+  COMMENT "Building librsstracker.so"
+  VERBATIM
+)
+
+add_custom_target(rsstracker DEPENDS ${ALASKA_RSSTRACKER_SO})
+
+add_custom_command(
+  OUTPUT ${ALASKA_REDIS_FIG9_PDF}
+  COMMAND ${CMAKE_COMMAND} -E echo "Compiling redis"
+  COMMAND /bin/bash -lc ". ${CMAKE_SOURCE_DIR}/opt/enable-alaska-anchorage && make -C ${CMAKE_SOURCE_DIR}/redis redis"
+  COMMAND ${CMAKE_COMMAND} -E echo "Generating data for figure 9"
+  COMMAND ${CMAKE_COMMAND} -E make_directory ${ALASKA_RESULTS_DIR}
+  COMMAND /bin/bash -lc ". ${CMAKE_SOURCE_DIR}/venv/bin/activate && . ${CMAKE_SOURCE_DIR}/opt/enable-alaska-anchorage && ulimit -s unlimited && python3 -m redis.frag && python3 ${CMAKE_SOURCE_DIR}/plotgen/figure9.py"
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+  DEPENDS
+    ${ALASKA_VENV_TOUCHFILE}
+    ${ALASKA_RSSTRACKER_SO}
+    ${CMAKE_SOURCE_DIR}/redis/Makefile
+    ${CMAKE_SOURCE_DIR}/redis/frag.py
+    ${CMAKE_SOURCE_DIR}/plotgen/figure9.py
+  USES_TERMINAL
+  VERBATIM
+)
+
+add_custom_target(figure9_pdf DEPENDS ${ALASKA_REDIS_FIG9_PDF})
+
+add_custom_command(
+  OUTPUT ${ALASKA_REDIS_FIG10_PDF}
+  COMMAND ${CMAKE_COMMAND} -E echo "Generating data for figure 10"
+  COMMAND ${CMAKE_COMMAND} -E make_directory ${ALASKA_RESULTS_DIR}
+  COMMAND /bin/bash -lc ". ${CMAKE_SOURCE_DIR}/venv/bin/activate && . ${CMAKE_SOURCE_DIR}/opt/enable-alaska-anchorage && ulimit -s unlimited && python3 -m redis.config_sweep && python3 ${CMAKE_SOURCE_DIR}/plotgen/figure10.py"
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+  DEPENDS
+    ${ALASKA_VENV_TOUCHFILE}
+    ${ALASKA_REDIS_FIG9_PDF}
+    ${CMAKE_SOURCE_DIR}/redis/config_sweep.py
+    ${CMAKE_SOURCE_DIR}/plotgen/figure10.py
+  USES_TERMINAL
+  VERBATIM
+)
+
+add_custom_target(figure10_pdf DEPENDS ${ALASKA_REDIS_FIG10_PDF})
+
+add_custom_command(
+  OUTPUT ${ALASKA_REDIS_LARGE_CSV}
+  COMMAND ${CMAKE_COMMAND} -E echo "Generating data for figure 11"
+  COMMAND ${CMAKE_COMMAND} -E make_directory ${ALASKA_RESULTS_DIR}
+  COMMAND /bin/bash -lc ". ${CMAKE_SOURCE_DIR}/opt/enable-alaska-anchorage && make -C ${CMAKE_SOURCE_DIR}/redis redis"
+  COMMAND /bin/bash -lc ". ${CMAKE_SOURCE_DIR}/venv/bin/activate && . ${CMAKE_SOURCE_DIR}/opt/enable-alaska-anchorage && ulimit -s unlimited && python3 -m redis.frag_large"
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+  DEPENDS
+    ${ALASKA_VENV_TOUCHFILE}
+    ${ALASKA_RSSTRACKER_SO}
+    ${CMAKE_SOURCE_DIR}/redis/Makefile
+    ${CMAKE_SOURCE_DIR}/redis/frag_large.py
+    ${CMAKE_SOURCE_DIR}/redis/bin/redis-server-alaska
+  USES_TERMINAL
+  VERBATIM
+)
+
+add_custom_target(redis_alaska_large_csv DEPENDS ${ALASKA_REDIS_LARGE_CSV})
+
+add_custom_command(
+  OUTPUT ${ALASKA_REDIS_FIG11_PDF}
+  COMMAND ${CMAKE_COMMAND} -E echo "Plotting figure 11"
+  COMMAND /bin/bash -lc ". ${CMAKE_SOURCE_DIR}/venv/bin/activate && python3 ${CMAKE_SOURCE_DIR}/plotgen/figure9.py"
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+  DEPENDS
+    ${ALASKA_VENV_TOUCHFILE}
+    ${ALASKA_REDIS_LARGE_CSV}
+    ${CMAKE_SOURCE_DIR}/plotgen/figure9.py
+  USES_TERMINAL
+  VERBATIM
+)
+
+add_custom_target(figure11_pdf DEPENDS ${ALASKA_REDIS_FIG11_PDF})
+
+add_custom_command(
+  OUTPUT ${ALASKA_MEMCACHED_SWEEP_CSV}
+  COMMAND ${CMAKE_COMMAND} -E echo "Generating data for figure 12"
+  COMMAND ${CMAKE_COMMAND} -E make_directory ${ALASKA_RESULTS_DIR}
+  COMMAND /bin/bash -lc ". ${CMAKE_SOURCE_DIR}/opt/enable-alaska-anchorage && make -C ${CMAKE_SOURCE_DIR}/memcached memcached"
+  COMMAND /bin/bash -lc ". ${CMAKE_SOURCE_DIR}/venv/bin/activate && . ${CMAKE_SOURCE_DIR}/opt/enable-alaska-anchorage && ulimit -s unlimited && python3 -m memcached.ycsb"
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+  DEPENDS
+    ${ALASKA_VENV_TOUCHFILE}
+    ${CMAKE_SOURCE_DIR}/memcached/Makefile
+    ${CMAKE_SOURCE_DIR}/memcached/ycsb.py
+    ${CMAKE_SOURCE_DIR}/memcached/bin/memcached-alaska
+  USES_TERMINAL
+  VERBATIM
+)
+
+add_custom_target(memcached_sweep_csv DEPENDS ${ALASKA_MEMCACHED_SWEEP_CSV})
+
+add_custom_command(
+  OUTPUT ${ALASKA_MEMCACHED_FIG12_PDF}
+  COMMAND ${CMAKE_COMMAND} -E echo "Plotting figure 12"
+  COMMAND /bin/bash -lc ". ${CMAKE_SOURCE_DIR}/venv/bin/activate && python3 ${CMAKE_SOURCE_DIR}/plotgen/figure12.py"
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+  DEPENDS
+    ${ALASKA_VENV_TOUCHFILE}
+    ${ALASKA_MEMCACHED_SWEEP_CSV}
+    ${CMAKE_SOURCE_DIR}/plotgen/figure12.py
+  USES_TERMINAL
+  VERBATIM
+)
+
+add_custom_target(figure12_pdf DEPENDS ${ALASKA_MEMCACHED_FIG12_PDF})

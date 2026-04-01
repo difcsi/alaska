@@ -53,17 +53,29 @@ __pycache__/
 *.py[cod]
 
 # C extensions
-*.so
+*.so*
 .ipynb_checkpoints
-
 *.o
 *.bc.o
 *.o.bc
+*.as
+*.a
 /results
 /memcached/libevent/config.log
 /redis/mesh
 /rss.trace
 
+CMakeCache.txt
+cmake_install.cmake
+CMakeFiles
+*.cmake
+_deps
 
-# Make sure to avoid committihng SPEC. That would violate their license (oh no!)
+
 SPEC2017.tar.gz
+_deps
+CMakeFiles
+*.cmake
+CMakeCache.txt
+*.a
+*.so*

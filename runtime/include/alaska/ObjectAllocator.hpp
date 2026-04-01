@@ -58,7 +58,7 @@ namespace alaska {
 
     // return the index of the object
     inline long object_index(void *ob) {
-      return ((uintptr_t)ob - (uintptr_t)this->objects_start) / this->object_size;
+      return ((uintptr_t)ob - (uintptr_t)this->objects_start) / sizeof(T);
     }
 
     long extend(long count);
@@ -83,7 +83,7 @@ namespace alaska {
       return alloc_slow();
     }
 
-    alaska_track_malloc_size(object, sizeof(T), object_size, 0);
+    alaska_track_malloc_size(object, sizeof(T), sizeof(T), 0);
 
     return (T*)object;
   }

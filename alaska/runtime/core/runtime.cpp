@@ -1,239 +1,168 @@
+
 /*
  * This file is part of the Alaska Handle-Based Memory Management System
  *
- * Copyright (c) 2023, Nick Wanninger <ncw@u.northwestern.edu>
- * Copyright (c) 2023, The Constellation Project
+ * Copyright (c) 2024, Nick Wanninger <ncw@u.northwestern.edu>
+ * Copyright (c) 2024, The Constellation Project
  * All rights reserved.
  *
  * This is free software.  You are permitted to use, redistribute,
  * and modify it as specified in the file "LICENSE".
  */
-#include <alaska.h>
-#include <alaska/alaska.hpp>
-#include <alaska/table.hpp>
-#include <alaska/service.hpp>
-#include <alaska/barrier.hpp>
+
+
+#include <alaska/Runtime.hpp>
+#include <alaska/SizeClass.hpp>
+#include <alaska/BarrierManager.hpp>
+#include <alaska/Localizer.hpp>
+#include "alaska/alaska.hpp"
 #include "alaska/utils.h"
-#include <ck/vec.h>
-
-#include <assert.h>
-#include <errno.h>
-#include <execinfo.h>
-#include <fcntl.h>
-#include <malloc.h>
-#include <stdint.h>
-#include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
-#include <sys/mman.h>
-#include <time.h>
-#include <unistd.h>
-#include <bits/pthreadtypes.h>
-#include <dlfcn.h>
-#include <pthread.h>
+#include <alaska/utils.h>
+
+namespace alaska {
+  // The default instance of a barrier manager.
+  static BarrierManager global_nop_barrier_manager;
+  // The current global instance of the runtime, since we can only have one at a time
+  static Runtime *g_runtime = nullptr;
+  static volatile bool runtime_initialized = false;
 
 
-struct TrackedArg {
-  uint64_t hits = 0;
-  uint64_t misses = 0;
-};
-ck::map<char*, ck::vec<TrackedArg>> arg_track_results;
+  Runtime::Runtime(alaska::Configuration config)
+      : config(config)
+      , handle_table(config)
+      , heap(config) {
+    // Validate that there is not already a runtime (TODO: atomics?)
+    ALASKA_ASSERT(g_runtime == nullptr, "Cannot create more than one runtime");
 
-extern "C" void alaska_argtrack(char* name, uint64_t nargs, ...) {
-  va_list ap;
-  va_start(ap, nargs);
+    // Assign the global runtime to be this instance
+    atomic_set(g_runtime, this);
+    // Attach a default barrier manager
+    this->barrier_manager = &global_nop_barrier_manager;
 
-  auto& v = arg_track_results[name];
-  if (v.size() == 0) v.resize(nargs);
-  // printf("%s", name);
-  for (uint64_t i = 0; i < nargs; i++) {
-    auto& a = v[i];
-    void* arg = va_arg(ap, void*);
-    if (alaska::Mapping::is_handle(arg)) {
-      // printf(" hit");
-      a.hits++;
-    } else {
-      // printf(" mis");
-      a.misses++;
+    log_debug("Created a new Alaska Runtime @ %p", this);
+    atomic_set(runtime_initialized, true);
+  }
+
+  Runtime::~Runtime() {
+    log_debug("Destroying Alaska Runtime");
+    // Unset the global instance so another runtime can be allocated
+    atomic_set(g_runtime, nullptr);
+  }
+
+
+  Runtime &Runtime::get() {
+    ALASKA_ASSERT(g_runtime != nullptr, "Runtime not initialized");
+    return *g_runtime;
+  }
+  Runtime *Runtime::get_ptr() { return g_runtime; }
+
+
+
+  void Runtime::dump(FILE *stream) {
+    //
+    alaska::printf("Alaska Runtime Information:\n");
+    heap.dump(stream);
+    handle_table.dump(stream);
+  }
+
+
+  void Runtime::dump_html(FILE *stream) {
+    fprintf(stream, "<!DOCTYPE html>\n");
+    fprintf(stream, "<html>\n");
+
+    fprintf(stream, R"HEAD(
+       <head>
+         <style>
+            :root { --p0-color: #ff00ff; --p1-color: #9C27B0; }
+            body { box-sizing: border-box; color: white; background-color: black; text-wrap: nowrap; font-family: monospace; }
+            /* td { text-wrap: nowrap; } */
+            /* td { line-height: 0; } */
+            .el { height: 15px; background-color: #2f2f2f; display: inline-block; /* border-right: 1px solid black; */ }
+            .al { background-color: #2fff2f; color: black; }
+            .fr { background-color: black !important; }
+            .localitydata .al { background-color: white; }
+            .p0 { border-bottom: 2px solid var(--p0-color); border-top: 2px solid var(--p0-color); }
+            .p1 { border-bottom: 2px solid var(--p1-color); border-top: 2px solid var(--p1-color); }
+            .localitydata .p0 { background-color: var(--p0-color); }
+            .localitydata .p1 { background-color: var(--p1-color); }
+            .pin { background-color: red !important; }
+
+
+         </style>
+       </head>
+    )HEAD");
+    fprintf(stream, "<body>\n");
+
+    fprintf(stream, "<h1>Heap Pages:</h1>");
+
+    fprintf(stream, "<table>");
+    heap.dump_html(stream);
+    fprintf(stream, "</table>");
+
+
+    fprintf(stream, "</body><html>\n");
+  }
+
+
+  ThreadCache *Runtime::new_threadcache(void) {
+    auto tc = new ThreadCache(next_thread_cache_id++, *this);
+    tcs_lock.lock();
+    tcs.add(tc);
+    tcs_lock.unlock();
+    return tc;
+  }
+
+  void Runtime::del_threadcache(ThreadCache *tc) {
+    tcs_lock.lock();
+    tcs.remove(tc);
+    delete tc;
+    tcs_lock.unlock();
+  }
+
+
+  void Runtime::lock_all_thread_caches(void) {
+    tcs_lock.lock();
+
+    for (auto *tc : tcs)
+      tc->lock.lock();
+  }
+  void Runtime::unlock_all_thread_caches(void) {
+    for (auto *tc : tcs)
+      tc->lock.unlock();
+    tcs_lock.unlock();
+  }
+
+
+  void wait_for_initialization(void) {
+    log_debug("waiting for initialization!\n");
+    while (not is_initialized()) {
+      sched_yield();
     }
-  }
-  // printf("\n");
-
-
-  va_end(ap);
-}
-
-long alaska::translation_hits = 0;
-long alaska::translation_misses = 0;
-
-void alaska::record_translation_info(bool hit) {
-  if (hit) {
-    alaska::translation_hits++;
-  } else {
-    alaska::translation_misses++;
-  }
-}
-
-struct alaska_pthread_trampoline_arg {
-  void* arg;
-  void* (*start)(void*);
-};
-
-static void* alaska_pthread_trampoline(void* varg) {
-  void* (*start)(void*);
-  auto* arg = (struct alaska_pthread_trampoline_arg*)varg;
-  void* thread_arg = arg->arg;
-  start = arg->start;
-  free(arg);
-
-
-  alaska::barrier::add_self_thread();
-  void* ret = start(thread_arg);
-  alaska::barrier::remove_self_thread();
-
-  return ret;
-}
-
-
-// Hook into thread creation by overriding the pthread_create function
-#undef pthread_create
-extern "C" int pthread_create(pthread_t* __restrict thread, const pthread_attr_t* __restrict attr,
-    void* (*start)(void*), void* __restrict arg) {
-  int rc;
-  static int (*real_create)(pthread_t* __restrict thread, const pthread_attr_t* __restrict attr,
-      void* (*start)(void*), void* __restrict arg) = NULL;
-  if (!real_create) real_create = (decltype(real_create))dlsym(RTLD_NEXT, "pthread_create");
-
-  auto* args = (struct alaska_pthread_trampoline_arg*)calloc(
-      1, sizeof(struct alaska_pthread_trampoline_arg));
-  args->arg = arg;
-  args->start = start;
-  rc = real_create(thread, attr, alaska_pthread_trampoline, args);
-  return rc;
-}
-
-// High priority constructor: todo: do this lazily when you call halloc the first time.
-void __attribute__((constructor(102))) alaska_init(void) {
-  // Add the main thread to the list of active threads
-  // Note: the main thread never removes itself from the barrier thread list
-  alaska::barrier::add_self_thread();
-
-  alaska::table::init();
-  alaska::service::init();
-}
-
-void __attribute__((destructor)) alaska_deinit(void) {
-  alaska::service::deinit();
-  alaska::table::deinit();
-
-
-  if (arg_track_results.size() > 0) {
-    for (auto& [f, args] : arg_track_results) {
-      printf("%40s", f);
-      for (auto& a : args) {
-        printf(" %3d", (int)(100 * (a.hits / (float)(a.misses + a.hits))));
-        // printf("\t%d,%d", a.hits, a.misses);
-      }
-      printf("\n");
-    }
+    log_debug("Initialized!\n");
   }
 
 
-#ifdef ALASKA_TRACK_TRANSLATION_HITRATE
-  printf("[alaska] HITRATE INFORMATION:\n");
-  printf("[alaska] hits:    %lu\n", alaska::translation_hits);
-  printf("[alaska] misses:  %lu\n", alaska::translation_misses);
-  printf("[alaska] hitrate: %5.2lf%%\n",
-      100.0 * (alaska::translation_hits /
-                  (float)(alaska::translation_misses + alaska::translation_hits)));
-#endif
-}
-
-#define BT_BUF_SIZE 100
-void alaska_dump_backtrace(void) {
-  int nptrs;
-
-  void* buffer[BT_BUF_SIZE];
-  char** strings;
-
-  nptrs = backtrace(buffer, BT_BUF_SIZE);
-  printf("Backtrace:\n", nptrs);
-
-  strings = backtrace_symbols(buffer, nptrs);
-  if (strings == NULL) {
-    perror("backtrace_symbols");
-    exit(EXIT_FAILURE);
+  int do_handle_fault(uint64_t handle) {
+    auto &rt = alaska::Runtime::get();
+    return rt.handle_fault(handle);
   }
 
-  for (int j = 0; j < nptrs; j++)
-    printf("\x1b[92m%d\x1b[0m: %s\n", j, strings[j]);
 
-  free(strings);
-}
-
-
-long alaska_translate_rss_kb() {
-#if defined(__linux__)
-#define bufLen 4096
-  char buf[bufLen] = {0};
-
-  int fd = open("/proc/self/status", O_RDONLY | O_CLOEXEC);
-  if (fd < 0) return -1;
-
-  ssize_t bytesRead = read(fd, buf, bufLen - 1);
-  close(fd);
-
-  if (bytesRead == -1) return -1;
-
-  for (char* line = buf; line != NULL && *line != 0; line = strchr(line, '\n')) {
-    if (*line == '\n') line++;
-    if (strncmp(line, "VmRSS:", strlen("VmRSS:")) != 0) {
-      continue;
-    }
-
-    char* rssString = line + strlen("VmRSS:");
-    return atoi(rssString);
+  int Runtime::handle_fault(uint64_t handle) {
+    printf("Handle fault to handle %lx\n", handle);
+    abort();
   }
 
-  return -1;
-#elif defined(__APPLE__)
-  struct task_basic_info info;
-  task_t curtask = MACH_PORT_NULL;
-  mach_msg_type_number_t cnt = TASK_BASIC_INFO_COUNT;
-  int pid = getpid();
 
-  if (task_for_pid(current_task(), pid, &curtask) != KERN_SUCCESS) return -1;
+  bool is_initialized(void) { return __atomic_load_n(&runtime_initialized, __ATOMIC_RELAXED); }
 
-  if (task_info(curtask, TASK_BASIC_INFO, (task_info_t)(&info), &cnt) != KERN_SUCCESS) return -1;
-
-  return static_cast<int>(info.resident_size);
-#else
-  return 0;
-#endif
-}
-
-
+}  // namespace alaska
 
 
 // Simply use clock_gettime, which is fast enough on most systems
-uint64_t alaska_timestamp() {
+extern "C" uint64_t alaska_timestamp() {
   struct timespec spec;
   clock_gettime(1, &spec);
   return spec.tv_sec * (1000 * 1000 * 1000) + spec.tv_nsec;
-}
-
-
-void* alaska_ensure_present(alaska::Mapping* m) {
-  alaska::service::swap_in(m);
-  return m->get_pointer();
-}
-
-
-
-extern "C" void __cxa_pure_virtual(void) {
-  abort();
-}
-
-extern "C" void* __alaska_leak(void* ptr) {
-  return alaska_translate(ptr);
 }

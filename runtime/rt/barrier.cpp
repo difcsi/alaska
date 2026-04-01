@@ -698,3 +698,7 @@ extern "C" void alaska_barrier_poll(void) {
   abort();
   return;
 }
+
+extern "C" void alaska_barrier_signal_join(void) {
+  alaska_barrier_poll();
+}
