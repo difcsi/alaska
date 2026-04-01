@@ -3,9 +3,34 @@ import waterline.suites
 import waterline.utils
 import waterline.pipeline
 import os
+import time
 from pathlib import Path
 from waterline.run import Runner
 import pandas as pd
+
+# Accumulates compile-time measurements recorded by TimedStage.
+compile_times = []
+
+
+class TimedStage(wl.pipeline.Stage):
+    """Wraps any Stage to record wall-clock compilation time per benchmark."""
+
+    def __init__(self, stage, pipeline_name, stage_name):
+        self.stage = stage
+        self.pipeline_name = pipeline_name
+        self.stage_name = stage_name
+
+    def run(self, input, output, benchmark):
+        t0 = time.perf_counter()
+        self.stage.run(input, output, benchmark)
+        elapsed = time.perf_counter() - t0
+        compile_times.append({
+            'suite': benchmark.suite.name,
+            'benchmark': benchmark.name,
+            'pipeline': self.pipeline_name,
+            'stage': self.stage_name,
+            'compile_time': elapsed,
+        })
 
 import seaborn as sns
 import matplotlib as mpl
@@ -91,17 +116,24 @@ space.clear_pipelines()
 
 
 pl = waterline.pipeline.Pipeline("alaska")
-pl.add_stage(OptStage(['-O3']), name="Optimize")
-pl.add_stage(AlaskaStage(), name="Alaska")
+pl.add_stage(TimedStage(OptStage(['-O3']), 'alaska', 'Optimize'), name="Optimize")
+pl.add_stage(TimedStage(AlaskaStage(), 'alaska', 'Alaska'), name="Alaska")
 pl.set_linker(AlaskaLinker())
 space.add_pipeline(pl)
 
 
 pl = waterline.pipeline.Pipeline("baseline")
-pl.add_stage(OptStage(['-O3']), name="Optimize")
-pl.add_stage(AlaskaBaselineStage(), name="Baseline")
+pl.add_stage(TimedStage(OptStage(['-O3']), 'baseline', 'Optimize'), name="Optimize")
+pl.add_stage(TimedStage(AlaskaBaselineStage(), 'baseline', 'Baseline'), name="Baseline")
 pl.set_linker(AlaskaLinker())
 space.add_pipeline(pl)
 
 
-res = space.run(runs=2, compile=True, run_name="figure7")
+run_name = "figure7"
+res = space.run(runs=2, compile=True, run_name=run_name)
+
+# Save compile-time measurements alongside the runtime results.
+if compile_times:
+    compile_df = pd.DataFrame(compile_times)
+    compile_df.to_csv(f'bench/results/{run_name}/compile_times.csv', index=False)
+    print(f"Compile times saved to bench/results/{run_name}/compile_times.csv")
