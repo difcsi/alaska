@@ -38,6 +38,7 @@ extern long alaska_translate_rss_kb(void);
 // for (end - start) time keeping and benchmarking
 extern unsigned long alaska_timestamp(void);
 
+extern inline int alaska_is_handle(void *ptr);
 
 struct alaska_blob_config {
   uintptr_t code_start, code_end;
@@ -53,6 +54,9 @@ extern void *__alaska_leak(void *);
 // These are called automatically by the compiler's refcount passes
 void alaska_inc_refcount(void *ptr);
 void alaska_dec_refcount(void *ptr);
+int alaska_nullcount_map_size();
+void alaska_nullcount_map_foreach(void (*fn)(void* ptr));
+
 
 // Get the current reference count of a handle
 // Returns the refcount if ptr is a valid handle, or 0 if ptr is NULL or not a handle

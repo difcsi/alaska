@@ -9,8 +9,12 @@
  * and modify it as specified in the file "LICENSE".
  */
 
+#include <ck/map.h>
 #include <alaska/alaska.hpp>
 #include <stdint.h>
+
+ck::HashTable<void*> nullcount_map;
+
 
 extern "C" {
 
@@ -49,7 +53,10 @@ void alaska_inc_refcount(void *ptr) {
 
   // alaska::printf("Incrementing refcount of mapping  %p from %lu\n", mapping, mapping->get_refcount());
   // Increment the refcount using the mapping's method
-  mapping->inc_refcount();
+  auto new_count = mapping->inc_refcount();
+  if(new_count == 1) {
+    nullcount_map.remove(ptr);
+  }
   
   in_refcount_operation = false;
 }
@@ -86,7 +93,7 @@ void alaska_dec_refcount(void *ptr) {
   // For now, we just track the refcount. The actual freeing policy
   // should attach here
   if (new_count == 0) {
-    // TODO: unset remove lifetime policy bit flag
+   nullcount_map.set(ptr);
   }
   
   in_refcount_operation = false;
@@ -115,4 +122,17 @@ unsigned long alaska_get_refcount(void *ptr) {
   return (unsigned long)mapping->get_refcount();
 }
 
+int alaska_nullcount_map_size(){
+  return nullcount_map.size();
+}
+
+void alaska_nullcount_map_foreach(void (*fn)(void* ptr)) {
+  for (auto it = nullcount_map.begin(); it != nullcount_map.end(); ++it) {
+    fn(*it);
+  }
+}
+
+inline int alaska_is_handle(void *ptr){
+  return alaska::Mapping::is_handle(ptr);
+}
 }  // extern "C"

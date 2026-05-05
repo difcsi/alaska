@@ -19,7 +19,7 @@ if [ ! -f ${PREFIX}/bin/gclang ]; then
 	# install go
 	KERNEL=$(uname | tr '[:upper:]' '[:lower:]')
 
-	case $(uname -p) in
+	case $(uname -m) in
 		x86_64)
 			ARCH=amd64
 			;;

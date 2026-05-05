@@ -2,8 +2,12 @@
 
 
 #include <stdlib.h>
-#include <new>
 
-// inline void *operator new(size_t, void *ptr) noexcept {
-//   return ptr;
-// }
+#if __has_include(<new>)
+#include <new>
+#else
+inline void *operator new(size_t, void *ptr) noexcept {
+  return ptr;
+}
+inline void operator delete(void *, void *) noexcept {}
+#endif
