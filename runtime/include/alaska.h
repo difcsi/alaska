@@ -38,7 +38,7 @@ extern long alaska_translate_rss_kb(void);
 // for (end - start) time keeping and benchmarking
 extern unsigned long alaska_timestamp(void);
 
-extern inline int alaska_is_handle(void *ptr);
+extern int alaska_is_handle(void *ptr);
 
 struct alaska_blob_config {
   uintptr_t code_start, code_end;
