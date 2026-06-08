@@ -1,6 +1,6 @@
 
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O3 -gdwarf-4 -fdeclspec ${WARNINGS} ")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -gdwarf-4 -fdeclspec ${WARNINGS} -std=c++20 -Wno-deprecated -fno-exceptions -fno-rtti -Wno-unused-command-line-argument ")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -gdwarf-4 -fdeclspec ${WARNINGS} -std=c++17 -Wno-deprecated -fno-exceptions -fno-rtti -Wno-unused-command-line-argument ")
 
 include_directories(
 	${LLVM_INCLUDE_DIRS}
@@ -79,11 +79,18 @@ add_llvm_library(Alaska MODULE
 	opt
 )
 
-# llvm_map_components_to_libnames(llvm_libs core)
-#
-# # Link against LLVM libraries
-# target_link_libraries(Alaska PRIVATE ${llvm_libs})
-#
+# Match the ABI used by the available LLVM runtime in this environment.
+target_compile_options(Alaska PRIVATE -stdlib=libstdc++)
+target_link_options(Alaska PRIVATE -stdlib=libstdc++)
+target_compile_options(Alaska PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-nostdinc++>)
+target_include_directories(Alaska SYSTEM PRIVATE
+	/usr/include/c++/13
+	/usr/include/x86_64-linux-gnu/c++/13
+	/usr/include/c++/13/backward)
+
+# Keep plugin loading model self-contained: resolve LLVM symbols from the
+# hosting `opt` process instead of depending on an external libLLVM*.so.
+set_property(TARGET Alaska PROPERTY LINK_FLAGS "-Wl,--allow-shlib-undefined")
 
 add_subdirectory(bin)
 

@@ -19,6 +19,7 @@
 #include <alaska/rt/barrier.hpp>
 #include <pthread.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <signal.h>
 #include <ck/queue.h>
 
@@ -37,16 +38,53 @@ static CompilerRuntimeBarrierManager the_barrier_manager;
 extern "C" void alaska_dump(void) { the_runtime->dump(stderr); }
 
 
+// Defined in halloc.cpp -- this (anchorage) thread's raw thread cache.
+extern alaska::ThreadCache *get_tc_r(void);
+
 static pthread_t barrier_thread;
+// Set once at process shutdown (from an atexit handler, which runs before
+// _dl_fini/destructors). The barrier thread must stop signalling/barriering
+// before any library teardown begins: otherwise it keeps firing SIGUSR2 at
+// threads that are already inside exit handlers (e.g. another runtime joining
+// its own GC thread), and the nested barrier handler runs against half-torn-down
+// state. Plain volatile sig_atomic_t is enough -- single writer, single reader.
+static volatile sig_atomic_t barrier_thread_should_stop = 0;
 static void *barrier_thread_func(void *) {
-  while (1) {
+  // Make sure this thread owns a thread cache before it ever enters a barrier:
+  // lazily creating one needs locks that with_barrier already holds. The cycle
+  // collector also uses it to size and free reclaimed objects.
+  auto *tc = get_tc_r();
+
+  unsigned long tick = 0;
+  while (!barrier_thread_should_stop) {
     usleep(50 * 1000);
-    alaska::Runtime::get().with_barrier([]() {
-      alaska::Runtime::get().heap.compact_sizedpages();
+    if (barrier_thread_should_stop) break;
+    auto &rt = alaska::Runtime::get();
+    rt.with_barrier([&]() {
+      // Heap compaction and cycle collection are duals (Deutsch & Bobrow): both
+      // walk the object graph with the world stopped, so Anchorage does them in
+      // the same barrier. Collect cycles less often than we compact -- tracing
+      // is more expensive and only worthwhile once candidates have accumulated.
+      if (tick % 20 == 0 && rt.cycle_collector.candidate_count() > 0) {
+        rt.cycle_collector.collect(*tc);
+      }
+      rt.heap.compact_sizedpages();
     });
+    tick++;
   }
 
   return NULL;
+}
+
+// Runs at the very start of normal process shutdown (atexit, before _dl_fini).
+// Quiesce the periodic barrier so no compaction barrier / SIGUSR2 traffic
+// overlaps library teardown. The thread observes the flag on its next wakeup
+// (<=50ms); if it happens to be mid-barrier, the join below still completes
+// cleanly because this thread can service the in-flight SIGUSR2 (runtime state
+// is still intact here -- destructors have not run yet).
+static void alaska_stop_barrier_thread(void) {
+  barrier_thread_should_stop = 1;
+  pthread_join(barrier_thread, NULL);
 }
 
 void __attribute__((constructor(102))) alaska_init(void) {
@@ -56,6 +94,7 @@ void __attribute__((constructor(102))) alaska_init(void) {
   // Attach the runtime's barrier manager
   the_runtime->barrier_manager = &the_barrier_manager;
   pthread_create(&barrier_thread, NULL, barrier_thread_func, NULL);
+  atexit(alaska_stop_barrier_thread);
 }
 
 void __attribute__((destructor)) alaska_deinit(void) {}

@@ -8,8 +8,12 @@ import shutil
 from pathlib import Path
 
 local = Path(os.path.realpath(os.path.dirname(__file__))).parent
+llvm_local = local.parent / "llvm"
+opt_bin = llvm_local / "bin" / "opt"
+llvm_link_bin = llvm_local / "bin" / "llvm-link"
+llvm_dis_bin = llvm_local / "bin" / "llvm-dis"
 os.environ["PATH"] = f"{local}/bin:{os.environ['PATH']}"
-os.environ["LD_LIBRARY_PATH"] = f"{local}/lib:{os.environ['LD_LIBRARY_PATH']}"
+os.environ["LD_LIBRARY_PATH"] = f"{local}/lib:{os.environ.get('LD_LIBRARY_PATH', '')}"
 
 
 parser = argparse.ArgumentParser(prog='alaska-transform', description='Applies alaska transformations to an input bitcode')
@@ -42,11 +46,11 @@ def exec(cmd):
 tempdir = tempfile.mkdtemp(prefix='alaska_')
 
 
-exec(f'opt --strip-debug {local}/lib/alaska_stub.bc -o {tempdir}/stub.bc')
-exec(f'opt --strip-debug {local}/lib/alaska_translate.bc -o {tempdir}/translate.bc')
+exec(f'{opt_bin} --strip-debug {local}/lib/alaska_stub.bc -o {tempdir}/stub.bc')
+exec(f'{opt_bin} --strip-debug {local}/lib/alaska_translate.bc -o {tempdir}/translate.bc')
 
 if not args.baseline:
-  exec(f'llvm-link {args.input} --internalize {tempdir}/stub.bc -o {bitcode}')
+  exec(f'{llvm_link_bin} {args.input} --internalize {tempdir}/stub.bc -o {bitcode}')
 else:
   if args.input != bitcode:
     shutil.copy(args.input, bitcode)
@@ -56,7 +60,7 @@ def run_passes(passes):
     before = f'{tempdir}/before-{p}.bc'
     after = f'{tempdir}/after-{p}.bc'
     shutil.copy(bitcode, before)
-    exec(f'opt --load-pass-plugin={local}/lib/Alaska.so --passes={p} {before} -o {after}')
+    exec(f'{opt_bin} --load-pass-plugin={local}/lib/Alaska.so --passes={p} {before} -o {after}')
     shutil.copy(after, bitcode)
 
 
@@ -65,7 +69,7 @@ passes = []
 
 # exec(f'opt {bitcode} -o {bitcode} -O3')
 # exec(f'opt {bitcode} -o {bitcode} -basic-aa -mergereturn --break-crit-edges -loop-simplify -lcssa -indvars -mem2reg -simplifycfg-sink-common=false -licm -instnamer')
-exec(f'opt {bitcode} -o {bitcode} -passes=mergereturn,break-crit-edges,loop-simplify,lcssa,indvars,mem2reg,instnamer')
+exec(f'{opt_bin} {bitcode} -o {bitcode} -passes=mergereturn,break-crit-edges,loop-simplify,lcssa,indvars,mem2reg,instnamer')
 
 
 run_passes(['alaska-prepare'])
@@ -79,7 +83,7 @@ if not args.baseline:
 
 
   # run_passes(['alaska-translate'])
-  exec(f'llvm-link {bitcode} --internalize {tempdir}/translate.bc -o {bitcode}')
+  exec(f'{llvm_link_bin} {bitcode} --internalize {tempdir}/translate.bc -o {bitcode}')
   passes.append('alaska-escape')
 
   if not args.disable_tracking:
@@ -91,6 +95,10 @@ if not args.baseline:
   passes.append('alaska-refcount-inc')
   passes.append('alaska-refcount-dec')
 
+  # Run lowering again as a final cleanup to ensure marker calls are removed
+  # even if earlier passes introduced new alaska.* markers.
+  passes.append('alaska-lower')
+
   # Inlining messes up reference counting (for now), so skip it
   if not args.disable_inlining and False:
     passes.append('alaska-inline')
@@ -98,4 +106,4 @@ if not args.baseline:
 
 run_passes(passes)
 # exec(f'opt {bitcode} -o {bitcode} --mem2reg -lcssa -gvn --instnamer -sink -simplifycfg -dce')
-exec(f'llvm-dis {args.output}')
+exec(f'{llvm_dis_bin} {args.output}')

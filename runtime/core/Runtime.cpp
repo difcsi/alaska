@@ -49,7 +49,8 @@ namespace alaska {
   Runtime::Runtime(alaska::Configuration config)
       : config(config)
       , handle_table(config)
-      , heap(config) {
+      , heap(config)
+      , cycle_collector(*this) {
     // Validate that there is not already a runtime (TODO: atomics?)
     ALASKA_ASSERT(g_runtime == nullptr, "Cannot create more than one runtime");
 

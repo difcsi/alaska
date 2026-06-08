@@ -59,11 +59,22 @@ namespace alaska {
    private:
     // Represent the fact that a handle is just a pointer w/ "important bit patterns"
     // as a simple union.
+    //
+    // Layout: the backing pointer lives in the *low* 47 bits so that it never
+    // overlaps the pinned/invl/swap flags in the top three bits. (A userspace
+    // pointer only ever uses the low 47 bits -- the lower half of a 48-bit
+    // address space -- so 47 bits round-trips it exactly.) Keeping the pointer
+    // and the flags disjoint is essential: an earlier layout packed a 48-bit
+    // `value` into the high bits, so storing a heap pointer above 2^45 silently
+    // flipped the invl/pinned bits, corrupting is_free()/is_pinned()/get_pointer().
+    // The reference count occupies the bits between the pointer and the flags.
     union {
       struct {
-        uint64_t reserved: 2;
-        uint64_t refcount: 14;
-        uint64_t value: 48; // The actual base pointer (to which the offset is added later)
+        uint64_t value : 47;     // bits  0-46: the base pointer (offset added later)
+        uint64_t refcount : 14;  // bits 47-60: reference count
+        uint64_t pinned : 1;     // bit  61: this handle is pinned currently
+        uint64_t invl : 1;       // bit  62: this handle is not mapped (ptr is a free list)
+        uint64_t swap : 1;       // bit  63: this handle is swapped
       } rc __attribute__((packed));
       struct {
         uint64_t misc : 61;   // Some kind of extra info (usually just a pointer)
@@ -75,14 +86,13 @@ namespace alaska {
   public:
 
    ALASKA_INLINE void *get_pointer(void) const {
-      // Synthesize pointer as: reserved | always_zeros | value
-      uint64_t ptr = ((uint64_t)this->rc.reserved << 62) | (this->rc.value & 0xFFFFFFFFFFFF);
-      return (void *)ptr;
+      // The pointer occupies the low bits verbatim; the flags/refcount above it
+      // are not part of the address.
+      return (void *)(uint64_t)this->rc.value;
     }
 
     ALASKA_INLINE void *get_pointer_fast(void) const {
-      uint64_t ptr = ((uint64_t)this->rc.reserved << 62) | (this->rc.value & 0xFFFFFFFFFFFF);
-      return (void *)ptr;
+      return (void *)(uint64_t)this->rc.value;
     }
 
     inline void invalidate(void) {
@@ -94,11 +104,11 @@ namespace alaska {
     }
 
     void set_pointer(void *ptr) {
-      uint64_t saved_refcount = this->rc.refcount;
-      reset();
-      this->rc.reserved = ((uint64_t)ptr >> 62) & 0x3;
-      this->rc.value = (uint64_t)ptr & 0xFFFFFFFFFFFF;
-      this->rc.refcount = saved_refcount;
+      // The pointer is disjoint from the refcount and flags, so we can write it
+      // without disturbing them. Writing the pointer also (re)maps the handle,
+      // so clear the invalid/free bit.
+      this->rc.value = (uint64_t)ptr;
+      this->alt.invl = 0;
       invalidate();
     }
 
@@ -126,8 +136,14 @@ namespace alaska {
 
 
     void reset(void) {
+      // Clear everything: pointer, refcount, and flags. (The old layout cleared
+      // the flags implicitly because `value` overlapped them; now that they are
+      // disjoint we must clear them explicitly so a reused mapping starts clean.)
       this->rc.value = 0;
       this->rc.refcount = 0;
+      this->alt.pinned = 0;
+      this->alt.invl = 0;
+      this->alt.swap = 0;
       invalidate();
     }
 

@@ -87,7 +87,7 @@ void alaska::TypeContext::runInference(void) {
 void alaska::TypeContext::unify(alaska::Type *ta, alaska::Type *tb) {
   // if (ta == tb) return;
   errs() << "\e[32munify " << *ta << " = " << *tb << "\e[0m\n";
-  if (_unifications.contains(std::make_pair(tb, ta))) return;
+  if (_unifications.find(std::make_pair(tb, ta)) != _unifications.end()) return;
   _unifications.insert(std::make_pair(ta, tb));
 }
 
@@ -160,7 +160,7 @@ alaska::PointerType *alaska::TypeContext::getPointerTo(alaska::Type *elTy) {
 
 alaska::Type *alaska::TypeContext::getType(llvm::Value *val) {
   // Check if the value has an assumption already.
-  if (!_assump.contains(val)) {
+  if (_assump.find(val) == _assump.end()) {
     // If it doesn't, add one.
     auto t = convert(val->getType());
     _assump[val] = t;

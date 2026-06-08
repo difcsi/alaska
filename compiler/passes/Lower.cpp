@@ -23,10 +23,19 @@ using namespace llvm;
 std::vector<llvm::CallBase *> collectCalls(llvm::Module &M, const char *name) {
   std::vector<llvm::CallBase *> calls;
 
-  if (auto func = M.getFunction(name)) {
-    for (auto user : func->users()) {
-      if (auto call = dyn_cast<CallBase>(user)) {
-        calls.push_back(call);
+  for (auto &F : M) {
+    for (auto &BB : F) {
+      for (auto &I : BB) {
+        auto *call = dyn_cast<CallBase>(&I);
+        if (!call) continue;
+
+        auto *callee = call->getCalledOperand()->stripPointerCasts();
+        auto *callee_func = dyn_cast<Function>(callee);
+        if (!callee_func) continue;
+
+        if (callee_func->getName() == name) {
+          calls.push_back(call);
+        }
       }
     }
   }

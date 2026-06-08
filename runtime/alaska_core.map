@@ -1,0 +1,15 @@
+/*
+ * Keep libalaska_core's global C++ operator new/delete (provided by
+ * core/InternalOperators.cpp, backed by alaska_internal_malloc) LOCAL, so the
+ * library satisfies its own internal `new`/`delete` without exporting a
+ * process-wide operator new that would hijack the application's C++ allocations.
+ */
+{
+  local:
+    _Znwm;    /* operator new(unsigned long) */
+    _Znam;    /* operator new[](unsigned long) */
+    _ZdlPv;   /* operator delete(void*) */
+    _ZdaPv;   /* operator delete[](void*) */
+    _ZdlPvm;  /* operator delete(void*, unsigned long) */
+    _ZdaPvm;  /* operator delete[](void*, unsigned long) */
+};

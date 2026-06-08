@@ -212,7 +212,7 @@ alaska::AccessAutomata::AccessAutomata(llvm::Value *object, alaska::OptimisticTy
       // If the edge is a memory instruction, then we should construct an alternative for each
       // offset associated with that instruction.
       ExprPtr<Edge> edge = nullptr;
-      if (memory_instructions.contains(inst)) {
+      if (memory_instructions.find(inst) != memory_instructions.end()) {
         bool care = false;
 
         if (auto load = dyn_cast<LoadInst>(inst)) {

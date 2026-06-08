@@ -63,6 +63,18 @@ void alaska_nullcount_map_foreach(void (*fn)(void* ptr));
 unsigned long alaska_get_refcount(void *ptr);
 
 
+// Cycle detection (Anchorage). Reference counting cannot reclaim handles that
+// only reference each other; these run Bacon & Rajan trial-deletion cycle
+// collection under Anchorage's stop-the-world barrier.
+//
+// Force a cycle collection now; returns the number of handles reclaimed.
+unsigned long alaska_collect_cycles(void);
+// Number of candidate cycle roots currently buffered.
+unsigned long alaska_cycle_candidate_count(void);
+// Total number of handles reclaimed by the cycle collector so far.
+unsigned long alaska_cycles_collected(void);
+
+
 #ifdef __cplusplus
 }
 #endif

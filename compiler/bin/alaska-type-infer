@@ -1,10 +1,13 @@
 #!/usr/bin/bash
 
 PFX=$(realpath "$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )/../")
+LLVM_PFX=$(realpath "${PFX}/../llvm")
+OPT_BIN="${LLVM_PFX}/bin/opt"
 
 export PATH=$PFX/bin:$PATH
 export LD_LIBRARY_PATH=$PFX/lib:$LD_LIBRARY_PATH:/lib64:/lib
 
-
-opt -strip-debug --passes=mem2reg,mergereturn $1 -o $1
-opt --load-pass-plugin=${PFX}/lib/Alaska.so --passes=alaska-type-infer $1 -o $1
+# Keep debug info: liballocs' metadata tools (dwarftypes) need DWARF in the
+# final binary. (Was: -strip-debug, which discarded it before codegen.)
+"${OPT_BIN}" --passes=mem2reg,mergereturn "$1" -o "$1"
+"${OPT_BIN}" --load-pass-plugin="${PFX}/lib/Alaska.so" --passes=alaska-type-infer "$1" -o "$1"

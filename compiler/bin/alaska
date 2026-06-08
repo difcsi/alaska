@@ -1,9 +1,19 @@
 #!/usr/bin/bash
 
-# set -e
+set -e
 # set -x
 
 PFX=$(realpath "$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )/../")
+LLVM_PFX=$(realpath "${PFX}/../llvm")
+OPT_BIN="${LLVM_PFX}/bin/opt"
+LLC_BIN="${LLVM_PFX}/bin/llc"
+LLVMDIS_BIN="${LLVM_PFX}/bin/llvm-dis"
+
+# Alaska's pass plugin (Alaska.so) and the opt/llc/llvm-dis tools above are built
+# against the bundled LLVM (see ${LLVM_PFX}). The whole pipeline must use that same
+# LLVM, so point gllvm's gclang/get-bc at it instead of whatever clang/llvm-link
+# happen to be first on PATH (which may be a different, incompatible LLVM version).
+export LLVM_COMPILER_PATH="${LLVM_PFX}/bin"
 
 export PATH=$PFX/bin:$PATH
 export LD_LIBRARY_PATH=$PFX/lib:$LD_LIBRARY_PATH:/lib64:/lib
@@ -25,11 +35,34 @@ OPT="-O3"
 
 phase="link"
 
+GCLANG="${ALASKA_GCLANG:=gclang}"
+CLANG="${ALASKA_CLANG:=${LLVM_PFX}/bin/clang}"
+
 
 
 while [[ $# -gt 0 ]]
 do
     case $1 in
+			# Compiler-identity queries (e.g. `-dumpversion`, `-dumpmachine`)
+			# used by driver-wrappers like cilly/allocscc to probe the backend.
+			# Delegate straight to the underlying clang.
+			-dump*)
+				exec "$CLANG" "$1"
+				;;
+			# Preprocess-only (-E). Must NOT run the bitcode/link pipeline.
+			-E)
+				phase="preprocess"
+				COLLECT_CLANG_ARGS+=("$1")
+				shift
+				;;
+			# Relocatable / partial link (ld -r), as done by cilly/allocscc.
+			# Must pass straight through to clang: no alaska ldscript (which
+			# implies -pie and conflicts with -r) and no get-bc pipeline.
+			-r|-Wl,-r)
+				phase="reloc"
+				COLLECT_CLANG_ARGS+=("$1")
+				shift
+				;;
 			-T)
 				export ALASKA_COMPILER_TRACE=yes
 				shift
@@ -81,6 +114,27 @@ do
 				LINK_FLAGS+=("$1")
 				shift
 				;;
+			-Wl,*)
+				# Linker flags (e.g. -Wl,--dynamic-linker,<allocsld>, -rpath) must
+				# reach the FINAL link, not just the first gclang link, otherwise
+				# things like the allocsld interpreter get dropped from the output.
+				COLLECT_CLANG_ARGS+=("$1")
+				LINK_FLAGS+=("$1")
+				shift
+				;;
+			*.o|*.os)
+				COLLECT_CLANG_ARGS+=("$1")
+				# Object files with embedded LLVM bitcode are consumed by get-bc and
+				# end up in the transformed bitcode, so they must NOT be re-linked at
+				# the final step (would duplicate symbols). But bitcode-less objects
+				# (e.g. liballocs' interp-pad.o, which only carries the allocsld
+				# .interp section) are invisible to get-bc, so they must be on the
+				# final link to take effect.
+				if [ -f "$1" ] && ! readelf -S "$1" 2>/dev/null | grep -q '\.llvm_bc'; then
+					LINK_FLAGS+=("$1")
+				fi
+				shift
+				;;
 			*)
 				COLLECT_CLANG_ARGS+=("$1")
 				shift
@@ -93,24 +147,41 @@ COLLECT_CLANG_ARGS+=("-gdwarf-4 ")
 # COLLECT_CLANG_ARGS+=("$OPT ")
 
 
-GCLANG="${ALASKA_GCLANG:=gclang}"
-CLANG="${ALASKA_CLANG:=clang}"
+ALASKA_CFG_FLAGS=()
+while IFS= read -r flag; do
+	if [ "$flag" = "$PFX/lib/alaska_translate.bc" ]; then
+		continue
+	fi
+	ALASKA_CFG_FLAGS+=("$flag")
+done < <(alaska-config --cflags --ldflags)
 
-if [ "$phase" = "compile" ]; then
-	$GCLANG -O1 -Xclang -disable-llvm-passes -Wno-unused-command-line-argument -I${PFX}/include -c ${COLLECT_CLANG_ARGS[@]} `alaska-config --cflags`
+if [ "$phase" = "preprocess" ]; then
+	# Preprocess only: plain clang -E with alaska's cflags (no ldflags / no
+	# bitcode pipeline). Used when a driver-wrapper (cilly/allocscc) drives us.
+	$CLANG -Wno-unused-command-line-argument -I${PFX}/include ${COLLECT_CLANG_ARGS[@]} $(alaska-config --cflags)
+	exit $?
+elif [ "$phase" = "reloc" ]; then
+	# Relocatable/partial link: forward to clang as-is. No alaska ldscript,
+	# runtime libs, or bitcode pipeline; the embedded bitcode sections are
+	# preserved through ld -r and consumed at the final link. -no-pie because
+	# clang defaults to -pie, which the linker rejects together with -r.
+	$CLANG -no-pie -Wno-unused-command-line-argument ${COLLECT_CLANG_ARGS[@]} ${LDFLAGS}
+	exit $?
+elif [ "$phase" = "compile" ]; then
+	$GCLANG -O1 -Xclang -disable-llvm-passes -Wno-unused-command-line-argument -I${PFX}/include -c ${COLLECT_CLANG_ARGS[@]} ${ALASKA_CFG_FLAGS[@]}
 	exit
 else
 
 	# If the program is being linked, link it as the user requests, then
 	# use get-bc to run our pass on it behind the scenes :)
-	$GCLANG -O1 -Xclang -disable-llvm-passes -Wno-unused-command-line-argument -I${PFX}/include ${COLLECT_CLANG_ARGS[@]} `alaska-config --cflags --ldflags`
+	$GCLANG -O1 -Xclang -disable-llvm-passes -Wno-unused-command-line-argument -I${PFX}/include ${COLLECT_CLANG_ARGS[@]} ${ALASKA_CFG_FLAGS[@]} ${LDFLAGS}
 
 	get-bc $OUTFILE >/dev/null
 	TMPFILE=${OUTFILE}.bc
 
 
   alaska-type-infer ${TMPFILE}
-  opt $OPT ${TMPFILE} -o ${TMPFILE}
+	"${OPT_BIN}" $OPT "${TMPFILE}" -o "${TMPFILE}"
 
 	if [ "$BASELINE" == "true" ]; then
 
@@ -120,16 +191,17 @@ else
 		$PFX/bin/alaska-transform --baseline ${BASETMPFILE} ${OPT_ARGS[@]}
 
     llc -O3 ${BASETMPFILE} --relocation-model=pic --filetype=obj -o ${BASETMPFILE}.o
-    $CLANG -gdwarf-4 ${BASETMPFILE}.o -o $OUTFILE.base ${LINK_FLAGS[@]} -ldl `alaska-config --ldflags --cflags`
+	$CLANG -gdwarf-4 ${BASETMPFILE}.o -o $OUTFILE.base ${LINK_FLAGS[@]} -ldl ${ALASKA_CFG_FLAGS[@]} ${LDFLAGS}
 	fi
 
-	[ "$KEEP" == "true" ] && llvm-dis ${TMPFILE} -o ${OUTFILE}.in.ll
+	[ "$KEEP" == "true" ] && "${LLVMDIS_BIN}" "${TMPFILE}" -o "${OUTFILE}.in.ll"
 	$PFX/bin/alaska-transform ${TMPFILE} ${OPT_ARGS[@]}
-	[ "$KEEP" == "true" ] && llvm-dis ${TMPFILE} -o ${OUTFILE}.out.ll
+	"${OPT_BIN}" --load-pass-plugin="${PFX}/lib/Alaska.so" --passes=alaska-lower "${TMPFILE}" -o "${TMPFILE}"
+	[ "$KEEP" == "true" ] && "${LLVMDIS_BIN}" "${TMPFILE}" -o "${OUTFILE}.out.ll"
 
 	# Compile the bitcode to object code
-	llc -O3 ${TMPFILE} --relocation-model=pic --filetype=obj -o ${TMPFILE}.o
-	$CLANG -gdwarf-4 ${TMPFILE}.o -o $OUTFILE ${LINK_FLAGS[@]} -ldl `alaska-config --ldflags --cflags`
+	"${LLC_BIN}" -O3 "${TMPFILE}" --relocation-model=pic --filetype=obj -o "${TMPFILE}.o"
+	$CLANG -gdwarf-4 ${TMPFILE}.o -o $OUTFILE ${LINK_FLAGS[@]} -ldl ${ALASKA_CFG_FLAGS[@]} ${LDFLAGS}
 	rm ${TMPFILE} ${TMPFILE}.o
 fi
 

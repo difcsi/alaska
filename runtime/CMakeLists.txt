@@ -56,6 +56,8 @@ set(CORE_SOURCES
   core/SizedPage.cpp
   core/LocalityPage.cpp
   core/Localizer.cpp
+  core/CycleCollector.cpp
+  core/InternalOperators.cpp
 
   core/Utils.cpp
 
@@ -85,6 +87,13 @@ add_library(alaska_core SHARED $<TARGET_OBJECTS:alaska_core_objects>)
 set_target_properties(alaska_core PROPERTIES LINKER_LANGUAGE C)
 set_target_properties(alaska_core PROPERTIES SOVERSION ${ALASKA_VERSION})
 
+# Keep the runtime's own global operator new/delete (InternalOperators.cpp)
+# local, so libalaska_core does not interpose the application's operator new.
+target_link_options(alaska_core PRIVATE
+  "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/alaska_core.map")
+set_target_properties(alaska_core PROPERTIES
+  LINK_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/alaska_core.map")
+
 target_link_libraries(alaska_core dl pthread)
 
 
@@ -111,23 +120,28 @@ install(
 
 
 
-add_library(alaska_sim SHARED
-  sim/HTLB.cpp
-  sim/TLB.cpp
-  sim/StatisticsManager.cpp
-)
-install(
-  TARGETS alaska_sim
-  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
-  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-  PUBLIC_HEADER DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
-  PRIVATE_HEADER DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+# The HTLB simulator is only built and installed when the simulator is enabled.
+# Guarding it keeps `cmake --install` working when ALASKA_HTLB_SIM is OFF (the
+# alaska runtime only links alaska_sim under the same option, see below).
+if(ALASKA_HTLB_SIM)
+  add_library(alaska_sim SHARED
+    sim/HTLB.cpp
+    sim/TLB.cpp
+    sim/StatisticsManager.cpp
+  )
+  install(
+    TARGETS alaska_sim
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    PUBLIC_HEADER DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+    PRIVATE_HEADER DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 
-install(FILES
-  include/alaska/sim/HTLB.hpp
-  include/alaska/sim/TLB.hpp
-  include/alaska/sim/StatisticsManager.hpp
-  DESTINATION include/alaska/sim)
+  install(FILES
+    include/alaska/sim/HTLB.hpp
+    include/alaska/sim/TLB.hpp
+    include/alaska/sim/StatisticsManager.hpp
+    DESTINATION include/alaska/sim)
+endif(ALASKA_HTLB_SIM)
 
 
 
@@ -300,6 +314,7 @@ if (ALASKA_ENABLE_TESTING)
     test/handle_ptr_test.cpp
     test/htlb_sim_test.cpp
     test/locality_page_test.cpp
+    test/cycle_test.cpp
 	)
 
 	target_link_libraries(

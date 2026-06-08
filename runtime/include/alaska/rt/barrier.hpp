@@ -26,6 +26,11 @@ struct AlaskaThreadState {
   uint64_t escaped;
   // Why did this thread join? Is it joined?
   int join_status;
+  // Highest address of this thread's stack (one past the top). Recorded at
+  // thread join so the barrier can conservatively scan a thread that was
+  // interrupted while parked inside a liballocs/systrap syscall emulation
+  // (where unwinding across the nested handler frames is unsafe). 0 if unknown.
+  void *stack_top;
 #define ALASKA_JOIN_REASON_NOT_JOINED -1        // This thread has not joined the barrier.
 #define ALASKA_JOIN_REASON_SIGNAL 0        // This thread was signalled.
 #define ALASKA_JOIN_REASON_SAFEPOINT 1     // This thread was at a safepoint

@@ -71,6 +71,42 @@ endif()
 
 # -------------------------------------------------------------------------------------------
 
+# The bundled clang defaults to the newest installed GCC's libstdc++, which may be
+# too new for it to parse (e.g. clang 16 cannot compile against libstdc++ 16). Pin
+# clang to an older GCC's libstdc++/headers via --gcc-install-dir. Auto-detected as
+# the newest GCC install dir with major version <= 13 (the highest clang 16 handles
+# reliably). Override with -DALASKA_GCC_INSTALL_DIR=/path, or set it to OFF to skip.
+# This must run before project() so the C/C++ implicit-include probe (which is later
+# frozen into CMAKE_CXX_STANDARD_INCLUDE_DIRECTORIES) resolves the older headers.
+if(CMAKE_CXX_COMPILER MATCHES "clang")
+  if(NOT DEFINED ALASKA_GCC_INSTALL_DIR)
+    file(GLOB _alaska_gcc_dirs LIST_DIRECTORIES true /usr/lib/gcc/*/*)
+    set(_alaska_gcc_best "")
+    set(_alaska_gcc_best_ver 0)
+    foreach(_d ${_alaska_gcc_dirs})
+      if(IS_DIRECTORY "${_d}" AND EXISTS "${_d}/crtbegin.o")
+        get_filename_component(_v "${_d}" NAME)
+        if(_v MATCHES "^[0-9]+$" AND NOT _v GREATER 13 AND _v GREATER _alaska_gcc_best_ver)
+          set(_alaska_gcc_best_ver ${_v})
+          set(_alaska_gcc_best "${_d}")
+        endif()
+      endif()
+    endforeach()
+    set(ALASKA_GCC_INSTALL_DIR "${_alaska_gcc_best}" CACHE STRING
+      "GCC install dir clang uses for libstdc++ (--gcc-install-dir); set OFF to disable")
+  endif()
+  if(ALASKA_GCC_INSTALL_DIR AND NOT ALASKA_GCC_INSTALL_DIR STREQUAL "OFF")
+    message(STATUS "Pinning clang libstdc++ to GCC install dir: ${ALASKA_GCC_INSTALL_DIR}")
+    set(_alaska_gcc_flag "--gcc-install-dir=${ALASKA_GCC_INSTALL_DIR}")
+    set(CMAKE_C_FLAGS            "${CMAKE_C_FLAGS} ${_alaska_gcc_flag}")
+    set(CMAKE_CXX_FLAGS          "${CMAKE_CXX_FLAGS} ${_alaska_gcc_flag}")
+    set(CMAKE_EXE_LINKER_FLAGS   "${CMAKE_EXE_LINKER_FLAGS} ${_alaska_gcc_flag}")
+    set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} ${_alaska_gcc_flag}")
+  else()
+    message(WARNING "No suitable GCC (<=13) found for clang's libstdc++; C++ host tools may fail to build")
+  endif()
+endif()
+
 cmake_minimum_required(VERSION 3.13)
 project(Alaska C CXX ASM)
 
@@ -90,7 +126,7 @@ set(CMAKE_INSTALL_BINDIR ${CMAKE_INSTALL_PREFIX}/bin)
 set(CMAKE_INSTALL_INCLUDEDIR ${CMAKE_INSTALL_PREFIX}/include)
 set(CMAKE_INSTALL_RPATH "${CMAKE_INSTALL_LIBDIR}")
 set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++2a -fPIC -g3 -Wno-unknown-warning-option -Wno-covered-switch-default ")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17 -fPIC -g3 -Wno-unknown-warning-option -Wno-covered-switch-default ")
 set(CMAKE_INSTALL_MESSAGE LAZY)
 set(CMAKE_VERBOSE_MAKEFILE OFF)
 
@@ -373,8 +409,8 @@ add_custom_target(figure12_pdf DEPENDS ${ALASKA_MEMCACHED_FIG12_PDF})
 
 # sanity: build and run test/sanity.c with the installed alaska compiler
 add_custom_target(sanity
-  COMMAND ${CMAKE_INSTALL_PREFIX}/bin/alaska -O3 ${CMAKE_SOURCE_DIR}/test/sanity.c -o ${CMAKE_BINARY_DIR}/sanity
-  COMMAND ${CMAKE_INSTALL_PREFIX}/bin/alaska     ${CMAKE_SOURCE_DIR}/test/sanity.c -o ${CMAKE_BINARY_DIR}/sanity
+  COMMAND ${CMAKE_COMMAND} -E env "LDFLAGS=-fuse-ld=bfd $ENV{LDFLAGS}" ${CMAKE_INSTALL_PREFIX}/bin/alaska -O3 ${CMAKE_SOURCE_DIR}/test/sanity.c -o ${CMAKE_BINARY_DIR}/sanity
+  COMMAND ${CMAKE_COMMAND} -E env "LDFLAGS=-fuse-ld=bfd $ENV{LDFLAGS}" ${CMAKE_INSTALL_PREFIX}/bin/alaska     ${CMAKE_SOURCE_DIR}/test/sanity.c -o ${CMAKE_BINARY_DIR}/sanity
   COMMAND ${CMAKE_BINARY_DIR}/sanity
   COMMENT "Building and running sanity test"
 )

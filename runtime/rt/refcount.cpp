@@ -11,9 +11,14 @@
 
 #include <ck/map.h>
 #include <alaska/alaska.hpp>
+#include <alaska/Runtime.hpp>
+#include <alaska/ThreadCache.hpp>
 #include <stdint.h>
 
 ck::HashTable<void*> nullcount_map;
+
+// Defined in halloc.cpp -- the calling thread's (raw) thread cache.
+extern alaska::ThreadCache *get_tc_r(void);
 
 
 extern "C" {
@@ -94,8 +99,13 @@ void alaska_dec_refcount(void *ptr) {
   // should attach here
   if (new_count == 0) {
    nullcount_map.set(ptr);
+  } else {
+   // The refcount dropped but is still non-zero. This is the only situation in
+   // which `mapping` can become the root of a garbage *cycle*, so hand it to
+   // Anchorage's cycle collector as a candidate root (Bacon & Rajan "purple").
+   alaska::Runtime::get().cycle_collector.register_candidate(mapping);
   }
-  
+
   in_refcount_operation = false;
 }
 
@@ -134,5 +144,34 @@ void alaska_nullcount_map_foreach(void (*fn)(void* ptr)) {
 
 inline int alaska_is_handle(void *ptr){
   return alaska::Mapping::is_handle(ptr);
+}
+
+/**
+ * alaska_collect_cycles - Run one cycle collection inside Anchorage.
+ *
+ * Stops the world (via Anchorage's barrier) and runs synchronous trial-deletion
+ * cycle collection over the buffered candidate roots, reclaiming any handles
+ * that are only kept alive by reference cycles. Returns the number of handles
+ * reclaimed. Note the barrier has a minimum interval, so back-to-back calls may
+ * return 0 simply because no barrier was taken.
+ */
+unsigned long alaska_collect_cycles(void) {
+  auto &rt = alaska::Runtime::get();
+  // Make sure this thread has a thread cache *before* entering the barrier:
+  // creating one needs locks the barrier already holds.
+  auto *tc = get_tc_r();
+  unsigned long reclaimed = 0;
+  rt.with_barrier([&]() { reclaimed = rt.cycle_collector.collect(*tc); });
+  return reclaimed;
+}
+
+// Number of candidate cycle roots currently buffered.
+unsigned long alaska_cycle_candidate_count(void) {
+  return alaska::Runtime::get().cycle_collector.candidate_count();
+}
+
+// Total number of handles reclaimed by the cycle collector so far.
+unsigned long alaska_cycles_collected(void) {
+  return alaska::Runtime::get().cycle_collector.total_collected();
 }
 }  // extern "C"

@@ -8,6 +8,9 @@
  * This is free software.  You are permitted to use, redistribute,
  * and modify it as specified in the file "LICENSE".
  */
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE /* for pthread_getattr_np */
+#endif
 #define UNW_LOCAL_ONLY
 #include <libunwind.h>
 #include <alaska/StackMapParser.h>
@@ -38,6 +41,38 @@
 #include <sys/mman.h>
 #include <string.h>
 #include <assert.h>
+#include <stdlib.h>
+
+
+// --- liballocs/systrap coordination -----------------------------------------
+// When stackscan runs under liballocs, every libc syscall is trapped and emulated
+// inside systrap's SIGILL handler; for blocking syscalls (sleep/futex/...) the
+// thread is parked *inside* that handler. If our barrier SIGUSR2 interrupts such
+// a thread and we unwind across the nested handler + kernel signal frames, we
+// corrupt its resume state (observed as flaky SIGSEGV rip=0 / self-SIGPIPE /
+// abort). systrap publishes, per-thread, the saved application SP/IP while it is
+// emulating; we weak-reference the accessors so this is a no-op when liballocs is
+// absent (symbols resolve to NULL). A thread with a non-NULL saved SP is parked
+// in a syscall -> at a GC-safe point -> we scan its roots conservatively from the
+// saved context instead of unwinding.
+extern "C" void *__systrap_current_saved_sp(void) __attribute__((weak));
+extern "C" void *__systrap_current_saved_ip(void) __attribute__((weak));
+
+// Diagnostic A/B gate (read once at init). With STACKSCAN_DIAG_SKIP_UNWIND set,
+// an in-systrap thread skips even the conservative root scan (still joins the
+// barrier) -- to confirm the root collection is not itself a crash source.
+static int diag_skip_unwind = 0;
+__attribute__((constructor)) static void alaska_barrier_diag_init(void) {
+  diag_skip_unwind = (getenv("STACKSCAN_DIAG_SKIP_UNWIND") != nullptr);
+}
+
+// Returns the saved application stack pointer iff this thread is currently parked
+// inside a systrap syscall emulation, else NULL (also NULL when liballocs absent,
+// since the accessor is a weak undefined symbol then).
+static inline void *thread_in_systrap_sp(void) {
+  if (&__systrap_current_saved_sp == nullptr) return nullptr; // liballocs absent
+  return __systrap_current_saved_sp();
+}
 
 
 enum class StackState {
@@ -263,6 +298,22 @@ void alaska::barrier::get_pinned_handles(ck::set<void*>& out) {
 
 
 
+// Conservatively pin (marked=true) or unpin (marked=false) every handle found on
+// the stack range [sp_lo, sp_hi) of a thread parked inside a systrap syscall
+// emulation. This must be MALLOC-FREE: such a thread may be parked in an
+// mmap/brk syscall *issued by malloc*, holding the allocator lock, so building a
+// ck::set here (which allocates) would deadlock or corrupt. record_handle only
+// does a bounds-checked table lookup + a bit set/clear (no locks, no allocation),
+// and ignores non-handles, so we call it directly. Over-approximation is GC-safe
+// (never under-pins). We re-scan to unpin rather than remembering a set.
+static void mark_conservative_range(void* sp_lo, void* sp_hi, bool marked) {
+  if (!sp_lo || !sp_hi || sp_lo >= sp_hi) return;
+  for (void** p = (void**) sp_lo; p < (void**) sp_hi; ++p) {
+    record_handle(*p, marked);
+  }
+}
+
+
 static void participant_join(bool leader, const ck::set<void*>& ps) {
   for (auto* p : ps) {
     record_handle(p, true);
@@ -435,6 +486,33 @@ thread_local bool invalid_state_abort = false;
 
 static void alaska_barrier_signal_handler(int sig, siginfo_t* info, void* ptr) {
   ucontext_t* ucontext = (ucontext_t*)ptr;
+
+  // --- In-systrap fast path -------------------------------------------------
+  // If this thread is parked inside a liballocs/systrap syscall emulation it is
+  // at a GC-safe point (blocked in a syscall, not mutating the managed heap).
+  // We must NOT unwind the live stack here: that would cross the nested systrap
+  // and kernel signal frames and corrupt the thread's resume (the source of the
+  // flaky SIGSEGV rip=0 / self-SIGPIPE / abort). Instead scan roots
+  // conservatively from systrap's saved application context, then join.
+  {
+    void *saved_sp = thread_in_systrap_sp();
+    if (saved_sp) {
+      // Parked in a syscall (a libc syscall site, i.e. unmanaged) -> join as a
+      // signalled participant. Everything here is malloc-free and uses no
+      // libunwind (see mark_conservative_range): we must not allocate or unwind on
+      // a thread parked mid-syscall.
+      alaska::thread_tracking::my_state.join_status = ALASKA_JOIN_REASON_SIGNAL;
+      void *sp_hi = alaska::thread_tracking::my_state.stack_top;
+      bool multi = (alaska::thread_tracking::threads().num_threads() > 1);
+      if (!diag_skip_unwind) mark_conservative_range(saved_sp, sp_hi, /*pin*/ true);
+      if (multi) pthread_barrier_wait(&the_barrier); // join
+      if (multi) pthread_barrier_wait(&the_barrier); // leave
+      if (!diag_skip_unwind) mark_conservative_range(saved_sp, sp_hi, /*unpin*/ false);
+      clear_pending_signals();
+      return;
+    }
+  }
+
   uintptr_t return_address = 0;
 
 #if defined(__amd64__)
@@ -507,7 +585,26 @@ static void alaska_barrier_signal_handler(int sig, siginfo_t* info, void* ptr) {
 
 
 
+// Record this thread's stack top (highest address) once, at join, so the barrier
+// can conservatively scan an in-systrap thread (see get_conservative_handles).
+// Safe to call from the initial (non-signal) join; guarded so the repeated calls
+// via clear_pending_signals (which run inside the signal handler) are no-ops and
+// never do the /proc-reading pthread_getattr_np from signal context.
+static void record_stack_top(void) {
+  if (alaska::thread_tracking::my_state.stack_top) return;
+  pthread_attr_t attr;
+  if (pthread_getattr_np(pthread_self(), &attr) != 0) return;
+  void *addr = nullptr;
+  size_t size = 0;
+  if (pthread_attr_getstack(&attr, &addr, &size) == 0 && addr) {
+    alaska::thread_tracking::my_state.stack_top = (char*) addr + size;
+  }
+  pthread_attr_destroy(&attr);
+}
+
 static void setup_signal_handlers(void) {
+  record_stack_top();
+
   struct sigaction sa;
   memset(&sa, 0, sizeof(sa));
 
@@ -531,12 +628,16 @@ static void clear_pending_signals(void) {
   struct sigaction sa;
   memset(&sa, 0, sizeof(sa));
 
-  // Ignoring a signal while it is pending will clear it's pending status
+  // Ignoring a signal while it is pending clears its pending status. Only do this
+  // for SIGUSR2 (our barrier signal). Do NOT touch SIGILL: under liballocs it is
+  // owned by systrap (our handler is merely chained), so momentarily setting it to
+  // SIG_IGN makes liballocs' sigaction interposer drop the chain -- a window in
+  // which a concurrent foreign SIGILL aborts. Clearing a pending SIGILL would also
+  // discard a real syscall trap. (When liballocs is absent this is still correct:
+  // a stray pending SIGILL there would be a genuine fault we should not swallow.)
   sa.sa_handler = SIG_IGN;
-  // Attach this action on two signals:
-  assert(sigaction(SIGILL, &sa, NULL) == 0);
   assert(sigaction(SIGUSR2, &sa, NULL) == 0);
-  // Now, set them up again
+  // Now, set the handlers up again.
   setup_signal_handlers();
 }
 

@@ -6,6 +6,12 @@
 #include <stdlib.h>
 #include <alaska.h>
 
+#undef strstr
+#undef strpbrk
+#undef strchr
+#undef strrchr
+#undef memchr
+
 #define SS (sizeof(size_t))
 #define ALIGN (sizeof(size_t))
 #define ONES ((size_t)-1 / UCHAR_MAX)
