@@ -40,6 +40,16 @@ extern unsigned long alaska_timestamp(void);
 
 extern int alaska_is_handle(void *ptr);
 
+// Translate a handle to the backing pointer (applying any embedded offset),
+// faulting in / making the backing present as a side effect. If `ptr` is not a
+// handle (top bit clear, or the special -1) it is returned unchanged, so this
+// is safe to call on arbitrary pointers. This is normally inserted by the
+// compiler at handle dereferences; it is exported here so that out-of-band
+// consumers (e.g. liballocs integration glue) can translate a handle before
+// handing it to an address-indexed query. Definition lives in
+// libalaska_translate_native.a (runtime/core/translate.cpp).
+extern void *alaska_translate(void *ptr);
+
 struct alaska_blob_config {
   uintptr_t code_start, code_end;
   void *stackmap;
@@ -50,12 +60,36 @@ void alaska_blob_init(struct alaska_blob_config *cfg);
 // Not a good function to call. This is always an external function in the compiler's eyes
 extern void *__alaska_leak(void *);
 
+// Reference counting (and its complement, the Anchorage cycle collector). The
+// whole feature is compiled out unless ALASKA_ENABLE_REFCOUNT is defined (set
+// by the toolchain via `alaska-config` when the runtime was built with it on).
+#if ALASKA_ENABLE_REFCOUNT
+
 // Reference counting functions for handles
 // These are called automatically by the compiler's refcount passes
 void alaska_inc_refcount(void *ptr);
 void alaska_dec_refcount(void *ptr);
 int alaska_nullcount_map_size();
 void alaska_nullcount_map_foreach(void (*fn)(void* ptr));
+
+// Copy the current set of zero-refcount handles into `out` (capacity `cap`) under
+// an internal lock, returning the total number of entries (which may exceed
+// `cap`, signalling the caller to grow the buffer and retry). The concurrent
+// collector uses this instead of *_foreach so it iterates a private snapshot
+// rather than the live map, which mutators rehash concurrently.
+size_t alaska_nullcount_snapshot(void **out, size_t cap);
+
+// Drop a handle from the zero-refcount set. (Used by the in-barrier reclaim.)
+void alaska_nullcount_forget(void *ptr);
+
+// Stackscan "present" side bitmap (see alaska/gc_bitmaps.hpp). One bit per
+// handle-table slot. `present_mark` is async-signal-safe (atomic OR) so it runs in
+// the barrier signal handler; `present_clear`/`present_test` run on the barrier
+// thread. `present_test` returns 1 (conservatively present) for non-handles or
+// slots outside the current bitmap.
+void alaska_gc_present_clear(void);
+void alaska_gc_present_mark(void *handle);
+int  alaska_gc_present_test(void *handle);
 
 
 // Get the current reference count of a handle
@@ -73,6 +107,8 @@ unsigned long alaska_collect_cycles(void);
 unsigned long alaska_cycle_candidate_count(void);
 // Total number of handles reclaimed by the cycle collector so far.
 unsigned long alaska_cycles_collected(void);
+
+#endif  // ALASKA_ENABLE_REFCOUNT
 
 
 #ifdef __cplusplus

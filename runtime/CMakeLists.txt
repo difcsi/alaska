@@ -56,7 +56,6 @@ set(CORE_SOURCES
   core/SizedPage.cpp
   core/LocalityPage.cpp
   core/Localizer.cpp
-  core/CycleCollector.cpp
   core/InternalOperators.cpp
 
   core/Utils.cpp
@@ -69,6 +68,11 @@ set(CORE_SOURCES
 	# C++ glue stuff, since we don't link against libc++ in the core library.
 	core/glue.cpp
 )
+
+# The cycle collector is part of reference counting; only build it when enabled.
+if(ALASKA_ENABLE_REFCOUNT)
+  list(APPEND CORE_SOURCES core/CycleCollector.cpp)
+endif()
 
 
 
@@ -157,8 +161,15 @@ if(NOT ALASKA_CORE_ONLY) # -----------------------------------------------------
     rt/halloc.cpp
     rt/compat.c
     rt/barrier.cpp
-    rt/refcount.cpp
   )
+
+  # Reference counting runtime (and its cycle-collection entry points) is only
+  # compiled into libalaska when the feature is enabled. The concurrent
+  # collector's side bitmaps (present/hazard) live alongside it.
+  if(ALASKA_ENABLE_REFCOUNT)
+    list(APPEND SOURCES rt/refcount.cpp)
+    list(APPEND SOURCES rt/gc_bitmaps.cpp)
+  endif()
 
 
 if(ALASKA_HTLB_SIM)
@@ -311,19 +322,35 @@ if (ALASKA_ENABLE_TESTING)
 		test/hugeobject_test.cpp
     test/sizedalloc_test.cpp
     test/object_allocator_test.cpp
-    test/handle_ptr_test.cpp
-    test/htlb_sim_test.cpp
-    test/locality_page_test.cpp
-    test/cycle_test.cpp
 	)
+
+	# The cycle collector test only makes sense when reference counting is built.
+	if(ALASKA_ENABLE_REFCOUNT)
+		target_sources(alaska_test PRIVATE test/cycle_test.cpp)
+	endif()
+
+	# The handle-table TLB *simulator* tests depend on alaska::sim (rt/sim.cpp,
+	# packaged as alaska_sim), which is only compiled when ALASKA_HTLB_SIM is ON.
+	# Compiling/linking them unconditionally left alaska_test with undefined
+	# references to alaska::sim::HTLB / L1HTLB whenever the simulator was off
+	# (the default), breaking `cmake --build`/`--install` of the whole runtime.
+	if(ALASKA_HTLB_SIM)
+		target_sources(alaska_test PRIVATE
+			test/handle_ptr_test.cpp
+			test/htlb_sim_test.cpp
+			test/locality_page_test.cpp)
+	endif()
 
 	target_link_libraries(
 		alaska_test
 		GTest::gtest_main
     GTest::gmock
-    alaska_sim
 		alaska_core_static dl pthread
 	)
+
+	if(ALASKA_HTLB_SIM)
+		target_link_libraries(alaska_test alaska_sim)
+	endif()
 
 	gtest_discover_tests(alaska_test)
 

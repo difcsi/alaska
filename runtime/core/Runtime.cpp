@@ -27,30 +27,63 @@ namespace alaska {
   static Runtime *g_runtime = nullptr;
   static volatile bool runtime_initialized = false;
 
-  // ZMTODO: These are temporarily here so that printf works. They can be move to the header later.
-  // Atomically increment the reference count
+#if ALASKA_ENABLE_REFCOUNT
+  // The reference count occupies bits 47-60 (14 bits) of the packed 8-byte
+  // Mapping word. The concurrent collector reads refcounts and the barrier
+  // handler flips the pinned bit (bit 61) while mutators run, so refcount
+  // mutation must be a CAS over the *whole* word -- a plain `++`/`--` on the
+  // bitfield is a read-modify-write of the entire word and would tear against
+  // a concurrent set_pinned()/set_pointer()/reset() (see alaska.hpp, which makes
+  // those writers atomic too).
+  static constexpr unsigned kRefcountShift = 47;
+  static constexpr uint64_t kRefcountMaxField = (1ULL << 14) - 1;            // 0x3FFF
+  static constexpr uint64_t kRefcountFieldMask = kRefcountMaxField << kRefcountShift;
+
+  // Atomically increment the reference count and return the new value.
   int Mapping::inc_refcount(void) {
-    //alaska::printf("incrc this->data = 0x%lx\n", *(uint64_t*)&this->data);
-    return ++this->rc.refcount; // ensure we have the real mapping
+    auto *w = reinterpret_cast<uint64_t *>(this);
+    uint64_t old = __atomic_load_n(w, __ATOMIC_ACQUIRE);
+    uint64_t neu;
+    uint64_t nc;
+    do {
+      uint64_t rc = (old >> kRefcountShift) & kRefcountMaxField;
+      nc = (rc + 1) & kRefcountMaxField;  // wrap like the old 14-bit bitfield did
+      neu = (old & ~kRefcountFieldMask) | (nc << kRefcountShift);
+    } while (!__atomic_compare_exchange_n(
+        w, &old, neu, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE));
+    return (int)nc;
   }
 
-  // Atomically decrement the reference count and return the new value
+  // Atomically decrement the reference count and return the new value.
   int Mapping::dec_refcount(void) {
-    //alaska::printf("decrc this->data = 0x%lx\n", *(uint64_t*)&this->data);
-    return --this->rc.refcount; // ensure we have the real mapping
+    auto *w = reinterpret_cast<uint64_t *>(this);
+    uint64_t old = __atomic_load_n(w, __ATOMIC_ACQUIRE);
+    uint64_t neu;
+    uint64_t nc;
+    do {
+      uint64_t rc = (old >> kRefcountShift) & kRefcountMaxField;
+      nc = (rc - 1) & kRefcountMaxField;  // wrap like the old 14-bit bitfield did
+      neu = (old & ~kRefcountFieldMask) | (nc << kRefcountShift);
+    } while (!__atomic_compare_exchange_n(
+        w, &old, neu, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE));
+    return (int)nc;
   }
 
-  // Get the current reference count
+  // Get the current reference count.
   uint64_t Mapping::get_refcount(void) {
-    //alaska::printf("getrc this->data = 0x%lx\n", *(uint64_t*)&this->data);
-    return this->rc.refcount; // ensure we have the real mapping
+    uint64_t w = __atomic_load_n(reinterpret_cast<uint64_t *>(this), __ATOMIC_ACQUIRE);
+    return (w >> kRefcountShift) & kRefcountMaxField;
   }
+#endif
 
   Runtime::Runtime(alaska::Configuration config)
       : config(config)
       , handle_table(config)
       , heap(config)
-      , cycle_collector(*this) {
+#if ALASKA_ENABLE_REFCOUNT
+      , cycle_collector(*this)
+#endif
+  {
     // Validate that there is not already a runtime (TODO: atomics?)
     ALASKA_ASSERT(g_runtime == nullptr, "Cannot create more than one runtime");
 

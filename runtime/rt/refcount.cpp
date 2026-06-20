@@ -10,12 +10,60 @@
  */
 
 #include <ck/map.h>
+#include <ck/lock.h>
+#include <ck/vec.h>
 #include <alaska/alaska.hpp>
 #include <alaska/Runtime.hpp>
 #include <alaska/ThreadCache.hpp>
+#include <alaska/gc_bitmaps.hpp>
 #include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <signal.h>
+#include <pthread.h>
+
+namespace alaska::gc { extern unsigned long g_mark_count; }  // diagnostic
 
 ck::HashTable<void*> nullcount_map;
+
+// nullcount_map tracks handles whose reference count has reached zero. Mutators
+// mutate/read it (inc/dec_refcount, size); the in-barrier reclaim iterates it.
+// Every access is serialized by this lock (ck::HashTable rehashes on set/remove,
+// invalidating a concurrent iterator).
+//
+// BARRIER SAFETY: a thread parked at Alaska's stop-the-world barrier while holding
+// this lock would block every other thread from acquiring it, and any thread that
+// blocked on it could never reach a safepoint to join -- a deadlock. Anchorage
+// avoids this for its own locks by pre-acquiring them all before signalling, but
+// that does not work here: a mutator about to call a nullcount op during a barrier
+// would still block on a pre-held lock and never join. Instead, every
+// MUTATOR-callable access blocks the barrier signal (SIGUSR2) across the (tiny)
+// critical section via NullcountGuard, so a thread is never parked at the barrier
+// holding it. The in-barrier reclaim runs on the barrier (orchestrator) thread,
+// which its own barrier never signals, so it locks plainly.
+static ck::mutex nullcount_lock;
+
+struct NullcountGuard {
+  sigset_t old;
+  NullcountGuard() {
+    sigset_t block;
+    sigemptyset(&block);
+    sigaddset(&block, SIGUSR2);
+    pthread_sigmask(SIG_BLOCK, &block, &old);
+    nullcount_lock.lock();
+  }
+  ~NullcountGuard() {
+    nullcount_lock.unlock();
+    pthread_sigmask(SIG_SETMASK, &old, nullptr);
+  }
+};
+
+static inline void nullcount_update(void* ptr, bool add) {
+  NullcountGuard g;
+  if (add) nullcount_map.set(ptr);
+  else nullcount_map.remove(ptr);
+}
 
 // Defined in halloc.cpp -- the calling thread's (raw) thread cache.
 extern alaska::ThreadCache *get_tc_r(void);
@@ -60,9 +108,9 @@ void alaska_inc_refcount(void *ptr) {
   // Increment the refcount using the mapping's method
   auto new_count = mapping->inc_refcount();
   if(new_count == 1) {
-    nullcount_map.remove(ptr);
+    nullcount_update(ptr, /*add=*/false);
   }
-  
+
   in_refcount_operation = false;
 }
 
@@ -98,7 +146,7 @@ void alaska_dec_refcount(void *ptr) {
   // For now, we just track the refcount. The actual freeing policy
   // should attach here
   if (new_count == 0) {
-   nullcount_map.set(ptr);
+   nullcount_update(ptr, /*add=*/true);
   } else {
    // The refcount dropped but is still non-zero. This is the only situation in
    // which `mapping` can become the root of a garbage *cycle*, so hand it to
@@ -133,13 +181,36 @@ unsigned long alaska_get_refcount(void *ptr) {
 }
 
 int alaska_nullcount_map_size(){
+  NullcountGuard g;
   return nullcount_map.size();
 }
 
 void alaska_nullcount_map_foreach(void (*fn)(void* ptr)) {
+  NullcountGuard g;
   for (auto it = nullcount_map.begin(); it != nullcount_map.end(); ++it) {
     fn(*it);
   }
+}
+
+// Copy the current set of zero-refcount handles into `out` (capacity `cap`) under
+// the lock, so the caller iterates a private snapshot instead of the live map
+// (which mutators rehash concurrently). Returns the *total* number of entries; if
+// that exceeds `cap` the caller should grow `out` and call again.
+size_t alaska_nullcount_snapshot(void **out, size_t cap) {
+  NullcountGuard g;
+  size_t n = 0;
+  size_t total = 0;
+  for (auto it = nullcount_map.begin(); it != nullcount_map.end(); ++it) {
+    if (n < cap) out[n++] = *it;
+    total++;
+  }
+  return total;
+}
+
+// Drop a handle from the zero-refcount set.
+void alaska_nullcount_forget(void *ptr) {
+  NullcountGuard g;
+  nullcount_map.remove(ptr);
 }
 
 inline int alaska_is_handle(void *ptr){
@@ -175,3 +246,58 @@ unsigned long alaska_cycles_collected(void) {
   return alaska::Runtime::get().cycle_collector.total_collected();
 }
 }  // extern "C"
+
+
+namespace alaska {
+
+  // Stackscan reclamation, run from barrier_thread_func INSIDE with_barrier (world
+  // stopped). Free every zero-refcount handle that the per-thread conservative scan
+  // did NOT mark present -- i.e. that is not on any thread's stack. With the world
+  // stopped the present set is a perfect snapshot, so a single pass is provably
+  // correct (no two-cycle/hazard). Frees via tc.hfree, exactly like
+  // CycleCollector::reclaim. Runs on the barrier (orchestrator) thread, which its
+  // own barrier never signals, so it locks nullcount_lock plainly; mutators are all
+  // parked at the barrier and -- thanks to NullcountGuard -- none holds the lock.
+  // Collect-then-free avoids mutating nullcount_map mid-iteration; hfree (which does
+  // not touch nullcount_map) runs after the lock is dropped.
+  size_t reclaim_dead_handles(alaska::ThreadCache &tc) {
+    size_t candidates = 0;
+    ck::vec<void *> to_free;
+
+    // Try (do NOT block) to take nullcount_lock. The world is stopped, so the
+    // only possible holder is a mutator the barrier parked mid-nullcount-update
+    // -- in which case the map may even be mid-rehash and inconsistent. Blocking
+    // here would deadlock: that thread cannot release the lock until we end the
+    // barrier, which we cannot do until this callback returns. Skipping the cycle
+    // is both deadlock-free and correct -- we reclaim on the next barrier, when
+    // the lock is free and the map is consistent. (Masking SIGUSR2 around the
+    // mutator's critical section does NOT prevent this: under liballocs/systrap a
+    // syscall inside the section -- e.g. the rehash mmap -- still lets the pending
+    // barrier signal through and parks the thread while it holds the lock.)
+    if (nullcount_lock.try_lock() != 0) {
+      if (getenv("RECLAIM_DEBUG"))
+        fprintf(stderr, "[reclaim] nullcount_lock contended (parked mutator); skipping cycle\n");
+      return 0;
+    }
+    for (auto it = nullcount_map.begin(); it != nullcount_map.end(); ++it) {
+      void *h = *it;
+      candidates++;
+      auto *m = alaska::Mapping::from_handle_safe(h);
+      if (m == nullptr) continue;
+      if (m->is_free()) continue;
+      if (m->get_refcount() != 0) continue;        // re-published (defensive)
+      if (alaska::gc::present_test(m)) continue;    // on some thread's stack
+      to_free.push(h);
+    }
+    for (auto *h : to_free) nullcount_map.remove(h);
+    nullcount_lock.unlock();
+
+    for (auto *h : to_free) tc.hfree(h);
+    if (getenv("RECLAIM_DEBUG")) {
+      fprintf(stderr, "[reclaim] candidates=%zu present_marks=%lu freed=%zu\n",
+              candidates, alaska::gc::g_mark_count, (size_t)to_free.size());
+    }
+    return (size_t)to_free.size();
+  }
+
+}  // namespace alaska

@@ -115,9 +115,11 @@ namespace alaska {
     // Allocate a new mapping
     Mapping *m = new_mapping();
     log_info("ThreadCache::halloc mapping=%p", m);
-    
+
+#if ALASKA_ENABLE_REFCOUNT
     // Initialize the mapping with zero refcount for compiler's refcount tracking
     m->reset();
+#endif
 
     void *ptr = allocate_backing_data(*m, size);
     if (zero) {
@@ -207,12 +209,14 @@ namespace alaska {
       return;
     }
     
+#if ALASKA_ENABLE_REFCOUNT
     if(unlikely(m->get_refcount() > 0 )){
       alaska::printf("Warning: Freeing handle %p with non-zero refcount %lu\n", handle, m->get_refcount());
     }
     // Drop this handle from the cycle collector before its slot can be recycled,
     // so a later collection never traces a stale/reused mapping.
     this->runtime.cycle_collector.forget(m);
+#endif
     // Free the allocation behind a mapping
     free_allocation(*m);
     m->set_pointer(nullptr);

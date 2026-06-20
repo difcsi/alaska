@@ -27,7 +27,30 @@ parser.add_argument('--disable-tracking', action='store_true')
 parser.add_argument('--disable-hoisting', action='store_true')
 parser.add_argument('--disable-inlining', action='store_true')
 
+# "Yukon" stack-to-heap promotion: rewrite address-taken stack objects into
+# halloc handles so a pycallocs/Python proxy can be built for them.
+parser.add_argument('--stack-promote', action='store_true',
+    help='Promote address-taken stack objects to the heap (Yukon).')
+parser.add_argument('--heap-hints', dest='heap_hints', default=None, metavar='FILE',
+    help='File listing functions whose pointer arguments force heap promotion of '
+         'address-taken stack objects (implies --stack-promote). LinkPy emits this.')
+promote_free = parser.add_mutually_exclusive_group()
+promote_free.add_argument('--promote-free', dest='promote_free', action='store_true',
+    default=None, help='Force hfree of promoted objects at function return.')
+promote_free.add_argument('--no-promote-free', dest='promote_free', action='store_false',
+    default=None, help='Suppress hfree of promoted objects (for Python-escaped '
+                       'objects that outlive their C frame).')
+
 args = parser.parse_args()
+
+# The stack-promote pass reads these from the environment (inherited by opt).
+if args.heap_hints is not None:
+  os.environ['ALASKA_HEAP_HINTS'] = os.path.realpath(args.heap_hints)
+  args.stack_promote = True
+if os.environ.get('ALASKA_HEAP_HINTS') or os.environ.get('ALASKA_STACK_PROMOTE'):
+  args.stack_promote = True
+if args.promote_free is not None:
+  os.environ['ALASKA_STACK_PROMOTE_FREE'] = '1' if args.promote_free else '0'
 
 # print(args)
 
@@ -76,10 +99,14 @@ run_passes(['alaska-prepare'])
 
 # Now add the passes in the order they need to be (if we aren't compiling for baseline)
 if not args.baseline:
+  # Yukon stack-to-heap promotion must run after malloc replacement and before
+  # translation: the halloc calls it introduces are picked up as translation
+  # roots, whereas the allocas they replace would never be translated.
+  promote = ['alaska-stack-promote'] if args.stack_promote else []
   if not args.disable_hoisting:
-    run_passes(['alaska-replace', 'alaska-translate'])
+    run_passes(['alaska-replace'] + promote + ['alaska-translate'])
   else:
-    run_passes(['alaska-replace', 'alaska-translate-nohoist'])
+    run_passes(['alaska-replace'] + promote + ['alaska-translate-nohoist'])
 
 
   # run_passes(['alaska-translate'])
@@ -90,10 +117,16 @@ if not args.baseline:
     passes.append('alaska-tracking')
 
   passes.append('alaska-lower')
-  
-  # Add refcount passes after lowering (when pointers are converted to handles)
-  passes.append('alaska-refcount-inc')
-  passes.append('alaska-refcount-dec')
+
+  # Add refcount passes after lowering (when pointers are converted to handles).
+  # Whether reference counting is compiled in is decided at configure time
+  # (ALASKA_ENABLE_REFCOUNT); the value below is substituted by CMake. When the
+  # feature is off these passes are not even registered in the plugin, so they
+  # must not be requested here.
+  ALASKA_ENABLE_REFCOUNT = @ALASKA_ENABLE_REFCOUNT_PY@
+  if ALASKA_ENABLE_REFCOUNT:
+    passes.append('alaska-refcount-inc')
+    passes.append('alaska-refcount-dec')
 
   # Run lowering again as a final cleanup to ensure marker calls are removed
   # even if earlier passes introduced new alaska.* markers.

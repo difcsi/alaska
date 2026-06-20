@@ -89,6 +89,30 @@ do
 				shift
 				;;
 
+			# "Yukon" stack-to-heap promotion. These set environment variables that
+			# alaska-transform and the stack-promote pass (run via opt) inherit.
+			--stack-promote)
+				export ALASKA_STACK_PROMOTE=1
+				shift
+				;;
+			--heap-hints)
+				export ALASKA_HEAP_HINTS="$(realpath "$2")"
+				shift
+				shift
+				;;
+			--heap-hints=*)
+				export ALASKA_HEAP_HINTS="$(realpath "${1#*=}")"
+				shift
+				;;
+			--promote-free)
+				export ALASKA_STACK_PROMOTE_FREE=1
+				shift
+				;;
+			--no-promote-free)
+				export ALASKA_STACK_PROMOTE_FREE=0
+				shift
+				;;
+
 			-O*)
 				OPT="$1"
 				shift
@@ -149,7 +173,13 @@ COLLECT_CLANG_ARGS+=("-gdwarf-4 ")
 
 ALASKA_CFG_FLAGS=()
 while IFS= read -r flag; do
-	if [ "$flag" = "$PFX/lib/alaska_translate.bc" ]; then
+	# Drop alaska_translate.bc from the forwarded config flags: the translation
+	# is inserted by the alaska-lower pass, never by linking this bitcode, and
+	# leaving it in turns the compile step into a two-input `clang -c -o` (error
+	# "cannot specify -o when generating multiple output files"). Match by
+	# basename so a symlink-aliased prefix (e.g. PFX resolved by realpath vs. the
+	# unresolved path emitted by alaska-config) still strips it.
+	if [ "${flag##*/}" = "alaska_translate.bc" ]; then
 		continue
 	fi
 	ALASKA_CFG_FLAGS+=("$flag")

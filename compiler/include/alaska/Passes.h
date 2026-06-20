@@ -79,6 +79,31 @@ class AlaskaEscapePass : public llvm::PassInfoMixin<AlaskaEscapePass> {
   llvm::PreservedAnalyses run(llvm::Module &M, llvm::ModuleAnalysisManager &AM);
 };
 
+
+/**
+ * AlaskaStackPromotePass ("Yukon") - Promote address-taken stack objects to the
+ * heap so they become handles. A pycallocs/Python proxy can only be built for a
+ * heap object (Python may relocate it, e.g. on list.append), so any stack
+ * pointer that may escape into Python must first live behind a handle.
+ *
+ * Must run before AlaskaTranslatePass: an `alloca` is deliberately never
+ * translated, but the `halloc` call it is rewritten into is treated as a
+ * translation root, routing the object's loads/stores through the handle
+ * machinery automatically.
+ *
+ * Modes are selected at run time via environment variables:
+ *   ALASKA_HEAP_HINTS=<file>  - promote only allocas whose address flows into a
+ *                               listed function's pointer argument (LinkPy emits
+ *                               this list). When unset, every address-taken
+ *                               stack object is promoted.
+ *   ALASKA_STACK_PROMOTE_FREE=0|1 - override whether promoted objects are
+ *                               hfree'd at function return.
+ */
+class AlaskaStackPromotePass : public llvm::PassInfoMixin<AlaskaStackPromotePass> {
+ public:
+  llvm::PreservedAnalyses run(llvm::Module &M, llvm::ModuleAnalysisManager &AM);
+};
+
 class AlaskaReplacementPass : public llvm::PassInfoMixin<AlaskaReplacementPass> {
  public:
   llvm::PreservedAnalyses run(llvm::Module &M, llvm::ModuleAnalysisManager &AM);
@@ -98,6 +123,7 @@ class AlaskaArgumentTracePass : public llvm::PassInfoMixin<AlaskaArgumentTracePa
 };
 
 
+#if ALASKA_ENABLE_REFCOUNT
 /**
  * RefcountIncPass - Increment refcount when a handle is written to memory.
  * This pass instruments stores of pointer values to insert calls to
@@ -118,3 +144,4 @@ class RefcountDecPass : public llvm::PassInfoMixin<RefcountDecPass> {
  public:
   llvm::PreservedAnalyses run(llvm::Module &M, llvm::ModuleAnalysisManager &AM);
 };
+#endif  // ALASKA_ENABLE_REFCOUNT

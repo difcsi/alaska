@@ -39,9 +39,34 @@ alaska_switch(ALASKA_HTLB_SIM        OFF)
 
 alaska_switch(ALASKA_YUKON           OFF)
 
-alaska_option(ALASKA_SIZE_BITS 24)
+# Reference counting (and its complement, the Anchorage cycle collector). When
+# OFF, none of the refcount/cycle-collection code is compiled into the runtime,
+# the compiler plugin, or instrumented programs. ON by default.
+alaska_switch(ALASKA_ENABLE_REFCOUNT ON)
+
+# ALASKA_SIZE_BITS is the width of the in-handle offset field, which also dictates
+# the handle-table base address (see runtime/include/alaska/Configuration.hpp).
+# A service config (included below) may override it, so establish the default
+# WITHOUT emitting the -D here -- we define it exactly once, after the config, to
+# avoid a duplicate/conflicting -DALASKA_SIZE_BITS on the compile command line.
+alaska_option_nodef(ALASKA_SIZE_BITS 24)
 alaska_option(CMAKE_BUILD_TYPE Release)
 alaska_option_nodef(ALASKA_ENABLE_COMPONENTS "compiler;compiler-rts")
+
+# A service configuration (configs/config.<service>.cmake) selects the allocator
+# service and may override tunables such as ALASKA_SIZE_BITS. The active config is
+# chosen by the CMake preset via -DALASKA_CONFIG=...; the bare "default" preset
+# sets none, in which case the defaults above stand.
+if(ALASKA_CONFIG)
+  if(NOT EXISTS "${ALASKA_CONFIG}")
+    message(FATAL_ERROR "ALASKA_CONFIG does not exist: ${ALASKA_CONFIG}")
+  endif()
+  message(STATUS "${Purple}CONFIG${ColorReset} ${Green}${ALASKA_CONFIG}${ColorReset}")
+  include("${ALASKA_CONFIG}")
+endif()
+
+# Define the handle-size macro once, from the final (possibly config-overridden) value.
+add_compile_definitions(ALASKA_SIZE_BITS=${ALASKA_SIZE_BITS})
 
 set(ALASKA_VERSION 2)
 
@@ -413,6 +438,19 @@ add_custom_target(sanity
   COMMAND ${CMAKE_COMMAND} -E env "LDFLAGS=-fuse-ld=bfd $ENV{LDFLAGS}" ${CMAKE_INSTALL_PREFIX}/bin/alaska     ${CMAKE_SOURCE_DIR}/test/sanity.c -o ${CMAKE_BINARY_DIR}/sanity
   COMMAND ${CMAKE_BINARY_DIR}/sanity
   COMMENT "Building and running sanity test"
+)
+
+# heap-promote: exercise the Yukon stack-to-heap promotion pass in all three
+# modes (off / promote-all / heap-hints). The program self-checks and exits
+# non-zero on mismatch, so any divergence fails the target.
+add_custom_target(heap-promote
+  COMMAND ${CMAKE_COMMAND} -E env "LDFLAGS=-fuse-ld=bfd $ENV{LDFLAGS}" ${CMAKE_INSTALL_PREFIX}/bin/alaska -O3 ${CMAKE_SOURCE_DIR}/test/heap_hints.c -o ${CMAKE_BINARY_DIR}/heap_hints_off
+  COMMAND ${CMAKE_BINARY_DIR}/heap_hints_off
+  COMMAND ${CMAKE_COMMAND} -E env "LDFLAGS=-fuse-ld=bfd $ENV{LDFLAGS}" ${CMAKE_INSTALL_PREFIX}/bin/alaska -O3 --stack-promote ${CMAKE_SOURCE_DIR}/test/heap_hints.c -o ${CMAKE_BINARY_DIR}/heap_hints_all
+  COMMAND ${CMAKE_BINARY_DIR}/heap_hints_all
+  COMMAND ${CMAKE_COMMAND} -E env "LDFLAGS=-fuse-ld=bfd $ENV{LDFLAGS}" ${CMAKE_INSTALL_PREFIX}/bin/alaska -O3 --heap-hints ${CMAKE_SOURCE_DIR}/test/heap_hints.txt ${CMAKE_SOURCE_DIR}/test/heap_hints.c -o ${CMAKE_BINARY_DIR}/heap_hints_hinted
+  COMMAND ${CMAKE_BINARY_DIR}/heap_hints_hinted
+  COMMENT "Building and running the stack-to-heap promotion test (off/all/hinted)"
 )
 
 # unit: run the compiler unit-test suite via tools/unittest.py

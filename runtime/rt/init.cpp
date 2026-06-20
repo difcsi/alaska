@@ -41,6 +41,14 @@ extern "C" void alaska_dump(void) { the_runtime->dump(stderr); }
 // Defined in halloc.cpp -- this (anchorage) thread's raw thread cache.
 extern alaska::ThreadCache *get_tc_r(void);
 
+#if ALASKA_ENABLE_REFCOUNT
+// Stackscan reclamation, run inside the barrier (rt/refcount.cpp); present-bitmap
+// control (rt/gc_bitmaps.cpp) + the in-barrier present-scan flag (rt/barrier.cpp).
+namespace alaska { size_t reclaim_dead_handles(alaska::ThreadCache &tc); }
+extern "C" void alaska_gc_present_clear(void);
+extern "C" void alaska_gc_present_scan_set(int on);
+#endif
+
 static pthread_t barrier_thread;
 // Set once at process shutdown (from an atexit handler, which runs before
 // _dl_fini/destructors). The barrier thread must stop signalling/barriering
@@ -54,13 +62,26 @@ static void *barrier_thread_func(void *) {
   // lazily creating one needs locks that with_barrier already holds. The cycle
   // collector also uses it to size and free reclaimed objects.
   auto *tc = get_tc_r();
+  (void)tc;
 
   unsigned long tick = 0;
   while (!barrier_thread_should_stop) {
     usleep(50 * 1000);
     if (barrier_thread_should_stop) break;
     auto &rt = alaska::Runtime::get();
+
+#if ALASKA_ENABLE_REFCOUNT
+    // Stackscan: arm the in-barrier conservative present-scan and start from a
+    // clean present bitmap, so each participating thread marks its stack handles
+    // present during the barrier below. (with_barrier throttles actual barriers to
+    // its min interval, so most of these are cheap no-ops.) RECLAIM cadence can be
+    // tuned by gating this on `tick`; for now reclamation runs each barrier.
+    alaska_gc_present_clear();
+    alaska_gc_present_scan_set(1);
+#endif
+
     rt.with_barrier([&]() {
+#if ALASKA_ENABLE_REFCOUNT
       // Heap compaction and cycle collection are duals (Deutsch & Bobrow): both
       // walk the object graph with the world stopped, so Anchorage does them in
       // the same barrier. Collect cycles less often than we compact -- tracing
@@ -68,8 +89,18 @@ static void *barrier_thread_func(void *) {
       if (tick % 20 == 0 && rt.cycle_collector.candidate_count() > 0) {
         rt.cycle_collector.collect(*tc);
       }
+#endif
       rt.heap.compact_sizedpages();
+#if ALASKA_ENABLE_REFCOUNT
+      // Stackscan: free zero-refcount handles not marked present (not on any
+      // thread's stack). World stopped + nullcount_lock pre-held by with_barrier.
+      alaska::reclaim_dead_handles(*tc);
+#endif
     });
+
+#if ALASKA_ENABLE_REFCOUNT
+    alaska_gc_present_scan_set(0);
+#endif
     tick++;
   }
 

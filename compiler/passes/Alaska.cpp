@@ -199,14 +199,17 @@ extern "C" LLVM_ATTRIBUTE_WEAK ::llvm::PassPluginLibraryInfo llvmGetPassPluginIn
             return true;
           }
 
+          REGISTER("alaska-stack-promote", AlaskaStackPromotePass);
           REGISTER("alaska-escape", AlaskaEscapePass);
           if (name == "alaska-lower") {
             MPM.addPass(AlaskaLowerPass());
             return true;
           }
           REGISTER("alaska-inline", TranslationInlinePass);
+#if ALASKA_ENABLE_REFCOUNT
           REGISTER("alaska-refcount-inc", RefcountIncPass);
           REGISTER("alaska-refcount-dec", RefcountDecPass);
+#endif
 
 
           if (name == "alaska-tracking") {

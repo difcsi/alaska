@@ -8,6 +8,16 @@ include_directories(
 )
 # add_definitions(${LLVM_DEFINITIONS})
 
+# Reference-counting instrumentation passes are only compiled into the plugin
+# when the feature is enabled (see ALASKA_ENABLE_REFCOUNT).
+if(ALASKA_ENABLE_REFCOUNT)
+  set(ALASKA_REFCOUNT_PASS_SOURCES
+    passes/RefcountInc.cpp
+    passes/RefcountDec.cpp)
+else()
+  set(ALASKA_REFCOUNT_PASS_SOURCES "")
+endif()
+
 install(DIRECTORY ldscripts DESTINATION share/alaska)
 # set(LLVM_LINK_COMPONENTS Linker)
 
@@ -67,13 +77,13 @@ add_llvm_library(Alaska MODULE
 	passes/ArgPinElision.cpp
 	passes/Normalize.cpp
 	passes/Escape.cpp
+	passes/StackPromote.cpp
 	passes/TranslatePass.cpp
 	passes/Replacement.cpp
 	passes/Lower.cpp
 	passes/PlaceSafepoints.cpp
  	passes/ArgumentTrace.cpp
-	passes/RefcountInc.cpp
-	passes/RefcountDec.cpp
+	${ALASKA_REFCOUNT_PASS_SOURCES}
 
 	PLUGIN_TOOL
 	opt

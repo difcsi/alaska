@@ -23,8 +23,8 @@ set(ALASKA_TRACK_TRANSLATION_HITRATE FALSE)
 
 set(ALASKA_ARGUMENT_TRACE FALSE)
 
+# The top-level CMakeLists emits -DALASKA_SIZE_BITS from this value (once).
 set(ALASKA_SIZE_BITS 32)
-add_compile_definitions(ALASKA_SIZE_BITS=32)
 
 set(ALASKA_SQUEEZE_BITS 3)
 add_compile_definitions(ALASKA_SQUEEZE_BITS=3)

@@ -103,12 +103,35 @@ namespace alaska {
 #endif
     }
 
+    // Bit layout of the packed 8-byte word (see the union above):
+    //   value  : bits  0-46   pointer (47 bits)
+    //   misc   : bits  0-60   free-list link (alt view, 61 bits)
+    //   refcnt : bits 47-60   reference count
+    //   pinned : bit  61
+    //   invl   : bit  62
+    //   swap   : bit  63
+    // Every writer below mutates this word with an atomic RMW/store so it never
+    // tears against the concurrent refcount CAS (Runtime.cpp) or a barrier
+    // handler flipping `pinned` from another thread. Readers on the hot path
+    // (get_pointer/is_free) stay plain loads -- a naturally-aligned 8-byte read
+    // is atomic on the supported targets, as the original code already relied on.
+    static constexpr uint64_t kValueMask = (1ULL << 47) - 1;   // bits 0-46
+    static constexpr uint64_t kMiscMask = (1ULL << 61) - 1;    // bits 0-60
+    static constexpr uint64_t kPinnedBit = 1ULL << 61;
+    static constexpr uint64_t kInvlBit = 1ULL << 62;
+
     void set_pointer(void *ptr) {
-      // The pointer is disjoint from the refcount and flags, so we can write it
-      // without disturbing them. Writing the pointer also (re)maps the handle,
-      // so clear the invalid/free bit.
-      this->rc.value = (uint64_t)ptr;
-      this->alt.invl = 0;
+      // Write the pointer (low 47 bits) and clear invl, preserving refcount and
+      // the pinned/swap flags via a CAS over the whole word.
+      auto *w = reinterpret_cast<uint64_t *>(this);
+      uint64_t old = __atomic_load_n(w, __ATOMIC_RELAXED);
+      uint64_t neu;
+      do {
+        neu = old;
+        neu = (neu & ~kValueMask) | ((uint64_t)ptr & kValueMask);
+        neu &= ~kInvlBit;
+      } while (!__atomic_compare_exchange_n(
+          w, &old, neu, false, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED));
       invalidate();
     }
 
@@ -121,32 +144,40 @@ namespace alaska {
     }
 
     void set_next(alaska::Mapping *next) {
-      reset();
-      alt.misc = (uint64_t)next;
-      alt.invl = 1;
+      // Free-list link: misc(bits 0-60)=next, invl set, everything else cleared.
+      // Equivalent to the old reset()+misc/invl writes but as one atomic store.
+      uint64_t neu = ((uint64_t)next & kMiscMask) | kInvlBit;
+      __atomic_store_n(reinterpret_cast<uint64_t *>(this), neu, __ATOMIC_RELEASE);
+      invalidate();
     }
 
 
     bool is_free(void) const { return alt.invl; }
 
 
-    // TODO: should these be atomic?
-    bool is_pinned(void) const { return this->alt.pinned; }
-    void set_pinned(bool to) { this->alt.pinned = to; }
+    bool is_pinned(void) const {
+      uint64_t w = __atomic_load_n(
+          reinterpret_cast<uint64_t *>(const_cast<Mapping *>(this)), __ATOMIC_ACQUIRE);
+      return (w & kPinnedBit) != 0;
+    }
+    void set_pinned(bool to) {
+      auto *w = reinterpret_cast<uint64_t *>(this);
+      if (to) {
+        __atomic_fetch_or(w, kPinnedBit, __ATOMIC_ACQ_REL);
+      } else {
+        __atomic_fetch_and(w, ~kPinnedBit, __ATOMIC_ACQ_REL);
+      }
+    }
 
 
     void reset(void) {
-      // Clear everything: pointer, refcount, and flags. (The old layout cleared
-      // the flags implicitly because `value` overlapped them; now that they are
-      // disjoint we must clear them explicitly so a reused mapping starts clean.)
-      this->rc.value = 0;
-      this->rc.refcount = 0;
-      this->alt.pinned = 0;
-      this->alt.invl = 0;
-      this->alt.swap = 0;
+      // Clear everything: pointer, refcount, and flags. One atomic store so a
+      // freed/recycled mapping starts clean without tearing a concurrent reader.
+      __atomic_store_n(reinterpret_cast<uint64_t *>(this), 0ULL, __ATOMIC_RELEASE);
       invalidate();
     }
 
+#if ALASKA_ENABLE_REFCOUNT
      // Atomically increment the reference count
     int inc_refcount(void);
 
@@ -155,6 +186,7 @@ namespace alaska {
 
     // Get the current reference count
     uint64_t get_refcount(void);
+#endif
 
 
     // Encode a handle into the representation used in the

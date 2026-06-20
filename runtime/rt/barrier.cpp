@@ -25,6 +25,7 @@
 #include <alaska/rt/barrier.hpp>
 #include <alaska/Runtime.hpp>
 #include <alaska/ThreadRegistry.hpp>
+#include <alaska/gc_bitmaps.hpp>
 
 #include <ck/lock.h>
 #include <ck/map.h>
@@ -153,10 +154,75 @@ enum class JoinReason { Signal, Safepoint };
 
 
 
-// This is *the* barrier used in alaska_barrier to make sure threads are stopped correctly.
-static pthread_barrier_t the_barrier;
-static long barrier_last_num_threads = 0;
 static pthread_mutex_t barrier_lock = PTHREAD_MUTEX_INITIALIZER;
+
+// --- Robust stop-the-world rendezvous --------------------------------------
+// Replaces a fragile pthread_barrier_t that was destroyed/re-init'd inside
+// begin() while threads could still be blocked on it (a guaranteed deadlock at
+// thread-count changes), and that required *exactly* num_threads participants --
+// so any single thread that could not answer the barrier promptly (e.g. one with
+// SIGUSR2 masked inside a runtime lock, or stuck at JOIN_REASON_ABORT)
+// permanently wedged the rendezvous.
+//
+// The orchestrator (barrier_thread_func) signals each mutator with SIGUSR2; each
+// runs the signal handler, pins its stack roots, then *parks* here until the
+// orchestrator finishes its callback and releases the world. The orchestrator
+// waits only for the threads that actually arrived (rv_parked), counted from
+// their join_status -- never for a fixed num_threads -- and these objects are
+// never destroyed, so a slow or never-arriving thread cannot deadlock it.
+static pthread_mutex_t rv_mtx = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t  rv_cv  = PTHREAD_COND_INITIALIZER;
+static int             rv_parked   = 0;     // # participants currently parked (arrived, not released)
+static bool            rv_released = true;   // true between barriers: a late/stale arrival must NOT park
+
+// Orchestrator: open the rendezvous for a new stop-the-world (call before any
+// thread can be signalled). After this, arriving participants park.
+static void rv_begin(void) {
+  pthread_mutex_lock(&rv_mtx);
+  rv_released = false;
+  pthread_mutex_unlock(&rv_mtx);
+}
+
+// Participant: park until the orchestrator releases the world, then depart. Run
+// from the barrier signal handler; safe because the handler is non-reentrant
+// (SIGUSR2/SIGILL are masked in it) and the orchestrator -- which also takes
+// rv_mtx -- is never itself signalled.
+//
+// If the barrier is already releasing (rv_released) we must NOT park: this is a
+// late arrival (a safepoint poll taken after the orchestrator finished counting)
+// or a stale re-delivered signal. Parking now would wait for a release that has
+// already happened -- the lost-wakeup deadlock. Returning is safe: the world is
+// resuming anyway, and our roots were pinned/unpinned around this call.
+static void rv_park(void) {
+  pthread_mutex_lock(&rv_mtx);
+  if (rv_released) { pthread_mutex_unlock(&rv_mtx); return; }
+  rv_parked++;
+  pthread_cond_broadcast(&rv_cv);  // notify orchestrator of arrival
+  while (!rv_released) pthread_cond_wait(&rv_cv, &rv_mtx);
+  rv_parked--;
+  pthread_cond_broadcast(&rv_cv);  // notify orchestrator of departure
+  pthread_mutex_unlock(&rv_mtx);
+}
+
+// Orchestrator: block until at least `expected` participants have parked. Called
+// after the signal loop has driven every participant into the handler, so the
+// count is stable; guarantees all participants have pinned their roots before
+// the callback (compaction/reclaim) runs.
+static void rv_wait_all_parked(int expected) {
+  pthread_mutex_lock(&rv_mtx);
+  while (rv_parked < expected) pthread_cond_wait(&rv_cv, &rv_mtx);
+  pthread_mutex_unlock(&rv_mtx);
+}
+
+// Orchestrator: release every parked participant and wait for them all to leave,
+// so no participant is still touching pinned state when the world resumes.
+static void rv_release_all(void) {
+  pthread_mutex_lock(&rv_mtx);
+  rv_released = true;
+  pthread_cond_broadcast(&rv_cv);
+  while (rv_parked > 0) pthread_cond_wait(&rv_cv, &rv_mtx);
+  pthread_mutex_unlock(&rv_mtx);
+}
 
 
 
@@ -314,29 +380,82 @@ static void mark_conservative_range(void* sp_lo, void* sp_hi, bool marked) {
 }
 
 
-static void participant_join(bool leader, const ck::set<void*>& ps) {
-  for (auto* p : ps) {
-    record_handle(p, true);
-  }
-  // Wait on the barrier so everyone's state has been commited.
-  if (alaska::thread_tracking::threads().num_threads() > 1) {
-    pthread_barrier_wait(&the_barrier);
+// --- Stackscan "present" scan during the barrier ------------------------------
+// The stackscan collector reclaims zero-refcount handles that are not on any
+// thread's stack. It reuses THIS barrier: while the world is stopped, each
+// participating thread conservatively scans its own [sp, stack_top) + saved
+// registers and marks every handle-looking word into the present bitmap (a safe
+// superset of its true stack roots -- never frees a live handle, and independent
+// of the precise `pinned` bit the cycle collector uses). The reclaim pass then
+// runs in the barrier callback (alaska::reclaim_dead_handles). The scan runs
+// inside the existing barrier signal handler -- no extra signal, no extra
+// rendezvous (rv_park is the rendezvous). g_present_scan is set by
+// barrier_thread_func only on reclaim cycles so non-reclaim barriers pay nothing.
+static volatile int g_present_scan = 0;
+
+// Mark one candidate word present iff it is a live (allocated, non-free) handle.
+// Mirrors record_handle's checks but targets the present bitmap. Async-signal-safe.
+static inline void scan_mark_present(void* possible_handle) {
+  alaska::Mapping* m = alaska::Mapping::from_handle_safe(possible_handle);
+  if (m == NULL) return;
+  if (not alaska::Runtime::get().handle_table.valid_handle(m)) return;
+  if (m->is_free()) return;
+  alaska::gc::present_mark(m);
+}
+
+static void scan_conservative_present(void* lo, void* hi) {
+  if (!lo || !hi || lo >= hi) return;
+  for (void** p = (void**)lo; p < (void**)hi; ++p) {
+    scan_mark_present(*p);
   }
 }
 
-
-
-
-static void participant_leave(bool leader, const ck::set<void*>& ps) {
-  // wait for the the leader (and everyone else to catch up)
-  if (alaska::thread_tracking::threads().num_threads() > 1) {
-    pthread_barrier_wait(&the_barrier);
+static void scan_registers_present(ucontext_t* uc) {
+#if defined(__amd64__)
+  for (int i = 0; i < NGREG; i++) {
+    scan_mark_present((void*)uc->uc_mcontext.gregs[i]);
   }
+#endif
+}
 
-  // go and clean up our commits to the global structure.
-  for (auto* p : ps) {
-    record_handle(p, false);
+// Conservatively pin/unpin every handle-looking value held in the interrupted
+// thread's registers (companion to mark_conservative_range for the stack). Used
+// by the barrier handler's normal path instead of libunwind-based precise
+// pinning, which is not signal-reentrant.
+static void mark_registers_conservative(ucontext_t* uc, bool marked) {
+#if defined(__amd64__)
+  for (int i = 0; i < NGREG; i++) {
+    record_handle((void*)uc->uc_mcontext.gregs[i], marked);
   }
+#endif
+}
+
+// Called from the barrier signal handler on each participating thread when a
+// reclaim cycle is active: conservatively mark this thread's stack+register
+// handles present. `sp_lo` is the thread's stack pointer at the interrupt
+// (systrap saved SP, or ucontext RSP); registers are only scanned when not parked
+// in systrap (then the live registers are the app's, not the handler's).
+static inline void present_scan_self(void* sp_lo, ucontext_t* uc, bool from_systrap) {
+  if (!g_present_scan) return;
+  void* sp_hi = alaska::thread_tracking::my_state.stack_top;
+  scan_conservative_present(sp_lo, sp_hi);
+  if (!from_systrap) scan_registers_present(uc);
+}
+
+extern "C" void alaska_gc_present_scan_set(int on) {
+  __atomic_store_n(&g_present_scan, on, __ATOMIC_RELEASE);
+}
+
+
+// Pin / unpin this participant's roots in the global handle table. The actual
+// stop-the-world wait is the rv_park()/rv_*() rendezvous above, so these are now
+// pure pin / unpin helpers (no barrier wait).
+static void participant_pin(const ck::set<void*>& ps) {
+  for (auto* p : ps) record_handle(p, true);
+}
+
+static void participant_unpin(const ck::set<void*>& ps) {
+  for (auto* p : ps) record_handle(p, false);
 }
 
 
@@ -405,14 +524,9 @@ bool alaska::barrier::begin(void) {
   // Mark the orch thread (us) as joined
   alaska::thread_tracking::my_state.join_status = ALASKA_JOIN_REASON_ORCHESTRATOR;
 
-  // If the barrier needs resizing, do so.
-  if (barrier_last_num_threads != num_threads) {
-    if (barrier_last_num_threads != 0) pthread_barrier_destroy(&the_barrier);
-    // Initialize the barrier so we know when everyone is ready!
-    pthread_barrier_init(&the_barrier, NULL, num_threads);
-    barrier_last_num_threads = num_threads;
-  }
-
+  // Open the rendezvous before anyone can be signalled, so arriving participants
+  // park rather than skip.
+  rv_begin();
 
   // now, patch the threads!
   patchSignal();
@@ -448,12 +562,29 @@ bool alaska::barrier::begin(void) {
   }
 
 
+  // Count the participants that actually joined (set a join reason other than
+  // ORCHESTRATOR). The rendezvous waits for exactly these -- not num_threads --
+  // so a thread that never answered (still NOT_JOINED at the retry cap) cannot
+  // wedge the barrier; it is simply not part of this stop-the-world.
+  int joined = 0;
+  alaska::thread_tracking::threads().for_each_locked([&](auto thread, auto* state) {
+    if (state->join_status != ALASKA_JOIN_REASON_NOT_JOINED &&
+        state->join_status != ALASKA_JOIN_REASON_ORCHESTRATOR) {
+      joined++;
+    }
+  });
+
+  // Pin the orchestrator's own roots, then wait until every joined participant
+  // has parked (and therefore pinned its roots) before returning to the caller,
+  // which runs the stop-the-world callback.
   ck::set<void*> locked;
   alaska::barrier::get_pinned_handles(locked);  // TODO: slow!
-  participant_join(true, locked);
+  participant_pin(locked);
+  rv_wait_all_parked(joined);
 
   (void)retries;
   (void)signals_sent;
+  (void)num_threads;
 
 
   return success;
@@ -464,10 +595,13 @@ bool alaska::barrier::begin(void) {
 
 void alaska::barrier::end(void) {
   patchNop();
+
+  // Unpin the orchestrator's own roots, then release every parked participant
+  // and wait for them all to leave before letting the world run again.
   ck::set<void*> locked;
   alaska::barrier::get_pinned_handles(locked);  // TODO: slow!
-  // Join the barrier to signal everyone we are done.
-  participant_leave(true, locked);
+  participant_unpin(locked);
+  rv_release_all();
 
   // Unlock all the locks we took.
   alaska::thread_tracking::threads().unlock_thread_creation();
@@ -484,7 +618,26 @@ void alaska_barrier(void) {
 
 thread_local bool invalid_state_abort = false;
 
+// Re-entrancy guard for the barrier handler. The handler blocks in futex syscalls
+// (rv_park's mutex/cond). Under liballocs/systrap those syscalls are emulated with
+// the application signal mask -- which does NOT include our sa_mask -- so a second
+// SIGUSR2 can be delivered *while the handler is mid-rv_park*, re-entering the
+// handler and self-deadlocking on the (non-recursive) rv_mtx it already holds.
+// A nested invocation is always a spurious re-delivery of the same barrier (a
+// thread participates in at most one barrier at a time and cannot start a new one
+// while parked), so it is safe -- and necessary -- to make it a no-op.
+static thread_local int in_barrier_handler = 0;
+
+static void alaska_barrier_signal_handler_impl(int sig, siginfo_t* info, void* ptr);
+
 static void alaska_barrier_signal_handler(int sig, siginfo_t* info, void* ptr) {
+  if (in_barrier_handler) return;
+  in_barrier_handler = 1;
+  alaska_barrier_signal_handler_impl(sig, info, ptr);
+  in_barrier_handler = 0;
+}
+
+static void alaska_barrier_signal_handler_impl(int sig, siginfo_t* info, void* ptr) {
   ucontext_t* ucontext = (ucontext_t*)ptr;
 
   // --- In-systrap fast path -------------------------------------------------
@@ -503,10 +656,11 @@ static void alaska_barrier_signal_handler(int sig, siginfo_t* info, void* ptr) {
       // a thread parked mid-syscall.
       alaska::thread_tracking::my_state.join_status = ALASKA_JOIN_REASON_SIGNAL;
       void *sp_hi = alaska::thread_tracking::my_state.stack_top;
-      bool multi = (alaska::thread_tracking::threads().num_threads() > 1);
       if (!diag_skip_unwind) mark_conservative_range(saved_sp, sp_hi, /*pin*/ true);
-      if (multi) pthread_barrier_wait(&the_barrier); // join
-      if (multi) pthread_barrier_wait(&the_barrier); // leave
+      // Stackscan: mark this thread's stack handles present (before parking, so all
+      // marks are committed before the orchestrator runs the reclaim callback).
+      present_scan_self(saved_sp, nullptr, /*from_systrap=*/true);
+      rv_park();  // wait until the orchestrator releases the world
       if (!diag_skip_unwind) mark_conservative_range(saved_sp, sp_hi, /*unpin*/ false);
       clear_pending_signals();
       return;
@@ -567,14 +721,28 @@ static void alaska_barrier_signal_handler(int sig, siginfo_t* info, void* ptr) {
 
   invalid_state_abort = false;
 
-  ck::set<void*> ps;
-  alaska::barrier::get_pinned_handles(ps);  // TODO: slow!
+  // Conservatively pin this thread's stack + register roots. We deliberately do
+  // NOT use the precise, libunwind-based get_pinned_handles here: libunwind is not
+  // signal-reentrant -- it holds an internal lock and transiently unblocks signals
+  // while unwinding, so a signal landing mid-unwind re-enters this handler and
+  // self-deadlocks on that lock (observed as an all-thread hang in
+  // get_pinned_handles). The conservative scan is allocation- and unwind-free
+  // (exactly like the in-systrap fast path above) and only over-approximates the
+  // root set, which is safe for both compaction (handles are relocatable) and the
+  // cycle collector (over-pinning only retains garbage, never frees a live object).
+  void* sp_lo = (void*)ucontext->uc_mcontext.gregs[REG_RSP];
+  void* sp_hi = alaska::thread_tracking::my_state.stack_top;
+  mark_conservative_range(sp_lo, sp_hi, /*pin*/ true);
+  mark_registers_conservative(ucontext, /*pin*/ true);
 
-  // Simply join the barrier, then leave immediately. This
-  // will deal with all the synchronization that needs done.
-  participant_join(false, ps);
+  // Stackscan: conservatively mark this thread's stack+register handles present
+  // (before parking, so all marks are committed before the reclaim callback runs).
+  present_scan_self(sp_lo, ucontext, /*from_systrap=*/false);
 
-  participant_leave(false, ps);
+  // Park until the orchestrator releases the world, then unpin.
+  rv_park();
+  mark_registers_conservative(ucontext, /*unpin*/ false);
+  mark_conservative_range(sp_lo, sp_hi, /*unpin*/ false);
 
   clear_pending_signals();
 

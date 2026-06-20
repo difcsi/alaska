@@ -19,7 +19,9 @@
 #include <ck/set.h>
 #include <alaska/Configuration.hpp>
 #include <alaska/Localizer.hpp>
+#if ALASKA_ENABLE_REFCOUNT
 #include <alaska/CycleCollector.hpp>
+#endif
 
 namespace alaska {
   /**
@@ -46,11 +48,13 @@ namespace alaska {
     // This is the actual heap
     alaska::Heap heap;
 
+#if ALASKA_ENABLE_REFCOUNT
     // Anchorage's cycle collector. Reference counting alone cannot reclaim
     // cycles of handles, so this runs synchronous trial-deletion cycle
     // collection under the same stop-the-world barrier Anchorage uses to
     // compact the heap. See alaska/CycleCollector.hpp.
     alaska::CycleCollector cycle_collector;
+#endif
 
 
     // This is a set of all the active thread caches in the system
