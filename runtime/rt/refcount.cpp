@@ -213,6 +213,16 @@ void alaska_nullcount_forget(void *ptr) {
   nullcount_map.remove(ptr);
 }
 
+// Record a handle as zero-refcount. The cycle collector calls this (weakly) to
+// hand a proven garbage-cycle member to the stackscan reclaim path instead of
+// freeing it directly: trial deletion has already driven the handle's refcount to
+// 0, but only reclaim_dead_handles -- after the conservative stack scan -- may
+// actually free it. Both run in the same barrier (see barrier_thread_func), so a
+// genuinely dead member is reclaimed this same cycle.
+void alaska_nullcount_add(void *ptr) {
+  nullcount_update(ptr, /*add=*/true);
+}
+
 inline int alaska_is_handle(void *ptr){
   return alaska::Mapping::is_handle(ptr);
 }
@@ -247,6 +257,16 @@ unsigned long alaska_cycles_collected(void) {
 }
 }  // extern "C"
 
+
+// liballocs lifetime-policy bridges (weak: Alaska runs standalone without them).
+// __liballocs_alaska_manual_pinned reports whether the manual lifetime policy is
+// attached to a backing object -- if so the GC must NOT reclaim it (the manual
+// pin overrides the GC). __liballocs_notify_alaska_free drops liballocs' side-table
+// type/site record for a base; reclaim calls it because it frees via tc.hfree,
+// bypassing the public hfree that would otherwise notify. See
+// contrib/liballocs/src/allocators/alaska.c.
+extern "C" int  __liballocs_alaska_manual_pinned(void *base) __attribute__((weak));
+extern "C" void __liballocs_notify_alaska_free(void *base)   __attribute__((weak));
 
 namespace alaska {
 
@@ -287,12 +307,25 @@ namespace alaska {
       if (m->is_free()) continue;
       if (m->get_refcount() != 0) continue;        // re-published (defensive)
       if (alaska::gc::present_test(m)) continue;    // on some thread's stack
+      // Manual lifetime policy overrides the GC: a pinned handle is kept alive
+      // even at refcount 0 and stack-unreachable. It stays in nullcount_map and is
+      // reconsidered on later barriers, becoming reclaimable once unpinned (hfree).
+      if (&__liballocs_alaska_manual_pinned &&
+          __liballocs_alaska_manual_pinned(m->get_pointer())) continue;
       to_free.push(h);
     }
     for (auto *h : to_free) nullcount_map.remove(h);
     nullcount_lock.unlock();
 
-    for (auto *h : to_free) tc.hfree(h);
+    for (auto *h : to_free) {
+      // Drop liballocs' side-table record before recycling (tc.hfree bypasses the
+      // public hfree, which would otherwise do this).
+      if (&__liballocs_notify_alaska_free) {
+        auto *m = alaska::Mapping::from_handle_safe(h);
+        if (m) __liballocs_notify_alaska_free(m->get_pointer());
+      }
+      tc.hfree(h);
+    }
     if (getenv("RECLAIM_DEBUG")) {
       fprintf(stderr, "[reclaim] candidates=%zu present_marks=%lu freed=%zu\n",
               candidates, alaska::gc::g_mark_count, (size_t)to_free.size());

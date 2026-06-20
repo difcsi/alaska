@@ -18,6 +18,16 @@
 #include "alaska/HeapPage.hpp"
 #include <alaska/utils.h>
 
+// Number of bytes to reserve at the END of every sized backing allocation for a
+// liballocs trailing `struct insert` (which carries the per-object lifetime-policy
+// mask). Injected by the stackscan build via -DALASKA_LIBALLOCS_INSERT_RESERVE=8;
+// defaults to 0 (vanilla Alaska -- no reservation, no behavior change). The reserve
+// is folded into the object's size_of() so GC compaction copies the insert with the
+// object, while liballocs keeps reporting the caller's exact requested size via its
+// side-table record. See docs/liballocs-alaska-integration.md.
+#ifndef ALASKA_LIBALLOCS_INSERT_RESERVE
+#define ALASKA_LIBALLOCS_INSERT_RESERVE 0
+#endif
 
 
 namespace alaska {
@@ -33,14 +43,19 @@ namespace alaska {
 
 
   void *ThreadCache::allocate_backing_data(const alaska::Mapping &m, size_t size) {
-    int cls = alaska::size_to_class(size);
+    // Reserve room at the end of the slot for liballocs' trailing insert (0 unless
+    // the build injected a reserve). Sizing AND the page's recorded slack use the
+    // padded size, so size_of() == size + reserve and the reserved tail is copied
+    // intact when the GC relocates the object.
+    size_t slot = size + ALASKA_LIBALLOCS_INSERT_RESERVE;
+    int cls = alaska::size_to_class(slot);
     SizedPage *page = size_classes[cls];
     if (unlikely(page == nullptr)) page = new_sized_page(cls);
-    void *ptr = page->alloc(m, size);
+    void *ptr = page->alloc(m, slot);
     if (unlikely(ptr == nullptr)) {
       // OOM?
       page = new_sized_page(cls);
-      ptr = page->alloc(m, size);
+      ptr = page->alloc(m, slot);
       ALASKA_ASSERT(ptr != nullptr, "OOM!");
     }
     return ptr;
@@ -172,7 +187,7 @@ namespace alaska {
       // 1. handle -> huge - we need to free the original handle and return a new huge object
       new_data = this->runtime.heap.huge_allocator.allocate(new_size);  // Allocate
       memcpy(new_data, original_data, copy_size);                       // Copy
-      hfree(handle);                                                    // Free the original handle
+      hfree(handle);                       // ThreadCache::hfree (member) -- not interposed
       return_value = new_data;
     } else if (not old_was_handle and new_data_is_huge) {
       // 2. huge -> huge - we need to free the original huge object and return a new huge object

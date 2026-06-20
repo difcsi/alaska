@@ -29,6 +29,28 @@
 // TODO: don't have this be global!
 static __thread alaska::ThreadCache *g_tc = nullptr;
 
+// liballocs integration (weak: builds/runs without liballocs). On each
+// halloc/hfree we hand liballocs the object's *backing base* so it can bind the
+// pending allocation site (stashed by allocscc in liballocs' __current_allocsite)
+// to that object, enabling typed metadata queries. See
+// contrib/liballocs/src/allocators/alaska.c.
+extern "C" void __liballocs_notify_alaska_alloc(void *backing_base, unsigned long requested_size)
+    __attribute__((weak));
+extern "C" void __liballocs_notify_alaska_free(void *backing_base) __attribute__((weak));
+
+static inline void alaska_liballocs_notify_alloc(void *handle, size_t requested_size) {
+  if (__liballocs_notify_alaska_alloc == nullptr) return;  // liballocs not loaded
+  auto *m = alaska::Mapping::from_handle_safe(handle);
+  if (m != nullptr && !m->is_free())
+    __liballocs_notify_alaska_alloc(m->get_pointer(), requested_size);
+}
+
+static inline void alaska_liballocs_notify_free(void *handle) {
+  if (__liballocs_notify_alaska_free == nullptr) return;  // liballocs not loaded
+  auto *m = alaska::Mapping::from_handle_safe(handle);
+  if (m != nullptr && !m->is_free()) __liballocs_notify_alaska_free(m->get_pointer());
+}
+
 
 
 alaska::ThreadCache *get_tc_r(void) {
@@ -47,6 +69,7 @@ static void *_halloc(size_t sz, int zero) {
 
   // This seems right...
   if (result == NULL) errno = ENOMEM;
+  else alaska_liballocs_notify_alloc(result, sz);  // bind allocsite + size (halloc + hcalloc)
   return result;
 }
 
@@ -85,8 +108,8 @@ void *hrealloc(void *handle, size_t new_size) {
   // If the size is equal to zero, and the handle is not null, realloc acts like free(handle)
   if (new_size == 0) {
     log_debug("realloc edge case: zero size %p!", handle);
-    // If it wasn't a handle, just forward to the system realloc
-    hfree(handle);
+    // Unconditional backing free (bypass any liballocs hfree interposition).
+    alaska_hfree_now(handle);
     return NULL;
   }
 
@@ -96,12 +119,18 @@ void *hrealloc(void *handle, size_t new_size) {
 
 
 
-void hfree(void *ptr) {
+// The genuine backing free. liballocs does NOT interpose this symbol, so the
+// lifetime-policy machinery (and internal runtime callers like hrealloc and the
+// in-barrier reclaim's passthrough) use it to actually reclaim a handle.
+void alaska_hfree_now(void *ptr) {
 #ifdef MALLOC_BYPASS
   return ::free(ptr);
 #endif
   // no-op if NULL is passed
   if (unlikely(ptr == NULL)) return;
+
+  // Drop any liballocs metadata binding before the backing memory is recycled.
+  alaska_liballocs_notify_free(ptr);
 
 #ifdef ALASKA_HTLB_SIM
   extern void alaska_htlb_sim_invalidate(uintptr_t handle);
@@ -111,6 +140,12 @@ void hfree(void *ptr) {
   // Simply ask the thread cache to free it!
   get_tc()->hfree(ptr);
 }
+
+// Public manual-free entry point. When liballocs is loaded it interposes this
+// symbol and turns the call into "detach the liballocs manual lifetime policy"
+// (interop; see contrib/liballocs/src/allocators/alaska.c); the native GC then
+// finalizes the backing. Without an interposer this is just an unconditional free.
+void hfree(void *ptr) { alaska_hfree_now(ptr); }
 
 
 

@@ -20,9 +20,21 @@ extern void *hcalloc(size_t nmemb, size_t size);
 // different, you should be careful!
 extern void *hrealloc(void *handle, size_t sz);
 
-// Free a given handle. Is a no-op if ptr=null
+// Free a given handle. Is a no-op if ptr=null.
+//
+// NOTE: when liballocs is loaded it INTERPOSES this symbol (Bertholon & Kell
+// lifetime policies): a call to hfree then merely *detaches the manual lifetime
+// policy* of the handle and lets the native GC finalize the backing once the
+// handle is also dead and unreachable. Internal runtime callers that need an
+// unconditional free of the backing must use alaska_hfree_now() instead, so they
+// are not caught by that interposition.
 extern void hfree(void *ptr);
 
+// Unconditionally free a handle's backing now (notify liballocs + recycle the
+// slot). This is the genuine backing free; it is NOT interposed by liballocs, so
+// it is what the lifetime-policy machinery and internal callers use to actually
+// reclaim. hfree() above is a thin wrapper around it when no interposer is present.
+extern void alaska_hfree_now(void *ptr);
 
 extern size_t alaska_usable_size(void *ptr);
 

@@ -161,6 +161,7 @@ if(NOT ALASKA_CORE_ONLY) # -----------------------------------------------------
     rt/halloc.cpp
     rt/compat.c
     rt/barrier.cpp
+    rt/liballocs_export.cpp
   )
 
   # Reference counting runtime (and its cycle-collection entry points) is only

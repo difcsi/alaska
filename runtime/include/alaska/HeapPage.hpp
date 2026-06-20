@@ -69,6 +69,10 @@ namespace alaska {
     virtual bool release_remote(const Mapping& m, void* ptr) { return release_local(m, ptr); }
     // return the size of an object
     virtual size_t size_of(void* ptr) = 0;
+    // Return the start of the object containing `ptr` (which may be an interior
+    // pointer), or NULL if this page type cannot resolve an object base. Used by
+    // the liballocs integration to report allocation bases for backing pointers.
+    virtual void* object_base(void* ptr) { return nullptr; }
     virtual bool should_localize_from(uint64_t current_epoch) const { return true; }
     inline bool contains(void* ptr) const;
 

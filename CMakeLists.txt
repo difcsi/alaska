@@ -68,6 +68,16 @@ endif()
 # Define the handle-size macro once, from the final (possibly config-overridden) value.
 add_compile_definitions(ALASKA_SIZE_BITS=${ALASKA_SIZE_BITS})
 
+# Bytes reserved at the end of every sized backing allocation for a liballocs
+# trailing `struct insert` (per-object lifetime-policy mask). The stackscan build
+# injects -DALASKA_LIBALLOCS_INSERT_RESERVE=8 (== sizeof(struct insert)); standalone
+# Alaska leaves it 0 (no reservation, no behavior change). See ThreadCache.cpp.
+if(NOT DEFINED ALASKA_LIBALLOCS_INSERT_RESERVE)
+  set(ALASKA_LIBALLOCS_INSERT_RESERVE 0)
+endif()
+add_compile_definitions(ALASKA_LIBALLOCS_INSERT_RESERVE=${ALASKA_LIBALLOCS_INSERT_RESERVE})
+message(STATUS "ALASKA_LIBALLOCS_INSERT_RESERVE=${ALASKA_LIBALLOCS_INSERT_RESERVE}")
+
 set(ALASKA_VERSION 2)
 
 
@@ -451,6 +461,36 @@ add_custom_target(heap-promote
   COMMAND ${CMAKE_COMMAND} -E env "LDFLAGS=-fuse-ld=bfd $ENV{LDFLAGS}" ${CMAKE_INSTALL_PREFIX}/bin/alaska -O3 --heap-hints ${CMAKE_SOURCE_DIR}/test/heap_hints.txt ${CMAKE_SOURCE_DIR}/test/heap_hints.c -o ${CMAKE_BINARY_DIR}/heap_hints_hinted
   COMMAND ${CMAKE_BINARY_DIR}/heap_hints_hinted
   COMMENT "Building and running the stack-to-heap promotion test (off/all/hinted)"
+)
+
+# refcount-collect: integration test that a handle with no references is
+# reclaimed automatically (in bounded time) by the background barrier thread,
+# with no explicit hfree and no forced barrier. The program self-checks and
+# exits non-zero if the collector does not free the garbage in time.
+add_custom_target(refcount-collect
+  COMMAND ${CMAKE_COMMAND} -E env "LDFLAGS=-fuse-ld=bfd $ENV{LDFLAGS}" ${CMAKE_INSTALL_PREFIX}/bin/alaska -O3 ${CMAKE_SOURCE_DIR}/test/refcount_collect.c -o ${CMAKE_BINARY_DIR}/refcount_collect
+  COMMAND ${CMAKE_BINARY_DIR}/refcount_collect
+  COMMENT "Building and running the refcount auto-reclamation integration test"
+)
+
+# refcount-collect-mt: the multithreaded counterpart. Several producer threads
+# create+drop handles and then park, alive, while the background collector
+# reclaims their garbage -- so the stop-the-world barrier must coordinate every
+# thread, not just main. Self-checks and exits non-zero on failure.
+add_custom_target(refcount-collect-mt
+  COMMAND ${CMAKE_COMMAND} -E env "LDFLAGS=-fuse-ld=bfd $ENV{LDFLAGS}" ${CMAKE_INSTALL_PREFIX}/bin/alaska -O3 ${CMAKE_SOURCE_DIR}/test/refcount_collect_mt.c -o ${CMAKE_BINARY_DIR}/refcount_collect_mt
+  COMMAND ${CMAKE_BINARY_DIR}/refcount_collect_mt
+  COMMENT "Building and running the multithreaded refcount auto-reclamation integration test"
+)
+
+# refcount-collect-cycle: integration test that a heap *cycle* of handles that
+# reference only each other -- which plain reference counting can never reclaim --
+# is collected automatically by Anchorage's background cycle collector, with no
+# explicit hfree and no forced barrier. Self-checks and exits non-zero on failure.
+add_custom_target(refcount-collect-cycle
+  COMMAND ${CMAKE_COMMAND} -E env "LDFLAGS=-fuse-ld=bfd $ENV{LDFLAGS}" ${CMAKE_INSTALL_PREFIX}/bin/alaska -O3 ${CMAKE_SOURCE_DIR}/test/refcount_collect_cycle.c -o ${CMAKE_BINARY_DIR}/refcount_collect_cycle
+  COMMAND ${CMAKE_BINARY_DIR}/refcount_collect_cycle
+  COMMENT "Building and running the cycle-collection auto-reclamation integration test"
 )
 
 # unit: run the compiler unit-test suite via tools/unittest.py

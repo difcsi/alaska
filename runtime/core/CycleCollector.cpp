@@ -29,6 +29,12 @@
 #include <alaska/Runtime.hpp>
 #include <alaska/ThreadCache.hpp>
 
+// Hand-off to the stackscan reclaim path (rt/refcount.cpp). Weak because this
+// translation unit links into alaska_core_static, which the unit tests build
+// without refcount.cpp; there the cycle test overrides reclaim() so the default
+// below is never reached and a null bridge is fine.
+extern "C" void alaska_nullcount_add(void *handle) __attribute__((weak));
+
 namespace alaska {
 
   using Color = CycleCollector::Color;
@@ -82,10 +88,19 @@ namespace alaska {
     }
   }
 
+  // A handle proven to be part of a garbage cycle. We deliberately do NOT free it
+  // here: the cycle collector only *breaks* cycles. Trial deletion has driven this
+  // handle's refcount to 0, but a word on some thread's stack might still point at
+  // it (conservatively), and the collector's pin view is not the authoritative
+  // check. So we hand it to the zero-refcount set and let the in-barrier stackscan
+  // reclaim (reclaim_dead_handles) do the actual free -- but only after the
+  // conservative stack scan confirms the handle is off every thread's stack, which
+  // is where its liballocs "heap tag" is finally dropped. Both phases run in the
+  // same barrier, so a genuinely dead member is reclaimed this same cycle.
   void CycleCollector::reclaim(alaska::ThreadCache &tc, alaska::Mapping *m) {
+    (void)tc;
     if (m == nullptr || m->is_free()) return;
-    // ZMTODO: remove heap tag, but need to scan stack
-    tc.hfree(m->to_handle());
+    if (&alaska_nullcount_add) alaska_nullcount_add(m->to_handle());
   }
 
   // PossibleRoot(S)
@@ -221,9 +236,10 @@ namespace alaska {
       num_buffered = buffered.size();
     }
 
-    // Free reclaimed handles. We do this outside `lock` because hfree calls back
-    // into forget(), which takes the lock. We are still inside the barrier, so
-    // the world remains stopped and this is safe.
+    // Hand the reclaimed handles to the stackscan reclaim path. We do this outside
+    // `lock` because reclaim() takes the (separate) nullcount lock; keeping the two
+    // lock regions disjoint avoids any ordering coupling. We are still inside the
+    // barrier, so the world remains stopped and this is safe.
     size_t freed = 0;
     for (auto *s : to_free) {
       reclaim(tc, s);
