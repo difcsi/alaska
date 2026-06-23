@@ -72,9 +72,9 @@ void alaska_blob_init(struct alaska_blob_config *cfg);
 // Not a good function to call. This is always an external function in the compiler's eyes
 extern void *__alaska_leak(void *);
 
-// Reference counting (and its complement, the Anchorage cycle collector). The
-// whole feature is compiled out unless ALASKA_ENABLE_REFCOUNT is defined (set
+// Reference counting. Compiled out unless ALASKA_ENABLE_REFCOUNT is defined (set
 // by the toolchain via `alaska-config` when the runtime was built with it on).
+// The cycle-collection API below is gated separately on ALASKA_ENABLE_CYCLE_COLLECTION.
 #if ALASKA_ENABLE_REFCOUNT
 
 // Reference counting functions for handles
@@ -108,19 +108,21 @@ int  alaska_gc_present_test(void *handle);
 // Returns the refcount if ptr is a valid handle, or 0 if ptr is NULL or not a handle
 unsigned long alaska_get_refcount(void *ptr);
 
+#endif  // ALASKA_ENABLE_REFCOUNT
+
 
 // Cycle detection (Anchorage). Reference counting cannot reclaim handles that
 // only reference each other; these run Bacon & Rajan trial-deletion cycle
-// collection under Anchorage's stop-the-world barrier.
-//
+// collection under Anchorage's stop-the-world barrier. Gated on cycle collection,
+// which is a strict superset of reference counting.
+#if ALASKA_ENABLE_CYCLE_COLLECTION
 // Force a cycle collection now; returns the number of handles reclaimed.
 unsigned long alaska_collect_cycles(void);
 // Number of candidate cycle roots currently buffered.
 unsigned long alaska_cycle_candidate_count(void);
 // Total number of handles reclaimed by the cycle collector so far.
 unsigned long alaska_cycles_collected(void);
-
-#endif  // ALASKA_ENABLE_REFCOUNT
+#endif  // ALASKA_ENABLE_CYCLE_COLLECTION
 
 
 #ifdef __cplusplus

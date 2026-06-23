@@ -19,7 +19,13 @@ export LLVM_RESOURCE_DIR=$(${ROOT}/opt/llvm/bin/clang -print-resource-dir)
 
 mkdir -p opt
 
-for config in noservice anchorage; do
+# The six benchmark configurations. "baseline" (plain bundled clang) is realized in
+# the benchmark harness via `alaska-transform --baseline` and needs no build of its
+# own, so it is not in this list. The five Alaska variants below each get their own
+# build dir, install prefix, and opt/enable-alaska-<config> script. Their feature
+# triple (REFCOUNT / CYCLE_COLLECTION / ANCHORAGE) is set by the matching preset in
+# CMakePresets.json.
+for config in noservice anchorage refcount refcount-gc refcount-gc-anchorage; do
   INSTALL_DIR=${ROOT}/opt/alaska-${config}
 
   buildstep "configure ${config}" cmake --preset ${config} -S $ROOT

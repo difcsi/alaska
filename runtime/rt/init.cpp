@@ -49,6 +49,13 @@ extern "C" void alaska_gc_present_clear(void);
 extern "C" void alaska_gc_present_scan_set(int on);
 #endif
 
+// The periodic barrier thread only exists when some service does work inside the
+// stop-the-world barrier: refcount reclamation (also covers cycle collection,
+// which requires refcount) and/or Anchorage heap compaction. A pure noservice
+// build spawns no thread at all.
+#define ALASKA_BARRIER_THREAD_ENABLED (ALASKA_ENABLE_REFCOUNT || ALASKA_ENABLE_ANCHORAGE)
+
+#if ALASKA_BARRIER_THREAD_ENABLED
 static pthread_t barrier_thread;
 // Set once at process shutdown (from an atexit handler, which runs before
 // _dl_fini/destructors). The barrier thread must stop signalling/barriering
@@ -81,7 +88,7 @@ static void *barrier_thread_func(void *) {
 #endif
 
     rt.with_barrier([&]() {
-#if ALASKA_ENABLE_REFCOUNT
+#if ALASKA_ENABLE_CYCLE_COLLECTION
       // Heap compaction and cycle collection are duals (Deutsch & Bobrow): both
       // walk the object graph with the world stopped, so Anchorage does them in
       // the same barrier. Collect cycles less often than we compact -- tracing
@@ -90,7 +97,9 @@ static void *barrier_thread_func(void *) {
         rt.cycle_collector.collect(*tc);
       }
 #endif
+#if ALASKA_ENABLE_ANCHORAGE
       rt.heap.compact_sizedpages();
+#endif
 #if ALASKA_ENABLE_REFCOUNT
       // Stackscan: free zero-refcount handles not marked present (not on any
       // thread's stack). World stopped + nullcount_lock pre-held by with_barrier.
@@ -117,6 +126,7 @@ static void alaska_stop_barrier_thread(void) {
   barrier_thread_should_stop = 1;
   pthread_join(barrier_thread, NULL);
 }
+#endif  // ALASKA_BARRIER_THREAD_ENABLED
 
 void __attribute__((constructor(102))) alaska_init(void) {
   // Allocate the runtime simply by creating a new instance of it. Everywhere
@@ -124,8 +134,10 @@ void __attribute__((constructor(102))) alaska_init(void) {
   the_runtime = new alaska::Runtime();
   // Attach the runtime's barrier manager
   the_runtime->barrier_manager = &the_barrier_manager;
+#if ALASKA_BARRIER_THREAD_ENABLED
   pthread_create(&barrier_thread, NULL, barrier_thread_func, NULL);
   atexit(alaska_stop_barrier_thread);
+#endif
 }
 
 void __attribute__((destructor)) alaska_deinit(void) {}

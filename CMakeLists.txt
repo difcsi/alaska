@@ -39,10 +39,27 @@ alaska_switch(ALASKA_HTLB_SIM        OFF)
 
 alaska_switch(ALASKA_YUKON           OFF)
 
-# Reference counting (and its complement, the Anchorage cycle collector). When
-# OFF, none of the refcount/cycle-collection code is compiled into the runtime,
-# the compiler plugin, or instrumented programs. ON by default.
-alaska_switch(ALASKA_ENABLE_REFCOUNT ON)
+# The three runtime services are independently gated so the benchmark presets can
+# build any combination (see CMakePresets.json / configs). Per-config values are
+# supplied by the preset's cacheVariables, which land in the cache *before* these
+# switches run, so alaska_switch picks them up and emits the right -D.
+#
+#   ALASKA_ENABLE_REFCOUNT          reference counting: inc/dec passes, refcount
+#                                   storage, nullcount map, zero-refcount stackscan
+#                                   reclamation on the barrier thread.
+#   ALASKA_ENABLE_CYCLE_COLLECTION  Anchorage's Bacon & Rajan cycle collector (GC).
+#                                   Requires ALASKA_ENABLE_REFCOUNT.
+#   ALASKA_ENABLE_ANCHORAGE         heap defragmentation (in-barrier compaction).
+#
+# Defaults are ON so the bare `default` preset still builds the full stack.
+alaska_switch(ALASKA_ENABLE_REFCOUNT          ON)
+alaska_switch(ALASKA_ENABLE_CYCLE_COLLECTION  ON)
+alaska_switch(ALASKA_ENABLE_ANCHORAGE         ON)
+
+# Cycle collection reads refcounts; it cannot be built without reference counting.
+if(ALASKA_ENABLE_CYCLE_COLLECTION AND NOT ALASKA_ENABLE_REFCOUNT)
+  message(FATAL_ERROR "ALASKA_ENABLE_CYCLE_COLLECTION requires ALASKA_ENABLE_REFCOUNT")
+endif()
 
 # ALASKA_SIZE_BITS is the width of the in-handle offset field, which also dictates
 # the handle-table base address (see runtime/include/alaska/Configuration.hpp).
@@ -230,7 +247,7 @@ add_custom_target(venv DEPENDS ${ALASKA_VENV_TOUCHFILE})
 set(ALASKA_REDIS_SERVER_ALASKA ${CMAKE_SOURCE_DIR}/redis/bin/redis-server-alaska)
 add_custom_command(
   OUTPUT ${ALASKA_REDIS_SERVER_ALASKA}
-  COMMAND /bin/bash -lc ". ${CMAKE_SOURCE_DIR}/venv/bin/activate && . ${CMAKE_SOURCE_DIR}/opt/enable-alaska-anchorage && make -C ${CMAKE_SOURCE_DIR}/redis redis"
+  COMMAND /bin/bash -lc ". ${CMAKE_SOURCE_DIR}/venv/bin/activate && . ${CMAKE_SOURCE_DIR}/opt/enable-alaska-refcount-gc-anchorage && make -C ${CMAKE_SOURCE_DIR}/redis redis"
   WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
   DEPENDS
     ${ALASKA_VENV_TOUCHFILE}
@@ -244,7 +261,7 @@ add_custom_target(redis_alaska DEPENDS ${ALASKA_REDIS_SERVER_ALASKA})
 set(ALASKA_MEMCACHED_ALASKA ${CMAKE_SOURCE_DIR}/memcached/bin/memcached-alaska)
 add_custom_command(
   OUTPUT ${ALASKA_MEMCACHED_ALASKA}
-  COMMAND /bin/bash -lc ". ${CMAKE_SOURCE_DIR}/opt/enable-alaska-anchorage && make -C ${CMAKE_SOURCE_DIR}/memcached memcached"
+  COMMAND /bin/bash -lc ". ${CMAKE_SOURCE_DIR}/opt/enable-alaska-refcount-gc-anchorage && make -C ${CMAKE_SOURCE_DIR}/memcached memcached"
   WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
   DEPENDS
     ${CMAKE_SOURCE_DIR}/memcached/Makefile
@@ -256,7 +273,11 @@ add_custom_target(memcached_alaska DEPENDS ${ALASKA_MEMCACHED_ALASKA})
 add_custom_command(
   OUTPUT ${ALASKA_FIG7_CSV}
   COMMAND ${CMAKE_COMMAND} -E echo "Generating data for figure 7"
-  COMMAND /bin/bash -lc ". ${CMAKE_SOURCE_DIR}/venv/bin/activate && . ${CMAKE_SOURCE_DIR}/opt/enable-alaska-noservice && ulimit -s unlimited && python3 -m benchmarks.figure7"
+  # The harness sweeps every build config itself (it points at each opt/alaska-<config>
+  # install by absolute path), so all five Alaska installs + opt/enable-toolchain must
+  # already exist (run build.sh first). We source only the toolchain here, not a single
+  # alaska install.
+  COMMAND /bin/bash -lc ". ${CMAKE_SOURCE_DIR}/venv/bin/activate && . ${CMAKE_SOURCE_DIR}/opt/enable-toolchain && ulimit -s unlimited && python3 -m benchmarks.figure7"
   COMMAND ${CMAKE_COMMAND} -E make_directory ${ALASKA_RESULTS_DIR}
   COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/bench/results/figure7/all.csv ${ALASKA_FIG7_CSV}
   WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
@@ -289,7 +310,8 @@ add_custom_target(figure7_pdf DEPENDS ${ALASKA_FIG7_PDF})
 add_custom_command(
   OUTPUT ${ALASKA_FIG8_CSV}
   COMMAND ${CMAKE_COMMAND} -E echo "Generating data for figure 8"
-  COMMAND /bin/bash -lc ". ${CMAKE_SOURCE_DIR}/venv/bin/activate && . ${CMAKE_SOURCE_DIR}/opt/enable-alaska-noservice && ulimit -s unlimited && python3 -m benchmarks.figure8"
+  # As with figure 7, the harness selects each install internally; source only the toolchain.
+  COMMAND /bin/bash -lc ". ${CMAKE_SOURCE_DIR}/venv/bin/activate && . ${CMAKE_SOURCE_DIR}/opt/enable-toolchain && ulimit -s unlimited && python3 -m benchmarks.figure8"
   COMMAND ${CMAKE_COMMAND} -E make_directory ${ALASKA_RESULTS_DIR}
   COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/bench/results/figure8/all.csv ${ALASKA_FIG8_CSV}
   WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
@@ -320,7 +342,11 @@ add_custom_command(
 
 add_custom_target(figure8_pdf DEPENDS ${ALASKA_FIG8_PDF})
 
-set(ALASKA_RSSTRACKER_SO ${CMAKE_SOURCE_DIR}/opt/alaska-anchorage/lib/librsstracker.so)
+# The redis/memcached fragmentation figures exercise the full Alaska stack (heap
+# defragmentation alongside reference counting + cycle collection), which is the
+# refcount-gc-anchorage configuration -- the bare `anchorage` config is now
+# compaction-only. The RSS tracker .so is staged in that install's lib.
+set(ALASKA_RSSTRACKER_SO ${CMAKE_SOURCE_DIR}/opt/alaska-refcount-gc-anchorage/lib/librsstracker.so)
 
 add_custom_command(
   OUTPUT ${ALASKA_RSSTRACKER_SO}
@@ -338,10 +364,10 @@ add_custom_target(rsstracker DEPENDS ${ALASKA_RSSTRACKER_SO})
 add_custom_command(
   OUTPUT ${ALASKA_REDIS_FIG9_PDF}
   COMMAND ${CMAKE_COMMAND} -E echo "Compiling redis"
-  COMMAND /bin/bash -lc ". ${CMAKE_SOURCE_DIR}/opt/enable-alaska-anchorage && make -C ${CMAKE_SOURCE_DIR}/redis redis"
+  COMMAND /bin/bash -lc ". ${CMAKE_SOURCE_DIR}/opt/enable-alaska-refcount-gc-anchorage && make -C ${CMAKE_SOURCE_DIR}/redis redis"
   COMMAND ${CMAKE_COMMAND} -E echo "Generating data for figure 9"
   COMMAND ${CMAKE_COMMAND} -E make_directory ${ALASKA_RESULTS_DIR}
-  COMMAND /bin/bash -lc ". ${CMAKE_SOURCE_DIR}/venv/bin/activate && . ${CMAKE_SOURCE_DIR}/opt/enable-alaska-anchorage && ulimit -s unlimited && python3 -m redis.frag && python3 ${CMAKE_SOURCE_DIR}/plotgen/figure9.py"
+  COMMAND /bin/bash -lc ". ${CMAKE_SOURCE_DIR}/venv/bin/activate && . ${CMAKE_SOURCE_DIR}/opt/enable-alaska-refcount-gc-anchorage && ulimit -s unlimited && python3 -m redis.frag && python3 ${CMAKE_SOURCE_DIR}/plotgen/figure9.py"
   WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
   DEPENDS
     ${ALASKA_VENV_TOUCHFILE}
@@ -359,7 +385,7 @@ add_custom_command(
   OUTPUT ${ALASKA_REDIS_FIG10_PDF}
   COMMAND ${CMAKE_COMMAND} -E echo "Generating data for figure 10"
   COMMAND ${CMAKE_COMMAND} -E make_directory ${ALASKA_RESULTS_DIR}
-  COMMAND /bin/bash -lc ". ${CMAKE_SOURCE_DIR}/venv/bin/activate && . ${CMAKE_SOURCE_DIR}/opt/enable-alaska-anchorage && ulimit -s unlimited && python3 -m redis.config_sweep && python3 ${CMAKE_SOURCE_DIR}/plotgen/figure10.py"
+  COMMAND /bin/bash -lc ". ${CMAKE_SOURCE_DIR}/venv/bin/activate && . ${CMAKE_SOURCE_DIR}/opt/enable-alaska-refcount-gc-anchorage && ulimit -s unlimited && python3 -m redis.config_sweep && python3 ${CMAKE_SOURCE_DIR}/plotgen/figure10.py"
   WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
   DEPENDS
     ${ALASKA_VENV_TOUCHFILE}
@@ -376,8 +402,8 @@ add_custom_command(
   OUTPUT ${ALASKA_REDIS_LARGE_CSV}
   COMMAND ${CMAKE_COMMAND} -E echo "Generating data for figure 11"
   COMMAND ${CMAKE_COMMAND} -E make_directory ${ALASKA_RESULTS_DIR}
-  COMMAND /bin/bash -lc ". ${CMAKE_SOURCE_DIR}/opt/enable-alaska-anchorage && make -C ${CMAKE_SOURCE_DIR}/redis redis"
-  COMMAND /bin/bash -lc ". ${CMAKE_SOURCE_DIR}/venv/bin/activate && . ${CMAKE_SOURCE_DIR}/opt/enable-alaska-anchorage && ulimit -s unlimited && python3 -m redis.frag_large"
+  COMMAND /bin/bash -lc ". ${CMAKE_SOURCE_DIR}/opt/enable-alaska-refcount-gc-anchorage && make -C ${CMAKE_SOURCE_DIR}/redis redis"
+  COMMAND /bin/bash -lc ". ${CMAKE_SOURCE_DIR}/venv/bin/activate && . ${CMAKE_SOURCE_DIR}/opt/enable-alaska-refcount-gc-anchorage && ulimit -s unlimited && python3 -m redis.frag_large"
   WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
   DEPENDS
     ${ALASKA_VENV_TOUCHFILE}
@@ -410,8 +436,8 @@ add_custom_command(
   OUTPUT ${ALASKA_MEMCACHED_SWEEP_CSV}
   COMMAND ${CMAKE_COMMAND} -E echo "Generating data for figure 12"
   COMMAND ${CMAKE_COMMAND} -E make_directory ${ALASKA_RESULTS_DIR}
-  COMMAND /bin/bash -lc ". ${CMAKE_SOURCE_DIR}/opt/enable-alaska-anchorage && make -C ${CMAKE_SOURCE_DIR}/memcached memcached"
-  COMMAND /bin/bash -lc ". ${CMAKE_SOURCE_DIR}/venv/bin/activate && . ${CMAKE_SOURCE_DIR}/opt/enable-alaska-anchorage && ulimit -s unlimited && python3 -m memcached.ycsb"
+  COMMAND /bin/bash -lc ". ${CMAKE_SOURCE_DIR}/opt/enable-alaska-refcount-gc-anchorage && make -C ${CMAKE_SOURCE_DIR}/memcached memcached"
+  COMMAND /bin/bash -lc ". ${CMAKE_SOURCE_DIR}/venv/bin/activate && . ${CMAKE_SOURCE_DIR}/opt/enable-alaska-refcount-gc-anchorage && ulimit -s unlimited && python3 -m memcached.ycsb"
   WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
   DEPENDS
     ${ALASKA_VENV_TOUCHFILE}

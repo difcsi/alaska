@@ -2,97 +2,78 @@ import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
-import re
 
 
-def format_memory_ticks_gb(value, _):
-    # Convert kilobytes to megabytes
-    value_in_gb = value / 1024 / 1024 / 1024
-    return f'{value_in_gb:.0f} GB'
+# Per-configuration overhead on SPEC2017, every Alaska build config relative to the
+# baseline (plain bundled clang). The configs mirror benchmarks/figure8.py.
+CONFIG_ORDER = [
+    "noservice",
+    "anchorage",
+    "refcount",
+    "refcount-gc",
+    "refcount-gc-anchorage",
+]
 
-def format_seconds(ms, _):
-    return f'{ms / 1000:.0f}s'
-
-def format_minutes(ms, _):
-    return f'{ms / 1000 / 60:.0f}m'
-
-def format_percent(x, _):
-    return f'{x * 100:.0f}%'
-
-
-colors = {
-    "alaska": "#0075ab",
-    "nohoisting": "#aa6fc5",
-    "notracking": "#ff6583",
-    "noinlining": "#ffa600",
+config_colors = {
+    "noservice": "#0075ab",
+    "anchorage": "#33bb88",
+    "refcount": "#aa6fc5",
+    "refcount-gc": "#ff6583",
+    "refcount-gc-anchorage": "#ffa600",
 }
 
-f, ax = plt.subplots(1, figsize=(5, 1.75), dpi=300)
-# Read both of the csv files, filter them, and merge them
-# we want four 'config' column values:
-#   - baseline
-#   - alaska
-#   - notracking
-#   - nohoisting
-# And we only care about SPEC for this specific plot.
+config_labels = {
+    "noservice": "noservice",
+    "anchorage": "anchorage",
+    "refcount": "RC",
+    "refcount-gc": "RC+GC",
+    "refcount-gc-anchorage": "RC+GC+anchorage",
+}
 
-f7 = pd.read_csv('results/figure7.csv')
-f7 = f7[f7['suite'] == 'SPEC2017']
-# Remove GCC because we disable hoisting in it already.
-f7 = f7[f7['benchmark'] != '602.gcc_s']
-# Remove perlbench for the same reason
-f7 = f7[f7['benchmark'] != '600.perlbench_s']
 
-f8 = pd.read_csv('results/figure8.csv')
+def short_name(benchmark):
+    # '605.mcf_s' -> 'mcf'
+    try:
+        return benchmark.split('.')[1].split('_')[0]
+    except (IndexError, AttributeError):
+        return str(benchmark)
 
-df = pd.concat([f7, f8])
 
+df = pd.read_csv('results/figure8.csv')
+df = df[df['suite'] == 'SPEC2017']
 df['key'] = df['suite'] + '@' + df['benchmark']
 
-
-
-print(df['key'].unique())
-
+metric = 'time'
 baselines = df[df['config'] == 'baseline']
 others = df[df['config'] != 'baseline']
 
-metric = 'time'
-
 dfs = []
-for benchmark in baselines['key'].unique():
-  print(benchmark)
-  bl_filt = baselines[baselines['key'] == benchmark]
-  mean = bl_filt[metric].mean()
-  filt = pd.DataFrame(others[others['key'] == benchmark])
-  filt['benchmark'] = benchmark.split('.')[1].split('_')[0]
-  filt['overhead'] = (filt[metric] - mean) / mean
-  dfs.append(filt)
+for key in baselines['key'].unique():
+    mean = baselines[baselines['key'] == key][metric].mean()
+    if mean == 0:
+        continue
+    filt = pd.DataFrame(others[others['key'] == key])
+    filt['benchmark'] = short_name(key.split('@')[1])
+    filt['overhead'] = (filt[metric] - mean) / mean
+    dfs.append(filt)
 
+df = pd.concat(dfs) if dfs else pd.DataFrame(columns=['benchmark', 'config', 'overhead'])
+present = [c for c in CONFIG_ORDER if c in set(df['config'])]
 
-df = pd.concat(dfs)
-
-# df = df.sort_values(['benchmark'])
-print(df)
-g = sns.barplot(data=df,
-            x='benchmark',
-            y='overhead',
-            hue='config',
-            palette=colors,
-            ci=None,
-            linewidth=1,
-            edgecolor='black',
-            ax=ax)
+f, ax = plt.subplots(1, figsize=(7, 2.0), dpi=300)
+g = sns.barplot(data=df, x='benchmark', y='overhead', hue='config',
+                hue_order=present, palette=config_colors,
+                errorbar=None, linewidth=0.8, edgecolor='black', ax=ax)
 g.set(xlabel=None, ylabel=None)
+g.yaxis.set_major_formatter(ticker.FuncFormatter(lambda y, _: f'{int(y * 100)}%'))
 
-g.yaxis.set_major_formatter(
-            ticker.FuncFormatter(lambda y, _: '{}%'.format(int(y * 100))))
-
-# custom_y_ticks = list(map(lambda x: x / 100.0, range(0, 125, 25)))
-# plt.yticks(custom_y_ticks, fontsize=8)
-plt.legend(ncol=2, loc="upper right", fontsize=7, frameon=False)
+handles, _ = ax.get_legend_handles_labels()
+ax.legend(handles, [config_labels.get(c, c) for c in present],
+          ncol=2, loc="upper right", fontsize=7, frameon=False)
 plt.xticks(rotation=0, fontsize=7)
 plt.grid(axis='y', linestyle='-', alpha=0.3, zorder=1)
 plt.gca().set_axisbelow(True)
 plt.tight_layout()
 
 plt.savefig('results/figure8.pdf')
+print("Wrote results/figure8.pdf")

@@ -19,7 +19,7 @@
 #include <ck/set.h>
 #include <alaska/Configuration.hpp>
 #include <alaska/Localizer.hpp>
-#if ALASKA_ENABLE_REFCOUNT
+#if ALASKA_ENABLE_CYCLE_COLLECTION
 #include <alaska/CycleCollector.hpp>
 #endif
 
@@ -48,7 +48,7 @@ namespace alaska {
     // This is the actual heap
     alaska::Heap heap;
 
-#if ALASKA_ENABLE_REFCOUNT
+#if ALASKA_ENABLE_CYCLE_COLLECTION
     // Anchorage's cycle collector. Reference counting alone cannot reclaim
     // cycles of handles, so this runs synchronous trial-deletion cycle
     // collection under the same stop-the-world barrier Anchorage uses to

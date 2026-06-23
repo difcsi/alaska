@@ -41,6 +41,40 @@ def activate_local_toolchain(repo_root=None):
   if llvm_bin.is_dir():
     os.environ["LLVM_COMPILER_PATH"] = str(llvm_bin)
 
+# The benchmark sweep configurations. Each name in ALASKA_BUILD_CONFIGS has a
+# matching install at opt/alaska-<name> produced by build.sh, with its own compiler
+# driver (alaska-transform / alaska-config) and runtime (libalaska). The benchmark
+# harness compiles + links each benchmark once per config by pointing at that
+# install's bin/lib, so a single sweep produces a `config` column with all of them.
+#
+# "baseline" (plain bundled clang, no instrumentation) is realized via
+# `alaska-transform --baseline`, which skips every Alaska pass; it borrows any one
+# install's driver (features are irrelevant in baseline mode) -- see BASELINE_DRIVER.
+ALASKA_BUILD_CONFIGS = [
+    "noservice",
+    "anchorage",
+    "refcount",
+    "refcount-gc",
+    "refcount-gc-anchorage",
+]
+
+BASELINE_CONFIG = "baseline"
+# Which install's driver to borrow for baseline compilation (any works).
+BASELINE_DRIVER = "noservice"
+
+
+def alaska_root(repo_root=None):
+  """Absolute path to the alaska repository root."""
+  if repo_root is None:
+    repo_root = Path(__file__).resolve().parents[1]
+  return Path(repo_root)
+
+
+def config_prefix(install, repo_root=None):
+  """Install prefix (opt/alaska-<install>) for a build config."""
+  return alaska_root(repo_root) / "opt" / f"alaska-{install}"
+
+
 def get_spec_size():
   size = os.getenv("SPEC_SIZE")
 

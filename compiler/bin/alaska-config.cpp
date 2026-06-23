@@ -65,11 +65,17 @@ void defs(void) {
   printf("-D__STDC_CONSTANT_MACROS\n");
   printf("-D__STDC_FORMAT_MACROS\n");
   printf("-D__STDC_LIMIT_MACROS\n");
-  // Mirror the runtime's configure-time reference-counting setting so that the
-  // installed headers (alaska.h) expose the refcount/cycle-collection API to
-  // instrumented programs only when the runtime was built with it.
+  // Mirror the runtime's configure-time feature settings so the installed headers
+  // (alaska.h) expose each feature's API -- and instrumented programs / tests can
+  // self-gate -- only when the runtime was built with that feature.
 #if ALASKA_ENABLE_REFCOUNT
   printf("-DALASKA_ENABLE_REFCOUNT=1\n");
+#endif
+#if ALASKA_ENABLE_CYCLE_COLLECTION
+  printf("-DALASKA_ENABLE_CYCLE_COLLECTION=1\n");
+#endif
+#if ALASKA_ENABLE_ANCHORAGE
+  printf("-DALASKA_ENABLE_ANCHORAGE=1\n");
 #endif
 }
 

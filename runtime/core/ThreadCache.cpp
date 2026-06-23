@@ -241,6 +241,8 @@ namespace alaska {
     if(unlikely(m->get_refcount() > 0 )){
       alaska::printf("Warning: Freeing handle %p with non-zero refcount %lu\n", handle, m->get_refcount());
     }
+#endif
+#if ALASKA_ENABLE_CYCLE_COLLECTION
     // Drop this handle from the cycle collector before its slot can be recycled,
     // so a later collection never traces a stale/reused mapping.
     this->runtime.cycle_collector.forget(m);

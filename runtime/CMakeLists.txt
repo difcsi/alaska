@@ -69,8 +69,9 @@ set(CORE_SOURCES
 	core/glue.cpp
 )
 
-# The cycle collector is part of reference counting; only build it when enabled.
-if(ALASKA_ENABLE_REFCOUNT)
+# The cycle collector (GC) is its own feature, layered on reference counting;
+# only build it when cycle collection is enabled.
+if(ALASKA_ENABLE_CYCLE_COLLECTION)
   list(APPEND CORE_SOURCES core/CycleCollector.cpp)
 endif()
 
@@ -325,8 +326,8 @@ if (ALASKA_ENABLE_TESTING)
     test/object_allocator_test.cpp
 	)
 
-	# The cycle collector test only makes sense when reference counting is built.
-	if(ALASKA_ENABLE_REFCOUNT)
+	# The cycle collector test only makes sense when cycle collection is built.
+	if(ALASKA_ENABLE_CYCLE_COLLECTION)
 		target_sources(alaska_test PRIVATE test/cycle_test.cpp)
 	endif()
 

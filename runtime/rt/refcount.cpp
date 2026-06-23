@@ -147,12 +147,15 @@ void alaska_dec_refcount(void *ptr) {
   // should attach here
   if (new_count == 0) {
    nullcount_update(ptr, /*add=*/true);
-  } else {
+  }
+#if ALASKA_ENABLE_CYCLE_COLLECTION
+  else {
    // The refcount dropped but is still non-zero. This is the only situation in
    // which `mapping` can become the root of a garbage *cycle*, so hand it to
    // Anchorage's cycle collector as a candidate root (Bacon & Rajan "purple").
    alaska::Runtime::get().cycle_collector.register_candidate(mapping);
   }
+#endif
 
   in_refcount_operation = false;
 }
@@ -227,6 +230,7 @@ inline int alaska_is_handle(void *ptr){
   return alaska::Mapping::is_handle(ptr);
 }
 
+#if ALASKA_ENABLE_CYCLE_COLLECTION
 /**
  * alaska_collect_cycles - Run one cycle collection inside Anchorage.
  *
@@ -255,6 +259,7 @@ unsigned long alaska_cycle_candidate_count(void) {
 unsigned long alaska_cycles_collected(void) {
   return alaska::Runtime::get().cycle_collector.total_collected();
 }
+#endif  // ALASKA_ENABLE_CYCLE_COLLECTION
 }  // extern "C"
 
 

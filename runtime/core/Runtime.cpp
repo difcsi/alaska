@@ -80,7 +80,7 @@ namespace alaska {
       : config(config)
       , handle_table(config)
       , heap(config)
-#if ALASKA_ENABLE_REFCOUNT
+#if ALASKA_ENABLE_CYCLE_COLLECTION
       , cycle_collector(*this)
 #endif
   {

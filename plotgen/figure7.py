@@ -1,220 +1,108 @@
-import shutil
 import os
-from pathlib import Path
-import subprocess
-import time
-import seaborn as sns
-import matplotlib as mpl
-from matplotlib.lines import Line2D
-from matplotlib import cm
-import matplotlib.pyplot as plt
-import math
 import re
-import pandas as pd
 import numpy as np
+import pandas as pd
+import seaborn as sns
+import matplotlib.pyplot as plt
 import matplotlib.ticker as mtick
-from collections import defaultdict 
 
 
 def geo_mean(iterable):
-    a = np.array(iterable) + 1
-    return (a.prod()**(1.0/len(a))) - 1
-
-def harmonic_mean(a):
-    return (len(a) / np.sum(1.0/(1 + a))) - 1
-
-# preferred_colors = ["#5588dd", "#882255", "#33bb88",
-#                     "#ddcc77", "#cc6677", "#999933", "#aa44ff", "#448811"]
+    a = np.array(list(iterable), dtype=float) + 1
+    return (a.prod() ** (1.0 / len(a))) - 1
 
 
-plt.rc('xtick', labelsize=8)    # fontsize of the tick labels
-plt.rc('ytick', labelsize=8)    # fontsize of the tick labels
+# The Alaska build configurations, in the order they should appear in the legend.
+# "baseline" is the reference every config's overhead is measured against, so it is
+# not itself drawn as a bar.
+CONFIG_ORDER = [
+    "noservice",
+    "anchorage",
+    "refcount",
+    "refcount-gc",
+    "refcount-gc-anchorage",
+]
 
-colors = {
-    "Embench": "#0075ab",
-    "GAP": "#aa6fc5",
-    "NAS": "#ff6583",
-    "SPEC2017": "#ffa600",
-    "PolyBench": "#33bb88",
-    "ALL": "#54EE2E", # Bright green!
+config_colors = {
+    "noservice": "#0075ab",
+    "anchorage": "#33bb88",
+    "refcount": "#aa6fc5",
+    "refcount-gc": "#ff6583",
+    "refcount-gc-anchorage": "#ffa600",
+}
+
+config_labels = {
+    "noservice": "noservice",
+    "anchorage": "anchorage",
+    "refcount": "RC",
+    "refcount-gc": "RC+GC",
+    "refcount-gc-anchorage": "RC+GC+anchorage",
 }
 
 
-rename_table = {
-    'sglib-combined': 'sglib',
+def load_overheads(csv_path, metric='time'):
+    """Return per-(suite,benchmark,config) overhead relative to the baseline run."""
+    df = pd.read_csv(csv_path)
+    # Average repeated runs, then pivot so each config sits beside its baseline.
+    means = df.groupby(['suite', 'benchmark', 'config'])[metric].mean().reset_index()
+    piv = means.pivot_table(index=['suite', 'benchmark'],
+                            columns='config', values=metric).reset_index()
+    if 'baseline' not in piv.columns:
+        raise SystemExit("figure7: no 'baseline' config in results; cannot compute overhead")
 
-}
-
-
-def format_xtick(tick):
-    tick = re.sub('^\\d+\.', '', tick)
-    tick = re.sub('_s$', '', tick)
-    if tick in rename_table:
-        return rename_table[tick]
-    return tick
-
-
-def do_pivot(df, metric):
-    df = df.pivot_table(index=['suite', 'benchmark'],
-                        columns='config', values=metric).reset_index()
-    df['key'] = df['suite'] + '@' + df['benchmark']
-    return df
-
-
-
-
-
+    rows = []
+    for cfg in CONFIG_ORDER:
+        if cfg not in piv.columns:
+            print(f"figure7: config '{cfg}' missing from results, skipping")
+            continue
+        for _, r in piv.iterrows():
+            bl, v = r.get('baseline'), r.get(cfg)
+            if pd.isna(bl) or pd.isna(v) or bl == 0:
+                continue
+            rows.append({'suite': r['suite'], 'benchmark': r['benchmark'],
+                         'config': cfg, 'overhead': (v - bl) / bl})
+    return pd.DataFrame(rows)
 
 
-
-def plot_metric_new(df, output, metric, title='Result', ylabel='speedup', figsize=(9, 2.8), show_values=False, geomean_parts=False, geomean_all=True):
-    bars = {
-        'benchmark': [],
-        'suite': [],
-        ylabel: [],
-    }
-
-
-    suites = defaultdict(lambda: {'benchmark': [], ylabel: []})
-
-    def add_bar(bench, suite, value):
-        bars['benchmark'].append(suite + '@' + bench)
-        bars['suite'].append(suite)
-        bars[ylabel].append(value)
-
-        suites[suite]['benchmark'].append(suite + '@' + bench)
-        suites[suite][ylabel].append(value)
+def summarize_by_suite(ov):
+    """Geometric-mean overhead per (suite, config), plus an 'ALL' rollup."""
+    out = []
+    for (suite, cfg), grp in ov.groupby(['suite', 'config']):
+        out.append({'suite': suite, 'config': cfg, 'overhead': geo_mean(grp['overhead'])})
+    for cfg, grp in ov.groupby('config'):
+        out.append({'suite': 'ALL', 'config': cfg, 'overhead': geo_mean(grp['overhead'])})
+    return pd.DataFrame(out)
 
 
-    for name, group in df.groupby('suite'):
-        for _, row in group.iterrows():
-            add_bar(row['benchmark'], row['suite'], row[ylabel])
-        if geomean_parts:
-            add_bar('geomean', name, geo_mean(group[ylabel]))
-        # add_bar('harmonic mean', name, harmonic_mean(group[ylabel]))
+def main():
+    ov = load_overheads('bench/results/figure7/all.csv')
+    present = [c for c in CONFIG_ORDER if c in set(ov['config'])]
+    summary = summarize_by_suite(ov)
 
-    if geomean_all:
-        geo = geo_mean(df[ylabel])
-        add_bar('geomean', 'ALL', geo_mean(df[ylabel]))
-    df = pd.DataFrame(bars)
+    suite_order = [s for s in ['Embench', 'GAP', 'NAS', 'SPEC2017', 'PolyBench'] if s in set(summary['suite'])]
+    suite_order = suite_order + [s for s in summary['suite'].unique() if s not in suite_order and s != 'ALL'] + ['ALL']
 
-    f, ax = plt.subplots(1, figsize=figsize)
-    plt.grid(axis='y')
+    f, ax = plt.subplots(1, figsize=(9, 2.6), dpi=300)
+    plt.grid(axis='y', linestyle='-', alpha=0.3, zorder=0)
+    g = sns.barplot(data=summary, x='suite', y='overhead', hue='config',
+                    order=suite_order, hue_order=present,
+                    palette=config_colors, edgecolor='black', linewidth=0.8, ax=ax)
 
+    ax.axhline(y=0, linewidth=1, color='black')
+    ax.yaxis.set_major_formatter(mtick.FuncFormatter(lambda y, _: f'{int(y * 100)}%'))
+    ax.set(xlabel=None, ylabel='Exec. time overhead (geomean)')
 
-    g = sns.barplot(data=df,
-                    x='benchmark',
-                    y=ylabel,
-                    hue='suite',
-                    linewidth=1,
-                    edgecolor='black',
-                    palette=colors,
-                    ax=ax,
-                    dodge=False)
-
-
-    max_val = max(df[ylabel])
-    min_val = min(df[ylabel])
-    top = max_val * 1.2
-    bottom = min(0, min_val * 1.2)
-    g.set_ylim((bottom, top))
-
-    g.set_xticklabels(map(lambda x: format_xtick(x.split(
-        '@')[1]), (item.get_text() for item in g.get_xticklabels())))
-
-    # Hide legend
-    plt.legend([],[], frameon=False)
-
-    plt.axhline(y=0, linewidth=1, color='black')
-
-    for _, hue in enumerate(df['suite'].unique()[:-1]):
-        xpos = df.loc[df['suite'] == hue].index[-1] + 0.5
-        plt.axvline(x=xpos, linewidth=1, color='black')
-
-    for bar in g.patches:
-      # Get the x-coordinate of the left side of the bar
-      x_coord = bar.get_x()
-
-      # Find the corresponding category label using the x-coordinate
-      name = g.get_xticklabels()[int(x_coord + 1)].get_text()
-      if name == 'perlbench' or name == 'gcc':
-        bar.set_hatch('xxx')
-      print(bar, name)
-
-
-    for name, group in df.groupby('suite'):
-        xpos = max(0, np.mean(group['benchmark'].index))
-        ypos = top
-        a = plt.text(
-            xpos,
-            ypos,
-            name,
-            ha='center',
-            va='bottom',
-            fontsize=10,  # You can adjust the fontsize as needed
-            # fontweight='bold'  # You can specify other font properties as well
-        )
-
-
-    for x, row in df.iterrows():
-        y = row[ylabel] + 0.0
-
-        perc = y * 100
-        g.annotate(f'{perc:.0f}',
-                   (x, max(y, 0)),
-                   ha='center',
-                   va='bottom',
-                   xytext=(0, 1),
-                   fontsize=6.5,
-                   # fontweight='bold',
-                   rotation=0,
-                   textcoords='offset points',
-                   zorder=11)
-
-    g.set(title=None)
-    g.set(xlabel=None)
-    g.set(ylabel=ylabel)
-    plt.grid(visible=True, which='minor', linestyle='-', alpha=0.2, zorder=1)
+    handles, _ = ax.get_legend_handles_labels()
+    ax.legend(handles, [config_labels.get(c, c) for c in present],
+              ncol=len(present), loc='upper center', bbox_to_anchor=(0.5, 1.18),
+              fontsize=7, frameon=False)
     ax.set_axisbelow(True)
-
     plt.tight_layout()
 
-    return g, plt, df
-
-
-
-
-
-
-
-
-def plot_overhead(df, output, metric, baseline, modified, title='Result', ylabel='overhead', figsize=(9, 2.5), show_values=False, geomean_parts=True, geomean_all=True, angle_dude=65):
-    df = do_pivot(df, metric)
-    df[ylabel] = (df[modified] - df[baseline]) / df[baseline]
-    g, plt, df = plot_metric_new(df, output, 'overhead', title=title, geomean_parts=geomean_parts, geomean_all=geomean_all,
-                         ylabel=ylabel, figsize=figsize, show_values=show_values)
-    # g.set_ylim((0, 1.1))
-    # plt.xticks(rotation=90)
-    plt.xticks(rotation=angle_dude, fontsize=7, rotation_mode='anchor', ha='right')
-
-    g.yaxis.set_major_formatter(
-        mtick.FuncFormatter(lambda y, _: '{}%'.format(int(y * 100))))
-
-    labels = plt.gca().get_xticklabels()
-    offset = 0.025
-
     os.makedirs('results/', exist_ok=True)
-    # plt.tight_layout()
-    plt.savefig('results/' + output, bbox_inches = 'tight', pad_inches = .05)
+    plt.savefig('results/figure7.pdf', bbox_inches='tight', pad_inches=.05)
+    print("Wrote results/figure7.pdf")
 
-plot_overhead(pd.read_csv('bench/results/figure7/all.csv'),
-              title='Overhead (Lower is better)',
-              output='figure7.pdf',
-              metric='time',
-              baseline='baseline',
-              modified='alaska',
-              figsize=(9, 1.75),
-              # figsize=(10, 3),
-              angle_dude=45,
-              geomean_parts=False,
-              ylabel='') #'Exec. time\nincrease (%)')
+
+if __name__ == '__main__':
+    main()

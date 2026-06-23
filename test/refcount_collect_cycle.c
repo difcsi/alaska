@@ -28,12 +28,14 @@
 #include <stdlib.h>
 #include <unistd.h>
 
-#if !ALASKA_ENABLE_REFCOUNT
+#if !ALASKA_ENABLE_CYCLE_COLLECTION
 
-// Cycle collection is a refcount-only feature. Without it there is nothing to
-// test; report and succeed so the target stays green in both build configurations.
+// Cycle collection is a separately-gated feature (a superset of reference
+// counting). Without it there is nothing to test; report and succeed so the
+// target stays green in builds that lack cycle collection (e.g. the refcount-only
+// config, where reference counting is on but the cycle collector is not built).
 int main(void) {
-  printf("[refcount_collect_cycle] ALASKA_ENABLE_REFCOUNT is off; skipping.\n");
+  printf("[refcount_collect_cycle] ALASKA_ENABLE_CYCLE_COLLECTION is off; skipping.\n");
   return 0;
 }
 

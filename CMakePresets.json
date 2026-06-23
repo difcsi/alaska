@@ -18,27 +18,68 @@
         "CMAKE_C_COMPILER": "${sourceDir}/opt/llvm/bin/clang",
         "CMAKE_CXX_COMPILER": "${sourceDir}/opt/llvm/bin/clang++",
         "LLVM_DIR": "${sourceDir}/opt/llvm/lib/cmake/llvm",
-        "ALASKA_ENABLE_TESTING": "OFF"
+        "ALASKA_ENABLE_TESTING": "OFF",
+        "ALASKA_CONFIG": "${sourceDir}/configs/config.alaska.cmake"
       }
     },
     {
       "name": "noservice",
-      "displayName": "Alaska (noservice)",
+      "displayName": "Alaska (noservice: translation only)",
       "inherits": "base-llvm",
       "binaryDir": "${sourceDir}/build/noservice",
       "cacheVariables": {
         "CMAKE_INSTALL_PREFIX": "${sourceDir}/opt/alaska-noservice",
-        "ALASKA_CONFIG": "${sourceDir}/configs/config.noservice.cmake"
+        "ALASKA_ENABLE_REFCOUNT": "OFF",
+        "ALASKA_ENABLE_CYCLE_COLLECTION": "OFF",
+        "ALASKA_ENABLE_ANCHORAGE": "OFF"
       }
     },
     {
       "name": "anchorage",
-      "displayName": "Alaska (anchorage)",
+      "displayName": "Alaska (anchorage: heap defragmentation only)",
       "inherits": "base-llvm",
       "binaryDir": "${sourceDir}/build/anchorage",
       "cacheVariables": {
         "CMAKE_INSTALL_PREFIX": "${sourceDir}/opt/alaska-anchorage",
-        "ALASKA_CONFIG": "${sourceDir}/configs/config.anchorage.cmake"
+        "ALASKA_ENABLE_REFCOUNT": "OFF",
+        "ALASKA_ENABLE_CYCLE_COLLECTION": "OFF",
+        "ALASKA_ENABLE_ANCHORAGE": "ON"
+      }
+    },
+    {
+      "name": "refcount",
+      "displayName": "Alaska (reference counting)",
+      "inherits": "base-llvm",
+      "binaryDir": "${sourceDir}/build/refcount",
+      "cacheVariables": {
+        "CMAKE_INSTALL_PREFIX": "${sourceDir}/opt/alaska-refcount",
+        "ALASKA_ENABLE_REFCOUNT": "ON",
+        "ALASKA_ENABLE_CYCLE_COLLECTION": "OFF",
+        "ALASKA_ENABLE_ANCHORAGE": "OFF"
+      }
+    },
+    {
+      "name": "refcount-gc",
+      "displayName": "Alaska (reference counting + cycle collection)",
+      "inherits": "base-llvm",
+      "binaryDir": "${sourceDir}/build/refcount-gc",
+      "cacheVariables": {
+        "CMAKE_INSTALL_PREFIX": "${sourceDir}/opt/alaska-refcount-gc",
+        "ALASKA_ENABLE_REFCOUNT": "ON",
+        "ALASKA_ENABLE_CYCLE_COLLECTION": "ON",
+        "ALASKA_ENABLE_ANCHORAGE": "OFF"
+      }
+    },
+    {
+      "name": "refcount-gc-anchorage",
+      "displayName": "Alaska (reference counting + cycle collection + anchorage)",
+      "inherits": "base-llvm",
+      "binaryDir": "${sourceDir}/build/refcount-gc-anchorage",
+      "cacheVariables": {
+        "CMAKE_INSTALL_PREFIX": "${sourceDir}/opt/alaska-refcount-gc-anchorage",
+        "ALASKA_ENABLE_REFCOUNT": "ON",
+        "ALASKA_ENABLE_CYCLE_COLLECTION": "ON",
+        "ALASKA_ENABLE_ANCHORAGE": "ON"
       }
     }
   ],
@@ -54,6 +95,18 @@
     {
       "name": "anchorage",
       "configurePreset": "anchorage"
+    },
+    {
+      "name": "refcount",
+      "configurePreset": "refcount"
+    },
+    {
+      "name": "refcount-gc",
+      "configurePreset": "refcount-gc"
+    },
+    {
+      "name": "refcount-gc-anchorage",
+      "configurePreset": "refcount-gc-anchorage"
     }
   ]
 }

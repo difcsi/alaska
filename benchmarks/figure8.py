@@ -1,5 +1,6 @@
-# This script generates the new data required to plot figure 8.
-# The baseline, and the alaska measurements are gathered when plotting figure 7.
+# Generates the SPEC2017 data for figure 8: per-configuration overhead across the
+# full benchmark sweep (baseline + every Alaska build config). Where figure 7 spans
+# all suites, figure 8 zooms in on SPEC2017 so the per-config differences are legible.
 
 
 import waterline as wl
@@ -17,7 +18,14 @@ from matplotlib.lines import Line2D
 from matplotlib import cm
 import matplotlib.pyplot as plt
 
-from .utils import activate_local_toolchain, find_spec, get_spec_size
+try:
+  from .utils import (activate_local_toolchain, find_spec, get_spec_size,
+                      ALASKA_BUILD_CONFIGS, BASELINE_CONFIG, BASELINE_DRIVER,
+                      config_prefix)
+except ImportError:
+  from utils import (activate_local_toolchain, find_spec, get_spec_size,
+                    ALASKA_BUILD_CONFIGS, BASELINE_CONFIG, BASELINE_DRIVER,
+                    config_prefix)
 
 activate_local_toolchain()
 
@@ -25,21 +33,31 @@ activate_local_toolchain()
 # This is where all benchmark sourcefiles and results will be saved.
 space = wl.Workspace("bench")
 
-# Grab alaska's linker flags using it's config tool.
-linker_flags = os.popen("alaska-config --ldflags").read().strip().split("\n")
 
+# See benchmarks/figure7.py for the rationale behind binding each linker/stage to a
+# specific install prefix.
 class AlaskaLinker(wl.Linker):
   command = "clang++"
+
+  def __init__(self, prefix):
+    self.prefix = prefix
+    self.linker_flags = os.popen(
+        f"{prefix}/bin/alaska-config --ldflags").read().strip().split("\n")
+
   def link(self, ws, objects, output, args=[]):
-    ws.shell("clang++", *args, '-ldl', *linker_flags, *objects, "-o", output)
+    ws.shell("clang++", *args, '-ldl', *self.linker_flags, *objects, "-o", output)
 
 
 class AlaskaStage(wl.pipeline.Stage):
-  def __init__(self, extra_args = []):
+  def __init__(self, prefix, extra_args=[], baseline=False):
+    self.prefix = prefix
     self.extra_args = extra_args
+    self.baseline = baseline
 
   def run(self, input, output, benchmark):
     aux_args = []
+    if self.baseline:
+      aux_args.append('--baseline')
     env = os.environ.copy()
     if benchmark.suite.name == "SPEC2017":
       if benchmark.name == '602.gcc_s':
@@ -50,8 +68,9 @@ class AlaskaStage(wl.pipeline.Stage):
       if benchmark.name == '602.gcc_s' or benchmark.name == '600.perlbench_s':
         aux_args.append('--disable-hoisting')
         print("Disable hoisting!")
-    
-    space.shell(f"alaska-transform", *aux_args, *self.extra_args, input, '-o', output, env=env)
+
+    space.shell(f"{self.prefix}/bin/alaska-transform",
+                *aux_args, *self.extra_args, input, '-o', output, env=env)
 
 
 
@@ -75,18 +94,17 @@ if spec:
 space.clear_pipelines()
 
 
+def add_pipeline(name, prefix, baseline=False):
+  pl = waterline.pipeline.Pipeline(name)
+  pl.add_stage(OptStage(['-O3']), name="Optimize")
+  pl.add_stage(AlaskaStage(prefix, baseline=baseline), name="Alaska")
+  pl.set_linker(AlaskaLinker(prefix))
+  space.add_pipeline(pl)
 
-pl = waterline.pipeline.Pipeline("nohoisting")
-pl.add_stage(OptStage(['-O3']), name="Optimize")
-pl.add_stage(AlaskaStage(['--disable-hoisting']), name="Alaska")
-pl.set_linker(AlaskaLinker())
-space.add_pipeline(pl)
 
-
-pl = waterline.pipeline.Pipeline("notracking")
-pl.add_stage(OptStage(['-O3']), name="Optimize")
-pl.add_stage(AlaskaStage(['--disable-tracking']), name="Alaska")
-pl.set_linker(AlaskaLinker())
-space.add_pipeline(pl)
+# baseline + one pipeline per Alaska build configuration, same as figure 7.
+add_pipeline(BASELINE_CONFIG, config_prefix(BASELINE_DRIVER), baseline=True)
+for cfg in ALASKA_BUILD_CONFIGS:
+  add_pipeline(cfg, config_prefix(cfg))
 
 res = space.run(runs=2, compile=True, run_name="figure8")
