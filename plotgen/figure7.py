@@ -19,6 +19,7 @@ CONFIG_ORDER = [
     "noservice",
     "anchorage",
     "refcount",
+    "refcount-anchorage",
     "refcount-gc",
     "refcount-gc-anchorage",
 ]
@@ -27,6 +28,7 @@ config_colors = {
     "noservice": "#0075ab",
     "anchorage": "#33bb88",
     "refcount": "#aa6fc5",
+    "refcount-anchorage": "#8c564b",
     "refcount-gc": "#ff6583",
     "refcount-gc-anchorage": "#ffa600",
 }
@@ -35,6 +37,7 @@ config_labels = {
     "noservice": "noservice",
     "anchorage": "anchorage",
     "refcount": "RC",
+    "refcount-anchorage": "RC+anchorage",
     "refcount-gc": "RC+GC",
     "refcount-gc-anchorage": "RC+GC+anchorage",
 }

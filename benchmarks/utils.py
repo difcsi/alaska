@@ -67,6 +67,7 @@ ALASKA_BUILD_CONFIGS = [
     "noservice",
     "anchorage",
     "refcount",
+    "refcount-anchorage",
     "refcount-gc",
     "refcount-gc-anchorage",
 ]
