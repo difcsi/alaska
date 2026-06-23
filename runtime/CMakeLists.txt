@@ -257,7 +257,16 @@ endif(ALASKA_HTLB_SIM)
   # alaska_translate.bc); exposing the symbol additionally lets out-of-band callers
   # (tests, tools, liballocs glue) invoke alaska_translate directly and resolve it
   # at link time against -lalaska.
-  target_link_libraries(alaska "$<LINK_LIBRARY:WHOLE_ARCHIVE,alaska_translate_native>")
+  #
+  # Use raw GNU-ld --whole-archive rather than $<LINK_LIBRARY:WHOLE_ARCHIVE,...>,
+  # which requires CMake >= 3.24 (the project's floor is 3.13). Reference the archive
+  # by path ($<TARGET_FILE:...>) so the flags stay adjacent to it, and add an explicit
+  # build-order dependency since we link the file rather than the target name.
+  target_link_libraries(alaska
+    -Wl,--whole-archive
+    "$<TARGET_FILE:alaska_translate_native>"
+    -Wl,--no-whole-archive)
+  add_dependencies(alaska alaska_translate_native)
 
 endif(NOT ALASKA_CORE_ONLY) # ---------------------------------------------------------------------------------
 
