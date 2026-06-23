@@ -250,7 +250,14 @@ endif(ALASKA_HTLB_SIM)
   )
 
 
-  target_link_libraries(alaska alaska_translate_native)
+  # Force the whole translate object into libalaska so alaska_translate (and the
+  # other translate.cpp entry points) are *exported* runtime symbols rather than
+  # on-demand archive members the linker drops when nothing references them. The
+  # compiler still lowers/inlines its own inserted alaska_translate calls (via
+  # alaska_translate.bc); exposing the symbol additionally lets out-of-band callers
+  # (tests, tools, liballocs glue) invoke alaska_translate directly and resolve it
+  # at link time against -lalaska.
+  target_link_libraries(alaska "$<LINK_LIBRARY:WHOLE_ARCHIVE,alaska_translate_native>")
 
 endif(NOT ALASKA_CORE_ONLY) # ---------------------------------------------------------------------------------
 

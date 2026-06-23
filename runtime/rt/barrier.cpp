@@ -391,6 +391,12 @@ static void mark_conservative_range(void* sp_lo, void* sp_hi, bool marked) {
 // inside the existing barrier signal handler -- no extra signal, no extra
 // rendezvous (rv_park is the rendezvous). g_present_scan is set by
 // barrier_thread_func only on reclaim cycles so non-reclaim barriers pay nothing.
+// The present-bitmap stackscan exists only to support refcount reclamation
+// (alaska::gc::present_* live in gc_bitmaps.cpp, which is compiled only when
+// ALASKA_ENABLE_REFCOUNT is on). Anchorage-only / noservice builds have no
+// reclaim pass, so the whole present-scan subsystem is compiled out -- otherwise
+// libalaska would carry an undefined reference to alaska::gc::present_mark.
+#if ALASKA_ENABLE_REFCOUNT
 static volatile int g_present_scan = 0;
 
 // Mark one candidate word present iff it is a live (allocated, non-free) handle.
@@ -417,6 +423,7 @@ static void scan_registers_present(ucontext_t* uc) {
   }
 #endif
 }
+#endif  // ALASKA_ENABLE_REFCOUNT
 
 // Conservatively pin/unpin every handle-looking value held in the interrupted
 // thread's registers (companion to mark_conservative_range for the stack). Used
@@ -435,6 +442,7 @@ static void mark_registers_conservative(ucontext_t* uc, bool marked) {
 // handles present. `sp_lo` is the thread's stack pointer at the interrupt
 // (systrap saved SP, or ucontext RSP); registers are only scanned when not parked
 // in systrap (then the live registers are the app's, not the handler's).
+#if ALASKA_ENABLE_REFCOUNT
 static inline void present_scan_self(void* sp_lo, ucontext_t* uc, bool from_systrap) {
   if (!g_present_scan) return;
   void* sp_hi = alaska::thread_tracking::my_state.stack_top;
@@ -445,6 +453,11 @@ static inline void present_scan_self(void* sp_lo, ucontext_t* uc, bool from_syst
 extern "C" void alaska_gc_present_scan_set(int on) {
   __atomic_store_n(&g_present_scan, on, __ATOMIC_RELEASE);
 }
+#else
+// No reclaim pass without reference counting: the barrier handler still calls
+// present_scan_self on every participating thread, so keep it as a no-op.
+static inline void present_scan_self(void*, ucontext_t*, bool) {}
+#endif  // ALASKA_ENABLE_REFCOUNT
 
 
 // Pin / unpin this participant's roots in the global handle table. The actual

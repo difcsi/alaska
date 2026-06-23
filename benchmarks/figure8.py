@@ -21,11 +21,11 @@ import matplotlib.pyplot as plt
 try:
   from .utils import (activate_local_toolchain, find_spec, get_spec_size,
                       ALASKA_BUILD_CONFIGS, BASELINE_CONFIG, BASELINE_DRIVER,
-                      config_prefix)
+                      config_prefix, vprint)
 except ImportError:
   from utils import (activate_local_toolchain, find_spec, get_spec_size,
                     ALASKA_BUILD_CONFIGS, BASELINE_CONFIG, BASELINE_DRIVER,
-                    config_prefix)
+                    config_prefix, vprint)
 
 activate_local_toolchain()
 
@@ -63,11 +63,11 @@ class AlaskaStage(wl.pipeline.Stage):
       if benchmark.name == '602.gcc_s':
         # Handle GCC's funky garbage collector (Don't replace alloc_page)
         env['ALASKA_SPECIAL_CASE_GCC'] = 'true'
-        print("Special case GCC allocator")
+        vprint("Special case GCC allocator")
 
       if benchmark.name == '602.gcc_s' or benchmark.name == '600.perlbench_s':
         aux_args.append('--disable-hoisting')
-        print("Disable hoisting!")
+        vprint("Disable hoisting!")
 
     space.shell(f"{self.prefix}/bin/alaska-transform",
                 *aux_args, *self.extra_args, input, '-o', output, env=env)

@@ -3,6 +3,19 @@ import os
 from pathlib import Path
 
 
+# Benchmark-harness verbosity. The figure sweeps emit a line per benchmark per
+# build config while compiling, which buries waterline's progress bars in
+# scrollback. Keep that chatter off by default; set ALASKA_BENCH_VERBOSE=1 (or
+# true/yes) to bring it back for debugging.
+VERBOSE = os.environ.get("ALASKA_BENCH_VERBOSE", "").lower() in ("1", "true", "yes", "on")
+
+
+def vprint(*args, **kwargs):
+  """print() that stays silent unless ALASKA_BENCH_VERBOSE is set."""
+  if VERBOSE:
+    print(*args, **kwargs)
+
+
 def _prepend_env_path(var_name, new_path):
   current = os.environ.get(var_name, "")
   parts = [p for p in current.split(":") if p]
@@ -25,7 +38,7 @@ def activate_local_toolchain(repo_root=None):
       repo_root / "opt" / "gllvm" / "lib",
   ]
 
-  print("Activating local toolchain in ", repo_root)
+  vprint("Activating local toolchain in ", repo_root)
 
   for path in bin_paths:
     if path.is_dir():
@@ -93,7 +106,7 @@ spec_locations = [
     "/SPEC2017.tar.gz",
 ]
 def find_spec():
-    print('looking for SPEC in these locations:', spec_locations)
+    vprint('looking for SPEC in these locations:', spec_locations)
     for loc in spec_locations:
         loc = os.path.expanduser(loc)
         if os.path.isfile(loc):

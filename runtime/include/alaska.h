@@ -56,10 +56,13 @@ extern int alaska_is_handle(void *ptr);
 // faulting in / making the backing present as a side effect. If `ptr` is not a
 // handle (top bit clear, or the special -1) it is returned unchanged, so this
 // is safe to call on arbitrary pointers. This is normally inserted by the
-// compiler at handle dereferences; it is exported here so that out-of-band
-// consumers (e.g. liballocs integration glue) can translate a handle before
-// handing it to an address-indexed query. Definition lives in
-// libalaska_translate_native.a (runtime/core/translate.cpp).
+// compiler at handle dereferences and lowered/inlined away by the pass pipeline.
+// It is ALSO exported out-of-band as an ordinary runtime symbol from libalaska
+// (runtime/core/translate.cpp, force-linked whole into libalaska -- see
+// runtime/CMakeLists.txt), so hand-written code (tests, tools, liballocs glue) can
+// call alaska_translate directly and resolve it at link time against -lalaska.
+// Writes through the returned pointer are plain memory accesses, with no refcount
+// store barrier.
 extern void *alaska_translate(void *ptr);
 
 struct alaska_blob_config {
