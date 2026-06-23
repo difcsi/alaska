@@ -31,6 +31,17 @@ export LLVM_RESOURCE_DIR=$(${ROOT}/opt/llvm/bin/clang -print-resource-dir)
 
 mkdir -p opt
 
+# Measurement build: set ALASKA_MEASURE=1 to compile in the runtime event
+# counters (incref/decref/gc-free/compaction tallies, see EventCounters.hpp) so a
+# figure-7 run can count those events. OFF by default -- the timing builds carry
+# no counter overhead. This reconfigures the same install dirs, so do a plain
+# `./build.sh` afterwards to get back to clean timing builds.
+EXTRA_CMAKE_ARGS=()
+if [ -n "${ALASKA_MEASURE}" ]; then
+  EXTRA_CMAKE_ARGS+=("-DALASKA_ENABLE_EVENT_COUNTERS=ON")
+  printf "\e[35m[measurement build: event counters ON]\e[0m\n"
+fi
+
 # The benchmark configurations. "baseline" (plain bundled clang) is realized in the
 # benchmark harness via `alaska-transform --baseline` and needs no build of its own,
 # so it is not in this list. The six Alaska variants below each get their own build
@@ -40,7 +51,7 @@ mkdir -p opt
 for config in noservice anchorage refcount refcount-anchorage refcount-gc refcount-gc-anchorage; do
   INSTALL_DIR=${ROOT}/opt/alaska-${config}
 
-  buildstep "configure ${config}" cmake --preset ${config} -S $ROOT
+  buildstep "configure ${config}" cmake --preset ${config} -S $ROOT "${EXTRA_CMAKE_ARGS[@]}"
   buildstep "build ${config}" cmake --build --preset ${config} --target install -j $(nproc)
 
   # Create an enable file which can be sourced in bash

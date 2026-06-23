@@ -17,6 +17,7 @@
 #include <alaska/Runtime.hpp>
 #include <alaska/alaska.hpp>
 #include <alaska/rt/barrier.hpp>
+#include <alaska/EventCounters.hpp>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -134,6 +135,12 @@ void __attribute__((constructor(102))) alaska_init(void) {
   the_runtime = new alaska::Runtime();
   // Attach the runtime's barrier manager
   the_runtime->barrier_manager = &the_barrier_manager;
+#if ALASKA_ENABLE_EVENT_COUNTERS
+  // Dump the measurement counters on the way out. Registered first so it runs
+  // LAST (atexit is LIFO) -- after alaska_stop_barrier_thread below has quiesced
+  // the periodic barrier, so no compaction/reclaim updates the counts mid-dump.
+  atexit(alaska_events_dump);
+#endif
 #if ALASKA_BARRIER_THREAD_ENABLED
   pthread_create(&barrier_thread, NULL, barrier_thread_func, NULL);
   atexit(alaska_stop_barrier_thread);

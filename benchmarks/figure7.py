@@ -4,9 +4,57 @@ import waterline.utils
 import waterline.pipeline
 import os
 import time
+import tempfile
 from pathlib import Path
 from waterline.run import Runner
 import pandas as pd
+
+
+# Runtime event metrics collected per run, in dump order (see EventCounters.hpp).
+EVENT_KEYS = ['halloc', 'hfree', 'incref', 'decref', 'gc_frees', 'compactions',
+              'objects_moved', 'handles_total', 'handles_nonzero_rc']
+
+
+class EventCountingRunner(Runner):
+    """Runner that also tallies runtime events: refcount inc/dec, GC frees, and
+    heap-compaction passes / objects moved.
+
+    Each run points $ALASKA_EVENT_LOG at a fresh temp file; a measurement build of
+    libalaska (build with ALASKA_MEASURE=1, which sets ALASKA_ENABLE_EVENT_COUNTERS)
+    writes its counts there at process exit. The parsed counts are merged into the
+    per-run metric dict, so they flow through waterline into all.csv and their own
+    <metric>.csv pivots alongside `time`. A plain timing build compiles the counters
+    out and writes no file, so the counts simply come back as 0."""
+
+    def run(self, workspace, config, binary):
+        fd, path = tempfile.mkstemp(prefix='alaska-events-', suffix='.txt')
+        os.close(fd)
+        # Inject the log path for just this run, then restore (config is reused
+        # across runs/pipelines).
+        saved_env = config.env
+        config.env = {**(saved_env or {}), 'ALASKA_EVENT_LOG': path}
+        try:
+            out = super().run(workspace, config, binary)
+        finally:
+            config.env = saved_env
+
+        counts = {k: 0 for k in EVENT_KEYS}
+        try:
+            with open(path) as fh:
+                for line in fh:
+                    k, _, v = line.strip().partition('=')
+                    if k in counts and v:
+                        counts[k] = int(v)
+        except FileNotFoundError:
+            pass  # timing build: counters compiled out, no file written.
+        finally:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+        out.update(counts)
+        return out
 
 # Accumulates compile-time measurements recorded by TimedStage.
 compile_times = []
@@ -125,6 +173,9 @@ _quick = os.environ.get("ALASKA_BENCH_QUICK", "").lower() in ("1", "true", "yes"
 EMBENCH_ITERS = int(os.environ.get("ALASKA_EMBENCH_ITERS", "1000" if _quick else "10000"))
 GAP_SIZE = os.environ.get("ALASKA_GAP_SIZE", "15" if _quick else "19")
 NAS_CLASS = os.environ.get("ALASKA_NAS_CLASS", "W" if _quick else "B")
+# In quick mode, skip the heavy NAS pseudo-applications (BT/SP/LU); they dominate
+# the sweep's wall-clock even at class W. The lighter kernels still run.
+NAS_EXCLUDE = ("bt", "sp", "lu") if _quick else ()
 RUNS = int(os.environ.get("ALASKA_RUNS", "2"))
 _suites = [s.strip() for s in os.environ.get("ALASKA_SUITES", "embench,gap,nas").lower().split(",") if s.strip()]
 
@@ -133,7 +184,7 @@ if "embench" in _suites:
 if "gap" in _suites:
   space.add_suite(wl.suites.GAP, enable_openmp=False, enable_exceptions=False, graph_size=GAP_SIZE)
 if "nas" in _suites:
-  space.add_suite(wl.suites.NAS, enable_openmp=False, suite_class=NAS_CLASS)
+  space.add_suite(wl.suites.NAS, enable_openmp=False, suite_class=NAS_CLASS, exclude=NAS_EXCLUDE)
 
 # Attempt to find SPEC2017 CPU on the system.
 spec = find_spec()
@@ -168,7 +219,11 @@ for cfg in ALASKA_BUILD_CONFIGS:
 
 
 run_name = "figure7"
-res = space.run(runs=RUNS, compile=True, run_name=run_name)
+# EventCountingRunner adds the runtime event tallies (incref/decref/gc_frees/
+# compactions/objects_moved) as extra metric columns in the results, in addition
+# to the usual timing metrics. They are 0 unless libalaska was built with
+# ALASKA_MEASURE=1 (the measurement build).
+res = space.run(runs=RUNS, compile=True, run_name=run_name, runner=EventCountingRunner())
 
 # Save compile-time measurements alongside the runtime results.
 if compile_times:

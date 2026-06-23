@@ -16,6 +16,7 @@
 #include <alaska/Runtime.hpp>
 #include <alaska/ThreadCache.hpp>
 #include <alaska/gc_bitmaps.hpp>
+#include <alaska/EventCounters.hpp>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -105,7 +106,9 @@ void alaska_inc_refcount(void *ptr) {
   }
 
   // alaska::printf("Incrementing refcount of mapping  %p from %lu\n", mapping, mapping->get_refcount());
-  // Increment the refcount using the mapping's method
+  // Increment the refcount using the mapping's method. The incref event is
+  // counted inside Mapping::inc_refcount (Runtime.cpp), so every refcount
+  // mutation is tallied and this call is never double-counted.
   auto new_count = mapping->inc_refcount();
   if(new_count == 1) {
     nullcount_update(ptr, /*add=*/false);
@@ -139,9 +142,10 @@ void alaska_dec_refcount(void *ptr) {
     return;
   }
 
-  // Decrement the refcount using the mapping's method
+  // Decrement the refcount using the mapping's method. The decref event is
+  // counted inside Mapping::dec_refcount (Runtime.cpp).
   uint64_t new_count = mapping->dec_refcount();
-  
+
   // TODO: If refcount reaches 0, we could potentially free the handle
   // For now, we just track the refcount. The actual freeing policy
   // should attach here
@@ -158,6 +162,74 @@ void alaska_dec_refcount(void *ptr) {
 #endif
 
   in_refcount_operation = false;
+}
+
+/**
+ * alaska_hfree_dec_children - Drop the references an aggregate held, on free.
+ *
+ * When an object is freed its outgoing handle references die too, so decrement
+ * each contained handle's reference count. This is what finally lets refcounts
+ * return to zero for handles only reachable through heap containers: without it a
+ * stored-once handle is inc'd (on the heap write) but never dec'd, so its count
+ * never reaches 0 and refcount/GC reclamation never triggers -- the dominant case
+ * in practice.
+ *
+ * The scan is conservative -- the same word-walk the cycle collector's
+ * visit_children uses -- so a word that merely looks like a live handle is treated
+ * as one. UNLIKE the cycle collector (which only *trial* decrements and then
+ * restores live nodes), this decrement is PERMANENT: a false-positive word could
+ * drive a live object's refcount to 0 and have it reclaimed prematurely. That is
+ * the inherent hazard of conservative refcount-on-free. Disable at runtime with
+ * ALASKA_NO_FREE_DEC. Called from alaska_hfree_now before the backing memory is
+ * recycled, while the object is still readable.
+ */
+void alaska_hfree_dec_children(void *ptr) {
+  static int disabled = -1;
+  if (disabled < 0) disabled = (getenv("ALASKA_NO_FREE_DEC") != nullptr) ? 1 : 0;
+  if (disabled) return;
+  if (ptr == nullptr || in_refcount_operation) return;
+
+  auto *m = alaska::Mapping::from_handle_safe(ptr);
+  if (m == nullptr || m->is_free()) return;
+
+  auto *tc = get_tc_r();
+  if (tc == nullptr) return;
+  size_t size = tc->get_size(ptr);
+  if (size < sizeof(void *)) return;
+
+  void **words = (void **)m->get_pointer();
+  if (words == nullptr) return;
+
+  // alaska_dec_refcount ignores non-handle words, so the conservative scan only
+  // affects words that actually decode to a live handle.
+  size_t n = size / sizeof(void *);
+  for (size_t i = 0; i < n; i++) {
+    if (words[i] != nullptr) alaska_dec_refcount(words[i]);
+  }
+}
+
+/**
+ * alaska_inc_handles_in_range - Inc the handles a byte copy deposited.
+ *
+ * The store barrier (RefcountInc) only increments on pointer-*typed* stores, so a
+ * memcpy/memmove of handle-containing memory creates new heap references to those
+ * handles WITHOUT incrementing them. They would then be decremented on free
+ * (alaska_hfree_dec_children) with no matching inc -- an underflow that could free
+ * a live object. The compiler instruments every byte copy with a call to this
+ * function over the destination range, keeping inc/dec balanced.
+ *
+ * Conservative word scan, exactly mirroring alaska_hfree_dec_children: a word that
+ * decodes to a live handle is inc'd (alaska_inc_refcount ignores everything else).
+ * `base` is the raw destination pointer, `bytes` the copy length.
+ */
+void alaska_inc_handles_in_range(void *base, size_t bytes) {
+  if (base == nullptr || bytes < sizeof(void *)) return;
+  if (in_refcount_operation) return;
+  void **words = (void **)base;
+  size_t n = bytes / sizeof(void *);
+  for (size_t i = 0; i < n; i++) {
+    if (words[i] != nullptr) alaska_inc_refcount(words[i]);
+  }
 }
 
 /**
@@ -323,18 +395,25 @@ namespace alaska {
     nullcount_lock.unlock();
 
     for (auto *h : to_free) {
-      // Drop liballocs' side-table record before recycling (tc.hfree bypasses the
-      // public hfree, which would otherwise do this).
       if (&__liballocs_notify_alaska_free) {
         auto *m = alaska::Mapping::from_handle_safe(h);
         if (m) __liballocs_notify_alaska_free(m->get_pointer());
+        hfree(h); // we might hijack this from liballocs
+      } else {
+        // hfree(h);
+        ::alaska_hfree_dec_children(h);
+        tc.hfree(h); // optimisation in case liballocs is 
       }
-      tc.hfree(h);
+      
+      
     }
     if (getenv("RECLAIM_DEBUG")) {
       fprintf(stderr, "[reclaim] candidates=%zu present_marks=%lu freed=%zu\n",
               candidates, alaska::gc::g_mark_count, (size_t)to_free.size());
     }
+#if ALASKA_ENABLE_EVENT_COUNTERS
+    alaska::events::gc_free_event((uint64_t)to_free.size());
+#endif
     return (size_t)to_free.size();
   }
 

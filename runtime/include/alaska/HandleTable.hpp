@@ -109,6 +109,21 @@ namespace alaska {
 
     bool valid_handle(alaska::Mapping *m) const;
 
+    // A teardown snapshot of how many handles the table is holding: `total` live
+    // (allocated, not free) handles, and how many of those have a nonzero
+    // reference count. `nonzero_refcount` is always 0 when refcounting is
+    // compiled out (no handle carries a count then).
+    struct HandleCensus {
+      size_t total = 0;
+      size_t nonzero_refcount = 0;
+    };
+
+    // Walk every mapping slot in every slab under the table lock and tally the
+    // census above. Used by the measurement build's exit-time dump to report how
+    // many handles still existed -- and how many still had references -- at
+    // teardown (a refcount-leak / never-freed-handle indicator).
+    HandleCensus census_handles();
+
 
     // Free/release *some* mapping
     void put(alaska::Mapping *m, alaska::ThreadCache *owner = (alaska::ThreadCache *)0x1000UL);

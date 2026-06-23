@@ -169,6 +169,30 @@ namespace alaska {
     return mapping_slab_idx(m) < (slabidx_t)m_slabs.size();
   }
 
+  HandleTable::HandleCensus HandleTable::census_handles() {
+    ck::scoped_lock lk(this->lock);
+
+    HandleCensus census;
+    // Walk every slot of every slab. A never-allocated slot is zeroed and a
+    // freed slot is on the free list (invl set / refcount cleared); both have
+    // is_free() == false only when live, so the free check isolates real handles.
+    for (auto *slab : m_slabs) {
+      Mapping *start = get_slab_start(slab->idx);
+      Mapping *end = get_slab_end(slab->idx);
+      for (Mapping *m = start; m < end; m++) {
+        if (m->is_free()) continue;
+        // A never-allocated slot is all zero -> is_free() (invl bit) is also 0,
+        // so distinguish a live handle by its non-null backing pointer.
+        if (m->get_pointer() == nullptr) continue;
+        census.total++;
+#if ALASKA_ENABLE_REFCOUNT
+        if (m->get_refcount() != 0) census.nonzero_refcount++;
+#endif
+      }
+    }
+    return census;
+  }
+
   void HandleTable::put(Mapping *m, alaska::ThreadCache *owner) {
     log_trace("Putting handle %p", m);
     // Validate that the handle is in this table
@@ -256,25 +280,16 @@ namespace alaska {
     auto *m = (Mapping *)allocator.alloc();
 
     if (unlikely(m == nullptr)) return nullptr;
-#if ALASKA_ENABLE_REFCOUNT
-    m->inc_refcount();
-#endif
     update_state();
     return m;
   }
 
   void HandleSlab::release_remote(Mapping *m) {
-#if ALASKA_ENABLE_REFCOUNT
-    m->dec_refcount(); // ZM: this really should zero the refcount here, TODO
-#endif
     allocator.release_remote(m);
     update_state();
   }
 
   void HandleSlab::release_local(Mapping *m) {
-#if ALASKA_ENABLE_REFCOUNT
-    m->dec_refcount(); // ZM: this really should zero the refcount here, TODO
-#endif
     allocator.release_local(m);
     update_state();
   }

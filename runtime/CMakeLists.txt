@@ -60,6 +60,10 @@ set(CORE_SOURCES
 
   core/Utils.cpp
 
+  # Measurement-only runtime event counters + exit-time dump (storage is always
+  # compiled; the increment call sites are gated on ALASKA_ENABLE_EVENT_COUNTERS).
+  core/EventCounters.cpp
+
   # liballoc is a simple, small, malloc implementation that we embed
   # so alaska can temporially allocate objects w/o implementing a non-handle
   # allocator as well

@@ -56,6 +56,9 @@ alaska_switch(ALASKA_ENABLE_REFCOUNT          ON)
 alaska_switch(ALASKA_ENABLE_CYCLE_COLLECTION  ON)
 alaska_switch(ALASKA_ENABLE_ANCHORAGE         ON)
 
+# Measurement-only event counters (incref/decref/gc-free/compaction tallies).
+alaska_switch(ALASKA_ENABLE_EVENT_COUNTERS    OFF)
+
 # Cycle collection reads refcounts; it cannot be built without reference counting.
 if(ALASKA_ENABLE_CYCLE_COLLECTION AND NOT ALASKA_ENABLE_REFCOUNT)
   message(FATAL_ERROR "ALASKA_ENABLE_CYCLE_COLLECTION requires ALASKA_ENABLE_REFCOUNT")
@@ -221,6 +224,7 @@ endif(ALASKA_ENABLE_COMPILER)
 set(ALASKA_RESULTS_DIR ${CMAKE_SOURCE_DIR}/results)
 set(ALASKA_FIG7_CSV ${ALASKA_RESULTS_DIR}/figure7.csv)
 set(ALASKA_FIG7_PDF ${ALASKA_RESULTS_DIR}/figure7.pdf)
+set(ALASKA_FIG_COMPILE_PDF ${ALASKA_RESULTS_DIR}/figure_compile.pdf)
 set(ALASKA_FIG8_CSV ${ALASKA_RESULTS_DIR}/figure8.csv)
 set(ALASKA_FIG8_PDF ${ALASKA_RESULTS_DIR}/figure8.pdf)
 set(ALASKA_REDIS_FIG9_PDF ${ALASKA_RESULTS_DIR}/figure9.pdf)
@@ -306,6 +310,25 @@ add_custom_command(
 )
 
 add_custom_target(figure7_pdf DEPENDS ${ALASKA_FIG7_PDF})
+
+# Compile-time overhead figure. The figure-7 data run also writes
+# bench/results/figure7/compile_times.csv (via TimedStage), so depend on the
+# figure-7 CSV to guarantee the sweep ran, then plot the compile-time chart.
+add_custom_command(
+  OUTPUT ${ALASKA_FIG_COMPILE_PDF}
+  COMMAND ${CMAKE_COMMAND} -E echo "Generating compile-time figure"
+  COMMAND ${CMAKE_COMMAND} -E make_directory ${ALASKA_RESULTS_DIR}
+  COMMAND /bin/bash -lc ". ${CMAKE_SOURCE_DIR}/venv/bin/activate && python3 ${CMAKE_SOURCE_DIR}/plotgen/figure_compile.py"
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+  DEPENDS
+    ${ALASKA_VENV_TOUCHFILE}
+    ${ALASKA_FIG7_CSV}
+    ${CMAKE_SOURCE_DIR}/plotgen/figure_compile.py
+  USES_TERMINAL
+  VERBATIM
+)
+
+add_custom_target(figure_compile_pdf DEPENDS ${ALASKA_FIG_COMPILE_PDF})
 
 add_custom_command(
   OUTPUT ${ALASKA_FIG8_CSV}

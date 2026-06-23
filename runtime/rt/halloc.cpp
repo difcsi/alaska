@@ -21,6 +21,7 @@
 #include <ck/set.h>
 #include <alaska/Runtime.hpp>
 #include <alaska/ThreadCache.hpp>
+#include <alaska/EventCounters.hpp>
 #include <alaska.h>
 #include <errno.h>
 
@@ -37,6 +38,12 @@ static __thread alaska::ThreadCache *g_tc = nullptr;
 extern "C" void __liballocs_notify_alaska_alloc(void *backing_base, unsigned long requested_size)
     __attribute__((weak));
 extern "C" void __liballocs_notify_alaska_free(void *backing_base) __attribute__((weak));
+
+#if ALASKA_ENABLE_REFCOUNT
+// Defined in refcount.cpp: on free, decrement the reference counts of the handles
+// the object held (see alaska_hfree_now).
+extern "C" void alaska_hfree_dec_children(void *ptr);
+#endif
 
 // The backing base liballocs should bind metadata to. For a sized object that is
 // the mapping's backing pointer; for a HUGE object there is no mapping -- the value
@@ -90,7 +97,12 @@ static void *_halloc(size_t sz, int zero) {
 
   // This seems right...
   if (result == NULL) errno = ENOMEM;
-  else alaska_liballocs_notify_alloc(result, sz);  // bind allocsite + size (halloc + hcalloc)
+  else {
+    alaska_liballocs_notify_alloc(result, sz);  // bind allocsite + size (halloc + hcalloc)
+#if ALASKA_ENABLE_EVENT_COUNTERS
+    alaska::events::halloc_event();
+#endif
+  }
   return result;
 }
 
@@ -99,7 +111,13 @@ void *halloc(size_t sz) noexcept {
 #ifdef MALLOC_BYPASS
   return ::malloc(sz);
 #endif
-  return _halloc(sz, 0);
+  // Zero handle allocations. The refcount dec write-barrier reads a slot's old
+  // value before overwriting it (load-before-store) and hands it to
+  // alaska_dec_refcount; a first store into freshly-allocated-but-uninitialized
+  // heap would otherwise dec whatever garbage was there, which the runtime can
+  // decode as a bogus handle and fault on. Zeroing guarantees an as-yet-unwritten
+  // slot reads as null, which dec ignores. (hcalloc already zeroes.)
+  return _halloc(sz, 1);
 }
 
 void *hcalloc(size_t nmemb, size_t size) {
@@ -170,6 +188,20 @@ void alaska_hfree_now(void *ptr) {
 #endif
   // no-op if NULL is passed
   if (unlikely(ptr == NULL)) return;
+
+#if ALASKA_ENABLE_EVENT_COUNTERS
+  // Program-initiated free. The GC reclaim path frees via tc.hfree directly (not
+  // through here), so it is tallied separately by gc_free_event and not counted here.
+  alaska::events::hfree_event();
+#endif
+
+#if ALASKA_ENABLE_REFCOUNT
+  // Drop the references this aggregate held before its memory is recycled, so a
+  // container's outgoing handles can reach refcount 0 and be reclaimed (see
+  // alaska_hfree_dec_children in refcount.cpp). Must run while the object is still
+  // readable -- i.e. before the backing free below.
+  alaska_hfree_dec_children(ptr);
+#endif
 
   // Drop any liballocs metadata binding before the backing memory is recycled.
   alaska_liballocs_notify_free(ptr);

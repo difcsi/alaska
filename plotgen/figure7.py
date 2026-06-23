@@ -67,33 +67,79 @@ def load_overheads(csv_path, metric='time'):
     return pd.DataFrame(rows)
 
 
-def summarize_by_suite(ov):
-    """Geometric-mean overhead per (suite, config), plus an 'ALL' rollup."""
-    out = []
-    for (suite, cfg), grp in ov.groupby(['suite', 'config']):
-        out.append({'suite': suite, 'config': cfg, 'overhead': geo_mean(grp['overhead'])})
+SUITE_ORDER = ['Embench', 'GAP', 'NAS', 'SPEC2017', 'PolyBench']
+
+
+def ordered_suites(suites):
+    """Known suites first (in canonical order), then any extras alphabetically."""
+    present = set(suites)
+    head = [s for s in SUITE_ORDER if s in present]
+    tail = sorted(s for s in present if s not in SUITE_ORDER)
+    return head + tail
+
+
+def build_plot_frame(ov):
+    """Long frame with one row per (benchmark, config) overhead, plus per-suite
+    and overall geometric-mean rollups.
+
+    Returns the frame (with a 'label' column for the x axis and an 'is_geomean'
+    marker) and the ordered list of x labels."""
+    rows = []
+    order = []
+
+    for suite in ordered_suites(ov['suite'].unique()):
+        sub = ov[ov['suite'] == suite]
+        # Individual benchmarks for this suite.
+        for bench in sorted(sub['benchmark'].unique()):
+            label = bench
+            order.append(label)
+            for _, r in sub[sub['benchmark'] == bench].iterrows():
+                rows.append({'label': label, 'suite': suite, 'config': r['config'],
+                             'overhead': r['overhead'], 'is_geomean': False})
+        # Per-suite geomean.
+        glabel = f'{suite} geomean'
+        order.append(glabel)
+        for cfg, grp in sub.groupby('config'):
+            rows.append({'label': glabel, 'suite': suite, 'config': cfg,
+                         'overhead': geo_mean(grp['overhead']), 'is_geomean': True})
+
+    # Overall geomean across every benchmark.
+    order.append('geomean')
     for cfg, grp in ov.groupby('config'):
-        out.append({'suite': 'ALL', 'config': cfg, 'overhead': geo_mean(grp['overhead'])})
-    return pd.DataFrame(out)
+        rows.append({'label': 'geomean', 'suite': 'ALL', 'config': cfg,
+                     'overhead': geo_mean(grp['overhead']), 'is_geomean': True})
+
+    return pd.DataFrame(rows), order
 
 
 def main():
     ov = load_overheads('bench/results/figure7/all.csv')
     present = [c for c in CONFIG_ORDER if c in set(ov['config'])]
-    summary = summarize_by_suite(ov)
+    plot_df, order = build_plot_frame(ov)
 
-    suite_order = [s for s in ['Embench', 'GAP', 'NAS', 'SPEC2017', 'PolyBench'] if s in set(summary['suite'])]
-    suite_order = suite_order + [s for s in summary['suite'].unique() if s not in suite_order and s != 'ALL'] + ['ALL']
-
-    f, ax = plt.subplots(1, figsize=(9, 2.6), dpi=300)
+    # Widen the figure with the number of x-axis groups so individual benchmarks
+    # stay legible.
+    width = max(9, 0.55 * len(order))
+    f, ax = plt.subplots(1, figsize=(width, 3.2), dpi=300)
     plt.grid(axis='y', linestyle='-', alpha=0.3, zorder=0)
-    g = sns.barplot(data=summary, x='suite', y='overhead', hue='config',
-                    order=suite_order, hue_order=present,
-                    palette=config_colors, edgecolor='black', linewidth=0.8, ax=ax)
+    g = sns.barplot(data=plot_df, x='label', y='overhead', hue='config',
+                    order=order, hue_order=present,
+                    palette=config_colors, edgecolor='black', linewidth=0.6, ax=ax)
+
+    # Hatch the geomean bars so they read as summaries, not individual tests.
+    geomean_labels = {lbl for lbl in order if lbl.endswith('geomean')}
+    geomean_x = {order.index(lbl) for lbl in geomean_labels}
+    n_hues = len(present)
+    for i, patch in enumerate(ax.patches):
+        # seaborn lays out patches hue-major: bar i belongs to x-group i % n_groups.
+        if (i % len(order)) in geomean_x:
+            patch.set_hatch('//')
 
     ax.axhline(y=0, linewidth=1, color='black')
     ax.yaxis.set_major_formatter(mtick.FuncFormatter(lambda y, _: f'{int(y * 100)}%'))
-    ax.set(xlabel=None, ylabel='Exec. time overhead (geomean)')
+    ax.set(xlabel=None, ylabel='Exec. time overhead')
+    ax.tick_params(axis='x', labelsize=6)
+    plt.setp(ax.get_xticklabels(), rotation=60, ha='right', rotation_mode='anchor')
 
     handles, _ = ax.get_legend_handles_labels()
     ax.legend(handles, [config_labels.get(c, c) for c in present],

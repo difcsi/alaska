@@ -19,6 +19,7 @@
 #include "alaska/SizeClass.hpp"
 #include "alaska/utils.h"
 #include <alaska/ThreadCache.hpp>
+#include <alaska/EventCounters.hpp>
 
 
 namespace alaska {
@@ -286,6 +287,11 @@ namespace alaska {
         return true;
       });
     }
+#if ALASKA_ENABLE_EVENT_COUNTERS
+    // Record a compaction event whenever this pass actually relocated objects,
+    // so the figure-7 sweep can count both passes and total objects moved.
+    if (c > 0) alaska::events::compaction_event((uint64_t)c);
+#endif
     return c;
   }
 

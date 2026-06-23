@@ -80,6 +80,9 @@ make venv
 
 make results/figure7.pdf
 
+# Compile-time overhead chart, plotted from the same figure-7 sweep.
+buildstep "figure_compile" make results/figure_compile.pdf
+
 if [[ "$spec_location" != "" ]]; then
   make results/figure8.pdf
 else

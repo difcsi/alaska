@@ -88,6 +88,15 @@ PreservedAnalyses AlaskaReplacementPass::run(Module &M, ModuleAnalysisManager &A
     replace_function(M, "malloc_beebs", "halloc", true);     // embench
     replace_function(M, "calloc_beebs", "hcalloc", true);    // embench
     replace_function(M, "realloc_beebs", "hrealloc", true);  // embench
+
+    // NOTE: C++ operator new (_Znwm/_Znam) is intentionally NOT replaced. Routing
+    // it to halloc makes its result a handle, but the translation layer never
+    // translates those uses -- shouldTranslate() explicitly excludes _Znam
+    // (Translations.cpp) and the allocator analyses only know malloc/calloc/realloc
+    // -- so the program dereferences a raw handle and segfaults. Supporting C++
+    // allocation needs the translation analysis to recognize operator new AND
+    // new[]-array-cookie handling; until then operator new stays on the system
+    // allocator (C++ benchmarks simply aren't handle-managed).
   }
 
   // even if calls to malloc are not replaced, we still ought to replace these functions for
@@ -96,6 +105,11 @@ PreservedAnalyses AlaskaReplacementPass::run(Module &M, ModuleAnalysisManager &A
   replace_function(M, "free", "hfree");
   replace_function(M, "free_beebs", "hfree");  // embench
   replace_function(M, "malloc_usable_size", "alaska_usable_size");
+
+  // operator delete (_ZdlPv/_ZdaPv) is intentionally NOT replaced -- it is the
+  // pair of the operator new replacement above, which is disabled (see there).
+  // Routing delete to hfree while new stays on the system allocator is harmless
+  // (hfree falls back to free for non-handles) but pointless, so leave it.
 
   for (auto *name : alaska::wrapped_functions) {
     replace_function(M, name);

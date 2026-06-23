@@ -15,6 +15,7 @@
 #include <alaska/SizeClass.hpp>
 #include <alaska/BarrierManager.hpp>
 #include <alaska/Localizer.hpp>
+#include <alaska/EventCounters.hpp>
 #include "alaska/alaska.hpp"
 #include "alaska/utils.h"
 #include <stdlib.h>
@@ -51,6 +52,12 @@ namespace alaska {
       neu = (old & ~kRefcountFieldMask) | (nc << kRefcountShift);
     } while (!__atomic_compare_exchange_n(
         w, &old, neu, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE));
+#if ALASKA_ENABLE_EVENT_COUNTERS
+    // Counted at the single refcount-mutation point so the tally captures every
+    // increment: compiler-inserted handle writes AND the allocator's birth/death
+    // bumps (HandleSlab::alloc/release_*).
+    alaska::events::inc_refcount_event();
+#endif
     return (int)nc;
   }
 
@@ -66,6 +73,9 @@ namespace alaska {
       neu = (old & ~kRefcountFieldMask) | (nc << kRefcountShift);
     } while (!__atomic_compare_exchange_n(
         w, &old, neu, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE));
+#if ALASKA_ENABLE_EVENT_COUNTERS
+    alaska::events::dec_refcount_event();
+#endif
     return (int)nc;
   }
 
