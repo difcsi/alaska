@@ -18,6 +18,16 @@
 #include <alaska/liballoc.h>
 #include <alaska/list_head.h>
 
+// Bytes reserved at the END of every huge object for a liballocs trailing
+// `struct insert` (the per-object lifetime-policy mask). Same build-injected knob
+// as the sized heap (see core/ThreadCache.cpp); 0 in vanilla Alaska, which makes
+// every change below a no-op. Folded into the mmap size so the insert lives past
+// the user's bytes, and reported by backing_size_of() so liballocs' insert_for_chunk
+// lands on it. See contrib/liballocs/src/allocators/alaska.c.
+#ifndef ALASKA_LIBALLOCS_INSERT_RESERVE
+#define ALASKA_LIBALLOCS_INSERT_RESERVE 0
+#endif
+
 namespace alaska {
   HugeObjectAllocator::HugeObjectAllocator(HugeAllocationStrategy strat)
       : strat(strat) {
@@ -44,7 +54,12 @@ namespace alaska {
 
     ck::scoped_lock l(m_lock);
 
-    size_t mapping_size = ((size + sizeof(HugeHeader)) + 4095) & ~4095;
+    // Reserve room past the user's bytes for liballocs' trailing insert (0 unless
+    // the build injected a reserve). allocation_size stays the caller's exact
+    // request -- only the mapping grows -- so size_of()/realloc semantics are
+    // unchanged; backing_size_of() adds the reserve back for the insert math.
+    size_t mapping_size =
+        ((size + ALASKA_LIBALLOCS_INSERT_RESERVE + sizeof(HugeHeader)) + 4095) & ~4095;
     if (mapping_size < 4096) {
       mapping_size = 4096;
     }
@@ -117,5 +132,44 @@ namespace alaska {
     }
     // If no matching header is found, return nullptr
     return nullptr;
+  }
+
+  HugeObjectAllocator::HugeHeader* HugeObjectAllocator::find_header_containing(void* ptr) {
+    HugeHeader* entry;
+    list_for_each_entry(entry, &this->allocations, list) {
+      auto base = (uintptr_t)entry->data();
+      // Match against the user range only (not the reserved insert tail), so an
+      // interior pointer into the reserve is not reported as user data -- mirrors
+      // the sized heap, whose object_base also covers only the requested bytes.
+      if ((uintptr_t)ptr >= base && (uintptr_t)ptr < base + entry->allocation_size) {
+        return entry;
+      }
+    }
+    return nullptr;
+  }
+
+  void* HugeObjectAllocator::object_base(void* interior) {
+    if (strat != HugeAllocationStrategy::CUSTOM_MMAP_BACKED) return nullptr;
+    ck::scoped_lock l(m_lock);
+    HugeHeader* header = find_header_containing(interior);
+    return header ? header->data() : nullptr;
+  }
+
+  size_t HugeObjectAllocator::backing_size_of(void* interior) {
+    if (strat != HugeAllocationStrategy::CUSTOM_MMAP_BACKED) return 0;
+    ck::scoped_lock l(m_lock);
+    HugeHeader* header = find_header_containing(interior);
+    if (header == nullptr) return 0;
+    return header->allocation_size + ALASKA_LIBALLOCS_INSERT_RESERVE;
+  }
+
+  bool HugeObjectAllocator::extent_of(void* interior, void** out_base, size_t* out_size) {
+    if (strat != HugeAllocationStrategy::CUSTOM_MMAP_BACKED) return false;
+    ck::scoped_lock l(m_lock);
+    HugeHeader* header = find_header_containing(interior);
+    if (header == nullptr) return false;
+    if (out_base) *out_base = (void*)header;        // the mmap base
+    if (out_size) *out_size = header->mapping_size;  // whole page-rounded region
+    return true;
   }
 }  // namespace alaska

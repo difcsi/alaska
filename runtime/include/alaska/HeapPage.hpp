@@ -73,6 +73,10 @@ namespace alaska {
     // pointer), or NULL if this page type cannot resolve an object base. Used by
     // the liballocs integration to report allocation bases for backing pointers.
     virtual void* object_base(void* ptr) { return nullptr; }
+    // Return the Mapping (handle-table slot) owning the object containing `ptr`
+    // (interior pointers allowed), or NULL if this page type has no handle for it.
+    // Used by the liballocs integration to recover a handle from a backing pointer.
+    virtual alaska::Mapping* mapping_of(void* ptr) { return nullptr; }
     virtual bool should_localize_from(uint64_t current_epoch) const { return true; }
     inline bool contains(void* ptr) const;
 

@@ -38,6 +38,19 @@ phase="link"
 GCLANG="${ALASKA_GCLANG:=gclang}"
 CLANG="${ALASKA_CLANG:=${LLVM_PFX}/bin/clang}"
 
+# Some tools (CIL's cilly, autoconf, libtool) run the compiler only to query it
+# -- `-dumpversion`, `--version`, `-print-*` -- never to build anything. These
+# must answer like a plain compiler and must NOT enter the bitcode/link pipeline
+# below (doing so is what made CIL's `-dumpversion` probe emit a spurious
+# "Did not recognize the compiler flag" and abort). Delegate straight to clang.
+for arg in "$@"; do
+	case "$arg" in
+		-dumpversion|-dumpfullversion|-dumpmachine|--version|-V|-print-*)
+			exec ${ALASKA_CLANG:-clang} "$@"
+			;;
+	esac
+done
+
 
 
 while [[ $# -gt 0 ]]
@@ -73,6 +86,16 @@ do
 
       # ignore LTO
       -flto*)
+        shift
+        ;;
+
+      # Shared-library link: -shared must reach the FINAL clang link below (it uses
+      # LINK_FLAGS), else the wrapper links an executable and fails on undefined
+      # `main`. Needed for building .so files through this wrapper (e.g. as allocscc's
+      # ALLOCSCC_CC backend, used by pycallocs' transformed test fixtures).
+      -shared)
+        COLLECT_CLANG_ARGS+=("$1")
+        LINK_FLAGS+=("$1")
         shift
         ;;
 			-b|--baseline)
@@ -126,6 +149,13 @@ do
 				;;
 			-c)
 				phase="compile"
+				shift
+				;;
+			-E)
+				# Preprocess-only. Keep the flag so clang emits preprocessed
+				# text; the dispatch below skips the bitcode pipeline for it.
+				phase="preprocess"
+				COLLECT_CLANG_ARGS+=("$1")
 				shift
 				;;
 

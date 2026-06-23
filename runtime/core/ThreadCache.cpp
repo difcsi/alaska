@@ -198,6 +198,19 @@ namespace alaska {
       // 3. handle -> handle - we need to copy the data and update the handle
       new_data = this->allocate_backing_data(*m, new_size);  // Allocate
       memcpy(new_data, original_data, copy_size);            // Copy
+      // Relocate liballocs' trailing insert (the per-object lifetime-policy mask)
+      // to its NEW trailing position. The size changed, so the front copy above
+      // leaves the insert at the OLD offset and the new trailing slot
+      // uninitialized -- which loses the lifetime policy, so a still-referenced
+      // object (e.g. one a pycallocs proxy keeps alive) could be reclaimed by the
+      // GC after the move. original_size == size_of() includes the reserve, so the
+      // old insert is at [original_size - reserve, original_size); the new one
+      // belongs at [new_size, new_size + reserve).
+      if (ALASKA_LIBALLOCS_INSERT_RESERVE) {
+        memcpy((char *) new_data + new_size,
+               (char *) original_data + (original_size - ALASKA_LIBALLOCS_INSERT_RESERVE),
+               ALASKA_LIBALLOCS_INSERT_RESERVE);
+      }
       free_allocation(*m);                                   // Free the original allocation
       m->set_pointer(new_data);                              // Update the handle
       return_value = handle;

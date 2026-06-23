@@ -50,6 +50,30 @@ extern "C" void *alaska_translate_uncond(void *ptr) {
   return ptr;
 }
 
+// Pin/unpin a handle so the relocating GC will not move its backing object.
+// `set_pinned` is consulted by the barrier (see rt/barrier.cpp). Both are
+// no-ops on non-handles (from_handle_safe returns null), so callers may pass an
+// arbitrary pointer. Exposed as C symbols so header-only consumers can bind
+// them weakly (see stackscan handle_query.h: ss_pin/ss_unpin).
+extern "C" void alaska_pin(void *ptr) {
+  auto *m = alaska::Mapping::from_handle_safe(ptr);
+  if (m == nullptr) return;
+  m->set_pinned(true);
+}
+
+extern "C" void alaska_unpin(void *ptr) {
+  auto *m = alaska::Mapping::from_handle_safe(ptr);
+  if (m == nullptr) return;
+  m->set_pinned(false);
+}
+
+// Query whether a handle is currently pinned. Returns 0 on non-handles.
+extern "C" int alaska_is_pinned(void *ptr) {
+  auto *m = alaska::Mapping::from_handle_safe(ptr);
+  if (m == nullptr) return 0;
+  return m->is_pinned() ? 1 : 0;
+}
+
 // TODO: we don't use this anymore. Do we need it?
 void *alaska_translate_escape(void *ptr) {
   if (ptr == (void *)-1UL) {

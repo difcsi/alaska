@@ -31,6 +31,7 @@ namespace alaska {
     bool release_remote(const alaska::Mapping &m, void *ptr) override;
     size_t size_of(void *ptr) override;
     void *object_base(void *ptr) override;
+    alaska::Mapping *mapping_of(void *ptr) override;
 
     // How many free slots are there? (We return an estimate!)
     inline long available(void) { return this->allocator.num_free(); }
@@ -87,6 +88,11 @@ namespace alaska {
   inline void *SizedPage::object_base(void *ptr) {
     long ind = object_to_ind(ptr);
     return ind_to_object(ind);
+  }
+  inline alaska::Mapping *SizedPage::mapping_of(void *ptr) {
+    long ind = object_to_ind(ptr);
+    auto h = ind_to_header(ind);
+    return h->get_mapping();  // NULL for a free slot (is_free())
   }
   inline long SizedPage::header_to_ind(Header *h) { return (h - headers); }
   inline SizedPage::Header *SizedPage::ind_to_header(long oid) { return headers + oid; }

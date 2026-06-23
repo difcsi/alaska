@@ -40,6 +40,25 @@ namespace alaska {
     // NOTE: this walk the `allocations` list!
     bool owns(void* ptr);
 
+    // ---- liballocs integration (raw backing-pointer queries) ----------------
+    // These mirror the sized-heap helpers in liballocs_export.cpp so liballocs can
+    // resolve huge objects the same way it resolves sized objects. They accept an
+    // *interior* backing pointer and walk the `allocations` list. All three return
+    // the "not ours" sentinel for the MALLOC_BACKED strategy (those objects are
+    // already indexed by liballocs' own malloc allocator -- there is no HugeHeader
+    // to resolve interior pointers against).
+
+    // Start of the huge object containing `interior`, or null if not ours.
+    void* object_base(void* interior);
+    // Size liballocs should use for `interior`'s object: the caller's requested
+    // size PLUS the trailing-insert reserve, so liballocs' insert_for_chunk lands
+    // on the reserved tail (at base + requested_size) rather than on user data --
+    // exactly like the sized heap reports its slot size. 0 if not ours.
+    size_t backing_size_of(void* interior);
+    // Extent [base, base+size) of the whole mmap region backing `interior`, for
+    // liballocs to claim as a bigalloc. Returns true and fills the outputs on hit.
+    bool extent_of(void* interior, void** out_base, size_t* out_size);
+
    private:
     HugeAllocationStrategy strat;
     ck::mutex m_lock;
@@ -59,5 +78,8 @@ namespace alaska {
     };
 
     HugeHeader* find_header(void* ptr);
+    // Like find_header, but matches an *interior* pointer against each object's
+    // [data, data+allocation_size) range (not just an exact base match).
+    HugeHeader* find_header_containing(void* ptr);
   };
 }  // namespace alaska

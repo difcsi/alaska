@@ -38,17 +38,38 @@ extern "C" void __liballocs_notify_alaska_alloc(void *backing_base, unsigned lon
     __attribute__((weak));
 extern "C" void __liballocs_notify_alaska_free(void *backing_base) __attribute__((weak));
 
+// The backing base liballocs should bind metadata to. For a sized object that is
+// the mapping's backing pointer; for a HUGE object there is no mapping -- the value
+// halloc returned IS the raw backing pointer, so hand that over directly. Returns
+// null only for a freed/invalid sized handle. (Huge raw pointers are positive, so
+// from_handle_safe returns null for them -- that is exactly the huge case.)
+static inline void *alaska_liballocs_backing_base(void *result) {
+  auto *m = alaska::Mapping::from_handle_safe(result);
+  if (m == nullptr) return result;            // huge object: result is the backing base
+  return m->is_free() ? nullptr : m->get_pointer();
+}
+
+// Base-level notifications: bind/drop liballocs metadata for an already-resolved
+// backing base (used by the realloc path, which must capture the OLD base before
+// the object moves).
+static inline void alaska_liballocs_notify_alloc_base(void *base, size_t requested_size) {
+  if (__liballocs_notify_alaska_alloc != nullptr && base != nullptr)
+    __liballocs_notify_alaska_alloc(base, requested_size);
+}
+
+static inline void alaska_liballocs_notify_free_base(void *base) {
+  if (__liballocs_notify_alaska_free != nullptr && base != nullptr)
+    __liballocs_notify_alaska_free(base);
+}
+
 static inline void alaska_liballocs_notify_alloc(void *handle, size_t requested_size) {
   if (__liballocs_notify_alaska_alloc == nullptr) return;  // liballocs not loaded
-  auto *m = alaska::Mapping::from_handle_safe(handle);
-  if (m != nullptr && !m->is_free())
-    __liballocs_notify_alaska_alloc(m->get_pointer(), requested_size);
+  alaska_liballocs_notify_alloc_base(alaska_liballocs_backing_base(handle), requested_size);
 }
 
 static inline void alaska_liballocs_notify_free(void *handle) {
   if (__liballocs_notify_alaska_free == nullptr) return;  // liballocs not loaded
-  auto *m = alaska::Mapping::from_handle_safe(handle);
-  if (m != nullptr && !m->is_free()) __liballocs_notify_alaska_free(m->get_pointer());
+  alaska_liballocs_notify_free_base(alaska_liballocs_backing_base(handle));
 }
 
 
@@ -113,7 +134,28 @@ void *hrealloc(void *handle, size_t new_size) {
     return NULL;
   }
 
+  // Capture the old backing base BEFORE the realloc moves/frees the object, so we
+  // can drop its liballocs metadata afterward.
+  bool old_was_handle = alaska::Mapping::is_handle(handle);
+  void *old_base = alaska_liballocs_backing_base(handle);
+
   handle = get_tc()->hrealloc(handle, new_size);
+
+  // Seed liballocs metadata for any realloc that touches a HUGE object on either
+  // side. ThreadCache::hrealloc only relocates/seeds the trailing insert for the
+  // handle->handle case (where it memcpy's the old insert to its new offset); the
+  // huge-producing and huge-consuming cases come back from huge_allocator.allocate
+  // / allocate_backing_data with the reserve in place but the insert uninitialised
+  // and no side-table record. Seed them exactly like _halloc would (GC bit + exact
+  // size + allocsite), and forget the old object's now-stale record. The pure
+  // handle->handle case is left untouched so its preserved lifetime-policy mask
+  // (e.g. a manual pin) survives the move.
+  bool new_is_handle = handle != NULL && alaska::Mapping::is_handle(handle);
+  if (handle != NULL && !(old_was_handle && new_is_handle)) {
+    void *new_base = alaska_liballocs_backing_base(handle);
+    if (old_base != nullptr && old_base != new_base) alaska_liballocs_notify_free_base(old_base);
+    alaska_liballocs_notify_alloc_base(new_base, new_size);
+  }
   return handle;
 }
 
