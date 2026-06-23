@@ -111,12 +111,29 @@ class OptStage(waterline.pipeline.Stage):
 
 
 
-# Add the Embench suite to the workspace.
-space.add_suite(wl.suites.Embench)
-# Add the GAPBS suite to the workspace.
-space.add_suite(wl.suites.GAP, enable_openmp=False, enable_exceptions=False, graph_size='19')
-# Add the NAS suite to the workspace.
-space.add_suite(wl.suites.NAS, enable_openmp=False, suite_class="B")
+# Sweep-size knobs. The full sweep (default) runs Embench at 10k iterations, GAP on a
+# 2^19-node graph and NAS class B -- accurate but multi-hour across all six configs.
+# Set ALASKA_BENCH_QUICK=1 for a representative subset that finishes in ~1h, or tune
+# any knob individually (env overrides QUICK):
+#   ALASKA_BENCH_QUICK   shrink everything for a ~1h sweep      (off by default)
+#   ALASKA_SUITES        which suites to run, comma-separated   (embench,gap,nas)
+#   ALASKA_EMBENCH_ITERS Embench iteration count                (full 10000, quick 1000)
+#   ALASKA_GAP_SIZE      GAP graph is 2^SIZE nodes              (full 19,    quick 15)
+#   ALASKA_NAS_CLASS     NAS problem size S<W<A<B<C             (full B,     quick W)
+#   ALASKA_RUNS          timed repeats per benchmark            (default 2)
+_quick = os.environ.get("ALASKA_BENCH_QUICK", "").lower() in ("1", "true", "yes", "on")
+EMBENCH_ITERS = int(os.environ.get("ALASKA_EMBENCH_ITERS", "1000" if _quick else "10000"))
+GAP_SIZE = os.environ.get("ALASKA_GAP_SIZE", "15" if _quick else "19")
+NAS_CLASS = os.environ.get("ALASKA_NAS_CLASS", "W" if _quick else "B")
+RUNS = int(os.environ.get("ALASKA_RUNS", "2"))
+_suites = [s.strip() for s in os.environ.get("ALASKA_SUITES", "embench,gap,nas").lower().split(",") if s.strip()]
+
+if "embench" in _suites:
+  space.add_suite(wl.suites.Embench, iters=EMBENCH_ITERS)
+if "gap" in _suites:
+  space.add_suite(wl.suites.GAP, enable_openmp=False, enable_exceptions=False, graph_size=GAP_SIZE)
+if "nas" in _suites:
+  space.add_suite(wl.suites.NAS, enable_openmp=False, suite_class=NAS_CLASS)
 
 # Attempt to find SPEC2017 CPU on the system.
 spec = find_spec()
@@ -151,7 +168,7 @@ for cfg in ALASKA_BUILD_CONFIGS:
 
 
 run_name = "figure7"
-res = space.run(runs=2, compile=True, run_name=run_name)
+res = space.run(runs=RUNS, compile=True, run_name=run_name)
 
 # Save compile-time measurements alongside the runtime results.
 if compile_times:
