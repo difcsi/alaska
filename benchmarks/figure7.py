@@ -164,7 +164,13 @@ class OptStage(waterline.pipeline.Stage):
 # Set ALASKA_BENCH_QUICK=1 for a representative subset that finishes in ~1h, or tune
 # any knob individually (env overrides QUICK):
 #   ALASKA_BENCH_QUICK   shrink everything for a ~1h sweep      (off by default)
-#   ALASKA_SUITES        which suites to run, comma-separated   (embench,gap,nas)
+#   ALASKA_SUITES        which suites to run, comma-separated   (embench,gap,nas;
+#                        add `olden` for the pointer-intensive suite, `gcbench` for
+#                        the alloc/free tree workloads that actually exercise hfree,
+#                        or `mibench` for the embedded-workload suite)
+#   ALASKA_BENCH         run only these benchmark(s) within the selected suites,
+#                        comma-separated (e.g. binarytrees). Applies to suites that
+#                        support per-benchmark selection (gcbench, olden); empty=all
 #   ALASKA_EMBENCH_ITERS Embench iteration count                (full 10000, quick 1000)
 #   ALASKA_GAP_SIZE      GAP graph is 2^SIZE nodes              (full 19,    quick 15)
 #   ALASKA_NAS_CLASS     NAS problem size S<W<A<B<C             (full B,     quick W)
@@ -178,6 +184,9 @@ NAS_CLASS = os.environ.get("ALASKA_NAS_CLASS", "W" if _quick else "B")
 NAS_EXCLUDE = ("bt", "sp", "lu") if _quick else ()
 RUNS = int(os.environ.get("ALASKA_RUNS", "2"))
 _suites = [s.strip() for s in os.environ.get("ALASKA_SUITES", "embench,gap,nas").lower().split(",") if s.strip()]
+# Per-benchmark selector: run only these named benchmarks within suites that
+# support a `benchmarks=` subset (gcbench, olden). None => run the whole suite.
+_bench_filter = [b.strip() for b in os.environ.get("ALASKA_BENCH", "").split(",") if b.strip()] or None
 
 if "embench" in _suites:
   space.add_suite(wl.suites.Embench, iters=EMBENCH_ITERS)
@@ -185,6 +194,23 @@ if "gap" in _suites:
   space.add_suite(wl.suites.GAP, enable_openmp=False, enable_exceptions=False, graph_size=GAP_SIZE)
 if "nas" in _suites:
   space.add_suite(wl.suites.NAS, enable_openmp=False, suite_class=NAS_CLASS, exclude=NAS_EXCLUDE)
+# Olden: pointer-intensive heap workloads that allocate AND free handle-linked
+# structures -- the suite that actually exercises decref / dec-on-free / GC
+# reclamation. Opt-in (not in the default ALASKA_SUITES list). Quick mode shrinks
+# every benchmark's problem size (see Olden.QUICK_ARGS), like the other suites.
+if "olden" in _suites:
+  space.add_suite(wl.suites.Olden, quick=_quick, benchmarks=_bench_filter)
+# GCBench: self-contained tree-shaped alloc/free kernels (binarytrees, gcbench).
+# Unlike Olden these genuinely call free() in steady state, so they are the suite
+# that actually drives a nonzero program-initiated hfree (and, in refcount-gc
+# configs, incref/decref + reclamation). Opt-in; quick mode drops a few tree levels.
+if "gcbench" in _suites:
+  space.add_suite(wl.suites.GCBench, quick=_quick, benchmarks=_bench_filter)
+# MiBench: embedded/automotive/telecomm workloads. Opt-in (not in the default
+# list). Uses the self-contained "large" dataset, or the smaller "small" dataset
+# under quick mode.
+if "mibench" in _suites:
+  space.add_suite(wl.suites.MiBench, quick=_quick)
 
 # Attempt to find SPEC2017 CPU on the system.
 spec = find_spec()

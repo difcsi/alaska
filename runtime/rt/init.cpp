@@ -78,12 +78,15 @@ static void *barrier_thread_func(void *) {
     if (barrier_thread_should_stop) break;
     auto &rt = alaska::Runtime::get();
 
-#if ALASKA_ENABLE_REFCOUNT
+#if ALASKA_ENABLE_CYCLE_COLLECTION
     // Stackscan: arm the in-barrier conservative present-scan and start from a
     // clean present bitmap, so each participating thread marks its stack handles
     // present during the barrier below. (with_barrier throttles actual barriers to
     // its min interval, so most of these are cheap no-ops.) RECLAIM cadence can be
     // tuned by gating this on `tick`; for now reclamation runs each barrier.
+    // Gated on the GC macro (not ALASKA_ENABLE_REFCOUNT) because the present marks
+    // it produces are consumed solely by reclaim_dead_handles below; a plain
+    // refcount build runs no reclaim, so it must not pay for the scan either.
     alaska_gc_present_clear();
     alaska_gc_present_scan_set(1);
 #endif
@@ -101,14 +104,21 @@ static void *barrier_thread_func(void *) {
 #if ALASKA_ENABLE_ANCHORAGE
       rt.heap.compact_sizedpages();
 #endif
-#if ALASKA_ENABLE_REFCOUNT
+#if ALASKA_ENABLE_CYCLE_COLLECTION
       // Stackscan: free zero-refcount handles not marked present (not on any
       // thread's stack). World stopped + nullcount_lock pre-held by with_barrier.
+      // This is the zero-refcount GARBAGE COLLECTOR, so it is gated on the GC macro
+      // (ALASKA_ENABLE_CYCLE_COLLECTION), NOT ALASKA_ENABLE_REFCOUNT: a plain
+      // refcount / refcount-anchorage build does pure reference counting and never
+      // reclaims here, so it also skips maintaining the nullcount map (see
+      // alaska_inc_refcount/alaska_dec_refcount).
       alaska::reclaim_dead_handles(*tc);
 #endif
     });
 
-#if ALASKA_ENABLE_REFCOUNT
+#if ALASKA_ENABLE_CYCLE_COLLECTION
+    // Disarm the present-scan (paired with the arm above); GC-gated for the same
+    // reason -- it only matters for the stackscan reclaim.
     alaska_gc_present_scan_set(0);
 #endif
     tick++;

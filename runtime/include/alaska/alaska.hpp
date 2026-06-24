@@ -20,6 +20,7 @@
 #include <alaska/liballoc.h>
 #include <alaska/config.h>
 #include <alaska/Logger.hpp>
+#include <alaska/EventCounters.hpp>
 
 #include <ck/utility.h>
 
@@ -119,6 +120,13 @@ namespace alaska {
     static constexpr uint64_t kMiscMask = (1ULL << 61) - 1;    // bits 0-60
     static constexpr uint64_t kPinnedBit = 1ULL << 61;
     static constexpr uint64_t kInvlBit = 1ULL << 62;
+    // bit 63 (the otherwise-unused `swap` flag): a HINT, maintained by the refcount
+    // runtime, that this handle is currently on the zero-refcount nullcount list.
+    // It lets alaska_inc_refcount skip the (syscall-bracketed) nullcount-map removal
+    // when the handle was never added -- the dominant case for allocate-and-store
+    // workloads. The nullcount_map remains the source of truth; the reclaim path
+    // re-validates every entry, so a drifted hint can never cause a wrong free.
+    static constexpr uint64_t kOnNullcountBit = 1ULL << 63;
 
     void set_pointer(void *ptr) {
       // Write the pointer (low 47 bits) and clear invl, preserving refcount and
@@ -169,6 +177,25 @@ namespace alaska {
       }
     }
 
+    // Nullcount-list membership hint (see kOnNullcountBit). Relaxed: it is only a
+    // hint read by the refcount fast path; the lock-protected nullcount_map plus
+    // the reclaim re-validation provide the actual correctness. Set/cleared by the
+    // refcount runtime in lockstep with nullcount_map add/remove; cleared for free
+    // by reset()/set_next() (a fresh/recycled slot is never on the list).
+    bool is_on_nullcount(void) const {
+      uint64_t w = __atomic_load_n(
+          reinterpret_cast<uint64_t *>(const_cast<Mapping *>(this)), __ATOMIC_RELAXED);
+      return (w & kOnNullcountBit) != 0;
+    }
+    void set_on_nullcount(bool to) {
+      auto *w = reinterpret_cast<uint64_t *>(this);
+      if (to) {
+        __atomic_fetch_or(w, kOnNullcountBit, __ATOMIC_RELAXED);
+      } else {
+        __atomic_fetch_and(w, ~kOnNullcountBit, __ATOMIC_RELAXED);
+      }
+    }
+
 
     void reset(void) {
       // Clear everything: pointer, refcount, and flags. One atomic store so a
@@ -178,14 +205,73 @@ namespace alaska {
     }
 
 #if ALASKA_ENABLE_REFCOUNT
-     // Atomically increment the reference count
-    int inc_refcount(void);
+    // The reference count occupies bits 47-60 (14 bits) of the packed 8-byte word.
+    // Mutation must be a CAS over the *whole* word: the collector reads refcounts
+    // and the barrier handler flips the pinned bit (61) while mutators run, so a
+    // plain bitfield ++/-- (a non-atomic RMW of the whole word) would tear against
+    // a concurrent set_pinned()/set_pointer()/reset(). These are defined inline in
+    // the header (rather than out-of-line in Runtime.cpp) so the compiler-inserted
+    // increment barrier can inline the CAS instead of emitting a cross-library call
+    // -- the increment runs on every heap pointer store (see RefcountInc).
+    static constexpr unsigned kRefcountShift = 47;
+    static constexpr uint64_t kRefcountMaxField = (1ULL << 14) - 1;            // 0x3FFF
+    static constexpr uint64_t kRefcountFieldMask = kRefcountMaxField << kRefcountShift;
 
-    // Atomically decrement the reference count and return the new value
-    int dec_refcount(void);
+    // Atomically increment the reference count and return the new value.
+    //
+    // ORDERING: relaxed. A strong-reference increment needs only atomicity, not
+    // synchronization -- the caller already holds a live reference to this handle
+    // (it is storing that very pointer), so a happens-before edge keeping the object
+    // alive already exists and the increment publishes nothing other code reads
+    // (this is exactly why std::shared_ptr increments use memory_order_relaxed). The
+    // whole-word CAS still prevents tearing against a concurrent set_pinned/
+    // set_pointer regardless of ordering, and a stale relaxed load just loses the CAS
+    // and retries. Decrement keeps ACQ_REL: the dec-to-zero must synchronize-with the
+    // reclaimer. On x86 this is a no-op (lock cmpxchg is a full barrier); on the
+    // weak-memory targets (ARM/RISC-V) it drops real acquire/release fences.
+    ALASKA_INLINE int inc_refcount(void) {
+      auto *w = reinterpret_cast<uint64_t *>(this);
+      uint64_t old = __atomic_load_n(w, __ATOMIC_RELAXED);
+      uint64_t neu;
+      uint64_t nc;
+      do {
+        uint64_t rc = (old >> kRefcountShift) & kRefcountMaxField;
+        nc = (rc + 1) & kRefcountMaxField;  // wrap like the old 14-bit bitfield did
+        neu = (old & ~kRefcountFieldMask) | (nc << kRefcountShift);
+      } while (!__atomic_compare_exchange_n(
+          w, &old, neu, false, __ATOMIC_RELAXED, __ATOMIC_RELAXED));
+#if ALASKA_ENABLE_EVENT_COUNTERS
+      // Counted at the single refcount-mutation point so the tally captures every
+      // increment: compiler-inserted handle writes AND the allocator's birth/death
+      // bumps (HandleSlab::alloc/release_*).
+      alaska::events::inc_refcount_event();
+#endif
+      return (int)nc;
+    }
 
-    // Get the current reference count
-    uint64_t get_refcount(void);
+    // Atomically decrement the reference count and return the new value.
+    ALASKA_INLINE int dec_refcount(void) {
+      auto *w = reinterpret_cast<uint64_t *>(this);
+      uint64_t old = __atomic_load_n(w, __ATOMIC_ACQUIRE);
+      uint64_t neu;
+      uint64_t nc;
+      do {
+        uint64_t rc = (old >> kRefcountShift) & kRefcountMaxField;
+        nc = (rc - 1) & kRefcountMaxField;  // wrap like the old 14-bit bitfield did
+        neu = (old & ~kRefcountFieldMask) | (nc << kRefcountShift);
+      } while (!__atomic_compare_exchange_n(
+          w, &old, neu, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE));
+#if ALASKA_ENABLE_EVENT_COUNTERS
+      alaska::events::dec_refcount_event();
+#endif
+      return (int)nc;
+    }
+
+    // Get the current reference count.
+    ALASKA_INLINE uint64_t get_refcount(void) {
+      uint64_t w = __atomic_load_n(reinterpret_cast<uint64_t *>(this), __ATOMIC_ACQUIRE);
+      return (w >> kRefcountShift) & kRefcountMaxField;
+    }
 #endif
 
 

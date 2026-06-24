@@ -36,10 +36,18 @@ mkdir -p opt
 # figure-7 run can count those events. OFF by default -- the timing builds carry
 # no counter overhead. This reconfigures the same install dirs, so do a plain
 # `./build.sh` afterwards to get back to clean timing builds.
+#
+# We pass the flag EXPLICITLY in both cases. CMake `set(... CACHE BOOL)` defaults do
+# NOT override an existing cache entry, so once a measurement build wrote
+# ALASKA_ENABLE_EVENT_COUNTERS=ON into a build dir's cache, a plain `./build.sh`
+# would silently keep counters ON forever. Forcing =OFF here makes "measurement" a
+# per-invocation choice driven solely by ALASKA_MEASURE.
 EXTRA_CMAKE_ARGS=()
 if [ -n "${ALASKA_MEASURE}" ]; then
   EXTRA_CMAKE_ARGS+=("-DALASKA_ENABLE_EVENT_COUNTERS=ON")
   printf "\e[35m[measurement build: event counters ON]\e[0m\n"
+else
+  EXTRA_CMAKE_ARGS+=("-DALASKA_ENABLE_EVENT_COUNTERS=OFF")
 fi
 
 # The benchmark configurations. "baseline" (plain bundled clang) is realized in the

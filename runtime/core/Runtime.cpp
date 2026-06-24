@@ -28,63 +28,9 @@ namespace alaska {
   static Runtime *g_runtime = nullptr;
   static volatile bool runtime_initialized = false;
 
-#if ALASKA_ENABLE_REFCOUNT
-  // The reference count occupies bits 47-60 (14 bits) of the packed 8-byte
-  // Mapping word. The concurrent collector reads refcounts and the barrier
-  // handler flips the pinned bit (bit 61) while mutators run, so refcount
-  // mutation must be a CAS over the *whole* word -- a plain `++`/`--` on the
-  // bitfield is a read-modify-write of the entire word and would tear against
-  // a concurrent set_pinned()/set_pointer()/reset() (see alaska.hpp, which makes
-  // those writers atomic too).
-  static constexpr unsigned kRefcountShift = 47;
-  static constexpr uint64_t kRefcountMaxField = (1ULL << 14) - 1;            // 0x3FFF
-  static constexpr uint64_t kRefcountFieldMask = kRefcountMaxField << kRefcountShift;
-
-  // Atomically increment the reference count and return the new value.
-  int Mapping::inc_refcount(void) {
-    auto *w = reinterpret_cast<uint64_t *>(this);
-    uint64_t old = __atomic_load_n(w, __ATOMIC_ACQUIRE);
-    uint64_t neu;
-    uint64_t nc;
-    do {
-      uint64_t rc = (old >> kRefcountShift) & kRefcountMaxField;
-      nc = (rc + 1) & kRefcountMaxField;  // wrap like the old 14-bit bitfield did
-      neu = (old & ~kRefcountFieldMask) | (nc << kRefcountShift);
-    } while (!__atomic_compare_exchange_n(
-        w, &old, neu, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE));
-#if ALASKA_ENABLE_EVENT_COUNTERS
-    // Counted at the single refcount-mutation point so the tally captures every
-    // increment: compiler-inserted handle writes AND the allocator's birth/death
-    // bumps (HandleSlab::alloc/release_*).
-    alaska::events::inc_refcount_event();
-#endif
-    return (int)nc;
-  }
-
-  // Atomically decrement the reference count and return the new value.
-  int Mapping::dec_refcount(void) {
-    auto *w = reinterpret_cast<uint64_t *>(this);
-    uint64_t old = __atomic_load_n(w, __ATOMIC_ACQUIRE);
-    uint64_t neu;
-    uint64_t nc;
-    do {
-      uint64_t rc = (old >> kRefcountShift) & kRefcountMaxField;
-      nc = (rc - 1) & kRefcountMaxField;  // wrap like the old 14-bit bitfield did
-      neu = (old & ~kRefcountFieldMask) | (nc << kRefcountShift);
-    } while (!__atomic_compare_exchange_n(
-        w, &old, neu, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE));
-#if ALASKA_ENABLE_EVENT_COUNTERS
-    alaska::events::dec_refcount_event();
-#endif
-    return (int)nc;
-  }
-
-  // Get the current reference count.
-  uint64_t Mapping::get_refcount(void) {
-    uint64_t w = __atomic_load_n(reinterpret_cast<uint64_t *>(this), __ATOMIC_ACQUIRE);
-    return (w >> kRefcountShift) & kRefcountMaxField;
-  }
-#endif
+  // Mapping::inc_refcount / dec_refcount / get_refcount are defined inline in
+  // alaska.hpp (moved out of this TU) so the compiler-inserted increment barrier
+  // can inline the CAS rather than emit a cross-library call on every heap store.
 
   Runtime::Runtime(alaska::Configuration config)
       : config(config)

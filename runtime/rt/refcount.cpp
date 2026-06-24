@@ -62,12 +62,28 @@ struct NullcountGuard {
 
 static inline void nullcount_update(void* ptr, bool add) {
   NullcountGuard g;
-  if (add) nullcount_map.set(ptr);
-  else nullcount_map.remove(ptr);
+  // Keep the per-Mapping on-nullcount hint (Mapping::kOnNullcountBit) in lockstep
+  // with map membership, so alaska_inc_refcount can decide whether it even needs to
+  // take this guard without consulting the map. Maintained under the lock so the
+  // bit and the map never disagree for a handle that is genuinely on the list.
+  auto *m = alaska::Mapping::from_handle_safe(ptr);
+  if (add) {
+    nullcount_map.set(ptr);
+    if (m) m->set_on_nullcount(true);
+  } else {
+    nullcount_map.remove(ptr);
+    if (m) m->set_on_nullcount(false);
+  }
 }
 
 // Defined in halloc.cpp -- the calling thread's (raw) thread cache.
 extern alaska::ThreadCache *get_tc_r(void);
+
+// The inc/dec barrier fast paths now live in core/translate.cpp (so they inline at
+// each store site instead of being a cross-library call); declare them for the few
+// in-library callers below (alaska_inc_handles_in_range / alaska_hfree_dec_children).
+extern "C" void alaska_inc_refcount(void *ptr);
+extern "C" void alaska_dec_refcount(void *ptr);
 
 
 extern "C" {
@@ -81,87 +97,60 @@ extern "C" {
 static thread_local bool in_refcount_operation = false;
 
 /**
- * alaska_inc_refcount - Increment the reference count of a handle
- * 
- * This function is called by the compiler when a handle is written to heap memory.
- * It checks if the pointer is actually a handle and increments its refcount.
- * 
- * @param ptr - The potential handle whose refcount should be incremented
+ * alaska_inc_refcount_nullcount - Slow path of the increment barrier.
+ *
+ * The FAST path (handle check + the whole-word CAS via Mapping::inc_refcount) is
+ * inlined at every store site from core/translate.cpp, so it never calls into this
+ * library. It only calls here in the rare case where an incremented handle reaches
+ * refcount 1 while still on the zero-refcount nullcount list -- i.e. it was dec'd to
+ * 0 earlier and is now resurrected -- in which case it must be dropped from the list
+ * so the GC reclaim does not free a now-live handle.
+ *
+ * The recursion guard prevents a re-entrant refcount op (e.g. an allocator
+ * birth-bump triggered while the nullcount map rehashes) from recursively taking
+ * nullcount_lock and deadlocking. (The fast path never re-enters -- it is a pure
+ * CAS -- so the guard only needs to wrap this lock-taking slow path.)
  */
 __attribute__((section("$__ALASKA__refcount")))
-void alaska_inc_refcount(void *ptr) {
-  // print what is at the ptr in hex
-  
-  if (ptr == nullptr) return; 
+void alaska_inc_refcount_nullcount(void *ptr) {
+#if ALASKA_ENABLE_CYCLE_COLLECTION
   if (in_refcount_operation) return;
-  
   in_refcount_operation = true;
-  
-  // Check if this is actually a handle
-  auto mapping = alaska::Mapping::from_handle_safe(ptr);
-  if (mapping == nullptr) {
-    // Not a handle, nothing to do
-    in_refcount_operation = false;
-    return;
-  }
-
-  // alaska::printf("Incrementing refcount of mapping  %p from %lu\n", mapping, mapping->get_refcount());
-  // Increment the refcount using the mapping's method. The incref event is
-  // counted inside Mapping::inc_refcount (Runtime.cpp), so every refcount
-  // mutation is tallied and this call is never double-counted.
-  auto new_count = mapping->inc_refcount();
-  if(new_count == 1) {
-    nullcount_update(ptr, /*add=*/false);
-  }
-
+  nullcount_update(ptr, /*add=*/false);
   in_refcount_operation = false;
+#endif
 }
 
 /**
- * alaska_dec_refcount - Decrement the reference count of a handle
- * 
- * This function is called by the compiler when a handle is being overwritten.
- * It checks if the pointer is actually a handle and decrements its refcount.
- * If the refcount reaches zero, the handle could potentially be freed.
- * 
- * @param ptr - The potential handle whose refcount should be decremented
+ * alaska_dec_refcount_slow - Slow path of the decrement barrier.
+ *
+ * The FAST path (handle check + the whole-word CAS via Mapping::dec_refcount) is
+ * inlined at every overwrite site from core/translate.cpp, so it never calls into
+ * this library -- in particular the dominant case of decrementing a freshly-zeroed
+ * (null) slot before a first store returns inline. This routes a just-decremented
+ * handle to the GC: onto the zero-refcount nullcount list (count hit 0) or, if
+ * still positive, into the cycle collector's candidate set. Only built/reached in
+ * GC builds; a plain refcount build just tracks counts and never reclaims.
+ *
+ * The recursion guard prevents a re-entrant refcount op (e.g. an allocator bump
+ * while the nullcount map rehashes) from recursively taking nullcount_lock and
+ * deadlocking. (The fast path never re-enters -- it is a pure CAS.)
  */
 __attribute__((section("$__ALASKA__refcount")))
-void alaska_dec_refcount(void *ptr) {
-  if (ptr == nullptr) return;
-  
-  // Prevent infinite recursion if this function itself triggers refcount operations
-  if (in_refcount_operation) return;
-  in_refcount_operation = true;
-  
-  // Check if this is actually a handle
-  auto mapping = alaska::Mapping::from_handle_safe(ptr);
-  if (mapping == nullptr) {
-    // Not a handle, nothing to do
-    in_refcount_operation = false;
-    return;
-  }
-
-  // Decrement the refcount using the mapping's method. The decref event is
-  // counted inside Mapping::dec_refcount (Runtime.cpp).
-  uint64_t new_count = mapping->dec_refcount();
-
-  // TODO: If refcount reaches 0, we could potentially free the handle
-  // For now, we just track the refcount. The actual freeing policy
-  // should attach here
-  if (new_count == 0) {
-   nullcount_update(ptr, /*add=*/true);
-  }
+void alaska_dec_refcount_slow(void *ptr, int new_count) {
 #if ALASKA_ENABLE_CYCLE_COLLECTION
-  else {
-   // The refcount dropped but is still non-zero. This is the only situation in
-   // which `mapping` can become the root of a garbage *cycle*, so hand it to
-   // Anchorage's cycle collector as a candidate root (Bacon & Rajan "purple").
-   alaska::Runtime::get().cycle_collector.register_candidate(mapping);
+  if (new_count == 0) {
+    // Record as a zero-refcount handle for the stackscan reclaim to consider.
+    nullcount_update(ptr, /*add=*/true);
+  } else {
+    // The refcount dropped but is still non-zero -- the only situation in which the
+    // handle can become the root of a garbage *cycle*, so hand it to the cycle
+    // collector as a candidate root (Bacon & Rajan "purple").
+    auto *m = alaska::Mapping::from_handle_safe(ptr);
+    if (m) alaska::Runtime::get().cycle_collector.register_candidate(m);
   }
-#endif
-
   in_refcount_operation = false;
+#endif
 }
 
 /**
@@ -183,10 +172,32 @@ void alaska_dec_refcount(void *ptr) {
  * ALASKA_NO_FREE_DEC. Called from alaska_hfree_now before the backing memory is
  * recycled, while the object is still readable.
  */
+// True only for a word that decodes to a real, LIVE handle -- the same validation
+// the cycle collector's is_collectable uses. The conservative heap scans below
+// feed arbitrary memory words here, so the decoded mapping MUST be bounds-checked
+// before it is touched: Mapping::from_handle_safe returns a structurally-decoded
+// pointer for ANY value whose top (handle) bit is set, which for junk data is a
+// wild pointer that inc/dec_refcount would dereference and crash on. valid_handle
+// is pure pointer arithmetic (no deref); only after it passes is reading is_free
+// safe. (Mirrors CycleCollector::is_collectable.)
+static inline bool word_is_live_handle(void *p) {
+  auto *m = alaska::Mapping::from_handle_safe(p);
+  if (m == nullptr) return false;
+  if (!alaska::Runtime::get().handle_table.valid_handle(m)) return false;
+  if (m->is_free()) return false;
+  return true;
+}
+
 void alaska_hfree_dec_children(void *ptr) {
-  static int disabled = -1;
-  if (disabled < 0) disabled = (getenv("ALASKA_NO_FREE_DEC") != nullptr) ? 1 : 0;
-  if (disabled) return;
+  // OPT-IN (default OFF): conservative dec-on-free is UNSOUND for programs that
+  // manage memory explicitly and use self-referential structures. Freeing a node
+  // decrements the handles it holds, but a doubly-linked node's forward/back point
+  // at still-live neighbours; over-decrementing them lets the GC reclaim live
+  // nodes mid-traversal, corrupting the structure (observed as a hang in Olden
+  // `health`). Enable only for experiments with ALASKA_FREE_DEC=1.
+  static int enabled = -1;
+  if (enabled < 0) enabled = (getenv("ALASKA_FREE_DEC") != nullptr) ? 1 : 0;
+  if (!enabled) return;
   if (ptr == nullptr || in_refcount_operation) return;
 
   auto *m = alaska::Mapping::from_handle_safe(ptr);
@@ -200,11 +211,11 @@ void alaska_hfree_dec_children(void *ptr) {
   void **words = (void **)m->get_pointer();
   if (words == nullptr) return;
 
-  // alaska_dec_refcount ignores non-handle words, so the conservative scan only
-  // affects words that actually decode to a live handle.
+  // Only decrement words that are validated live handles -- a raw word that merely
+  // has the handle bit set is NOT safe to hand to dec_refcount (see above).
   size_t n = size / sizeof(void *);
   for (size_t i = 0; i < n; i++) {
-    if (words[i] != nullptr) alaska_dec_refcount(words[i]);
+    if (words[i] != nullptr && word_is_live_handle(words[i])) alaska_dec_refcount(words[i]);
   }
 }
 
@@ -223,12 +234,22 @@ void alaska_hfree_dec_children(void *ptr) {
  * `base` is the raw destination pointer, `bytes` the copy length.
  */
 void alaska_inc_handles_in_range(void *base, size_t bytes) {
+  // OPT-IN (default OFF): same conservative-scan class as alaska_hfree_dec_children
+  // (its inc-side partner). It is only meaningful when dec-on-free is also enabled,
+  // and it over-increments handle-looking data, so it stays off unless requested
+  // with ALASKA_COPY_INC=1.
+  static int enabled = -1;
+  if (enabled < 0) enabled = (getenv("ALASKA_COPY_INC") != nullptr) ? 1 : 0;
+  if (!enabled) return;
   if (base == nullptr || bytes < sizeof(void *)) return;
   if (in_refcount_operation) return;
   void **words = (void **)base;
+  // Only increment validated live handles. This scans arbitrary copied bytes, so
+  // a raw word with the handle bit set is NOT safe to hand to inc_refcount without
+  // the bounds check in word_is_live_handle (see there).
   size_t n = bytes / sizeof(void *);
   for (size_t i = 0; i < n; i++) {
-    if (words[i] != nullptr) alaska_inc_refcount(words[i]);
+    if (words[i] != nullptr && word_is_live_handle(words[i])) alaska_inc_refcount(words[i]);
   }
 }
 

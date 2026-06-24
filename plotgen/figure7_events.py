@@ -23,6 +23,37 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as mtick
 
 
+# Map ALASKA_SUITES keys (as used by benchmarks/figure7.py) to the suite names that
+# appear in the results' `suite` column.
+_SUITE_NAME = {
+    "embench": "Embench", "gap": "GAP", "nas": "NAS", "olden": "Olden",
+    "gcbench": "GCBench", "mibench": "MiBench", "spec2017": "SPEC2017",
+    "polybench": "PolyBench",
+}
+
+
+def filter_runs(df):
+    """Restrict a results frame to the suites/benchmarks selected by the same
+    ALASKA_SUITES / ALASKA_BENCH / ALASKA_BENCH_QUICK env vars that
+    benchmarks/figure7.py honors, so plotting a partial sweep shows only what was
+    run rather than stale rows left in all.csv by an earlier (broader) sweep.
+    With none of the vars set, the frame is returned unchanged."""
+    suites = [s.strip() for s in os.environ.get("ALASKA_SUITES", "").lower().split(",") if s.strip()]
+    if suites:
+        names = {_SUITE_NAME.get(s, s) for s in suites}
+        df = df[df["suite"].isin(names)]
+    benches = [b.strip() for b in os.environ.get("ALASKA_BENCH", "").split(",") if b.strip()]
+    if benches:
+        df = df[df["benchmark"].isin(benches)]
+    # Quick mode skips the heavy NAS pseudo-apps (BT/SP/LU), mirroring figure7.py's
+    # NAS_EXCLUDE, in case those rows are still present in all.csv.
+    quick = os.environ.get("ALASKA_BENCH_QUICK", "").lower() in ("1", "true", "yes", "on")
+    if quick:
+        nas_excl = df["benchmark"].str.lower().str.startswith(("bt", "sp", "lu"))
+        df = df[~((df["suite"] == "NAS") & nas_excl)]
+    return df
+
+
 # Event metrics written by the runtime dump (EventCounters.hpp), with the labels
 # used on each plot panel. Only those actually present in the results are drawn.
 EVENT_METRICS = [
@@ -82,6 +113,7 @@ def load_counts(csv_path):
     Returns (long_df, metrics) where long_df has columns suite, benchmark, config
     and one column per available event metric (runs averaged)."""
     df = pd.read_csv(csv_path)
+    df = filter_runs(df)
     metrics = [m for m, _ in EVENT_METRICS if m in df.columns]
     if not metrics:
         raise SystemExit(

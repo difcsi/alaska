@@ -152,3 +152,50 @@ extern "C" void alaska_safepoint(void) { alaska_barrier_poll(); }
 
 // TODO:
 extern "C" void *__alaska_leak(void *ptr) { return alaska_translate(ptr); }
+
+
+#if ALASKA_ENABLE_REFCOUNT
+// The reference-count INCREMENT barrier, which the compiler inserts on every heap
+// pointer store (see compiler/passes/RefcountInc.cpp). It lives here -- in the
+// translate bitcode that alaska-transform llvm-links --internalize into each
+// module -- rather than in refcount.cpp (which is only ever in libalaska.so) so
+// that each call site resolves to a LOCAL direct call with the whole-word CAS
+// (Mapping::inc_refcount, now inline in alaska.hpp) inlined, instead of a PLT call
+// into the shared library on every store. Only the rare bookkeeping case -- a
+// handle reaching refcount 1 while it is still on the zero-refcount nullcount list
+// -- is handed to an out-of-line slow path (it needs the lock-protected map, so it
+// is not worth inlining and only fires after a prior dec-to-zero).
+extern "C" void alaska_inc_refcount_nullcount(void *ptr);
+
+extern "C" void alaska_inc_refcount(void *ptr) {
+  auto *m = alaska::Mapping::from_handle_safe(ptr);  // null / non-handle -> nullptr
+  if (m == nullptr) return;
+  auto new_count = m->inc_refcount();
+#if ALASKA_ENABLE_CYCLE_COLLECTION
+  if (new_count == 1 && m->is_on_nullcount()) {
+    alaska_inc_refcount_nullcount(ptr);
+  }
+#endif
+}
+
+// The reference-count DECREMENT barrier (compiler-inserted on pointer overwrites:
+// the old value at the store target is decremented before the store). Same inlining
+// rationale as the increment above -- a local direct call with the CAS inlined
+// rather than a PLT call into libalaska on every overwrite. The overwhelmingly
+// common case in store-heavy code is decrementing the freshly-zeroed (null) slot
+// before a first store, which returns inline here without touching the library.
+// Routing a real decrement to the GC (nullcount list / cycle-candidate set) only
+// happens in GC builds and is handed to an out-of-line slow path.
+#if ALASKA_ENABLE_CYCLE_COLLECTION
+extern "C" void alaska_dec_refcount_slow(void *ptr, int new_count);
+#endif
+
+extern "C" void alaska_dec_refcount(void *ptr) {
+  auto *m = alaska::Mapping::from_handle_safe(ptr);  // null / non-handle -> nullptr
+  if (m == nullptr) return;
+  auto new_count = m->dec_refcount();
+#if ALASKA_ENABLE_CYCLE_COLLECTION
+  alaska_dec_refcount_slow(ptr, (int)new_count);
+#endif
+}
+#endif

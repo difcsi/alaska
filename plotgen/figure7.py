@@ -12,6 +12,37 @@ def geo_mean(iterable):
     return (a.prod() ** (1.0 / len(a))) - 1
 
 
+# Map ALASKA_SUITES keys (as used by benchmarks/figure7.py) to the suite names that
+# appear in the results' `suite` column.
+_SUITE_NAME = {
+    "embench": "Embench", "gap": "GAP", "nas": "NAS", "olden": "Olden",
+    "gcbench": "GCBench", "mibench": "MiBench", "spec2017": "SPEC2017",
+    "polybench": "PolyBench",
+}
+
+
+def filter_runs(df):
+    """Restrict a results frame to the suites/benchmarks selected by the same
+    ALASKA_SUITES / ALASKA_BENCH / ALASKA_BENCH_QUICK env vars that
+    benchmarks/figure7.py honors, so plotting a partial sweep shows only what was
+    run rather than stale rows left in all.csv by an earlier (broader) sweep.
+    With none of the vars set, the frame is returned unchanged."""
+    suites = [s.strip() for s in os.environ.get("ALASKA_SUITES", "").lower().split(",") if s.strip()]
+    if suites:
+        names = {_SUITE_NAME.get(s, s) for s in suites}
+        df = df[df["suite"].isin(names)]
+    benches = [b.strip() for b in os.environ.get("ALASKA_BENCH", "").split(",") if b.strip()]
+    if benches:
+        df = df[df["benchmark"].isin(benches)]
+    # Quick mode skips the heavy NAS pseudo-apps (BT/SP/LU), mirroring figure7.py's
+    # NAS_EXCLUDE, in case those rows are still present in all.csv.
+    quick = os.environ.get("ALASKA_BENCH_QUICK", "").lower() in ("1", "true", "yes", "on")
+    if quick:
+        nas_excl = df["benchmark"].str.lower().str.startswith(("bt", "sp", "lu"))
+        df = df[~((df["suite"] == "NAS") & nas_excl)]
+    return df
+
+
 # The Alaska build configurations, in the order they should appear in the legend.
 # "baseline" is the reference every config's overhead is measured against, so it is
 # not itself drawn as a bar.
@@ -46,6 +77,7 @@ config_labels = {
 def load_overheads(csv_path, metric='time'):
     """Return per-(suite,benchmark,config) overhead relative to the baseline run."""
     df = pd.read_csv(csv_path)
+    df = filter_runs(df)
     # Average repeated runs, then pivot so each config sits beside its baseline.
     means = df.groupby(['suite', 'benchmark', 'config'])[metric].mean().reset_index()
     piv = means.pivot_table(index=['suite', 'benchmark'],
