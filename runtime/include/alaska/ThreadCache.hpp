@@ -18,6 +18,7 @@
 #include <alaska/alaska.hpp>
 #include <alaska/Localizer.hpp>
 #include "ck/lock.h"
+#include <ck/vec.h>
 
 namespace alaska {
 
@@ -35,6 +36,21 @@ namespace alaska {
     void *halloc(size_t size, bool zero = false);
     void *hrealloc(void *handle, size_t new_size);
     void hfree(void *handle);
+
+#if ALASKA_ENABLE_REFCOUNT
+    // Deferred dec-on-free (the default; opt out with ALASKA_NO_FREE_DEC_DEFER): instead of
+    // running the expensive alaska_hfree_dec_children scan + backing free on the freeing
+    // thread's hot path, hfree enqueues the handle via defer_free and the barrier thread
+    // drains the queue via drain_deferred (world stopped). BOTH methods assume the caller
+    // already holds this->lock -- the get_tc() LockedThreadCache on the mutator enqueue path,
+    // and lock_all_thread_caches() on the barrier drain path.
+    void defer_free(void *handle);
+    void drain_deferred(void);
+    // Release the handle slots the deferred-drain quarantine withheld one barrier epoch
+    // ago, and roll the current epoch's quarantine forward. Called once per barrier AFTER
+    // every thread's deferred queue has drained (see hfree_impl / quarantine_rotate).
+    void quarantine_rotate(void);
+#endif
 
     int get_id(void) const { return this->id; }
     size_t get_size(void *handle);
@@ -56,6 +72,11 @@ namespace alaska {
 
     // Free an allocation behind a handle, but not the handle
     void free_allocation(const alaska::Mapping &m);
+
+    // Shared body of hfree. When `quarantine_slot` is true (the deferred-drain path) the
+    // backing is freed and the pointer cleared, but the mapping slot is withheld from the
+    // allocatable pool for one barrier epoch instead of being put back immediately.
+    void hfree_impl(void *handle, bool quarantine_slot);
 
     // Allocate a new handle table mapping
     alaska::Mapping *new_mapping(void);
@@ -84,6 +105,22 @@ namespace alaska {
     // policy. This page is special because it can contain many
     // objects of many different sizes.
     alaska::LocalityPage *locality_page = nullptr;
+
+#if ALASKA_ENABLE_REFCOUNT
+    // Handles awaiting deferred dec-on-free, with the running total of their backing
+    // bytes for the byte-cap backpressure check. Guarded by `lock` (see defer_free).
+    ck::vec<void *> deferred_frees;
+    size_t deferred_bytes = 0;
+
+    // Handle-slot quarantine for the deferred-drain path. A slot whose backing was freed
+    // during drain_deferred is parked here (NOT returned to the allocatable pool) until a
+    // later barrier, so a not-yet-drained parent's stale child word cannot alias a reused
+    // slot and have dec-on-free corrupt the new occupant (the binarytrees UAF). Two
+    // generations: `cur` collects this epoch's withheld slots; `prev` holds last epoch's
+    // and is released at the next quarantine_rotate.
+    ck::vec<alaska::Mapping *> quarantine_cur;
+    ck::vec<alaska::Mapping *> quarantine_prev;
+#endif
 
    public:
     // Each thread cache has a localizer, which can be fed with

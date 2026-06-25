@@ -136,6 +136,14 @@ do
 				shift
 				;;
 
+			# Keep-raw (leaving provably non-escaping malloc/calloc on the libc
+			# allocator instead of promoting them to handles) is ON by default;
+			# this disables it for the build (e.g. to A/B a baseline).
+			--no-keep-raw)
+				export ALASKA_NO_KEEP_RAW=1
+				shift
+				;;
+
 			-O*)
 				OPT="$1"
 				shift

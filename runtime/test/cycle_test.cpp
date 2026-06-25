@@ -34,11 +34,11 @@ namespace {
 
    protected:
     void visit_children(alaska::ThreadCache &, alaska::Mapping *m,
-        const ck::func<void(alaska::Mapping *)> &fn) override {
+        ck::vec<alaska::Mapping *> &out) override {
       auto it = edges.find(m);
       if (it == edges.end()) return;
       for (auto *c : it->second) {
-        if (freed.find(c) == freed.end()) fn(c);
+        if (freed.find(c) == freed.end()) out.push(c);
       }
     }
 

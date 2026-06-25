@@ -26,6 +26,7 @@ add_llvm_library(Alaska MODULE
 	passes/Alaska.cpp
 
 	lib/PointerFlowGraph.cpp
+	lib/EscapeAnalysis.cpp
 	lib/Utils.cpp
 	lib/TranslationForest.cpp
 	lib/Translations.cpp

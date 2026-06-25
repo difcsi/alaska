@@ -265,10 +265,11 @@ static StackState get_stack_state(uintptr_t return_address) {
 static void record_handle(void* possible_handle, bool marked) {
   alaska::Mapping* m = alaska::Mapping::from_handle_safe(possible_handle);
 
-  // It wasn't a handle, don't consider it.
-  if (m == NULL) return;
-  if (not alaska::Runtime::get().handle_table.valid_handle(m)) return;
-  if (m->is_free()) return;
+  // It wasn't a handle, don't consider it. is_live_handle (not just valid_handle + !is_free):
+  // a stack word can decode to a slot currently on the allocator's free list, whose word is a
+  // raw next-link with the invl bit clear -- is_free() would pass it and set_pinned() below
+  // would CAS bit 61 into that link, corrupting the free list. See HandleTable::is_live_handle.
+  if (not alaska::Runtime::get().handle_table.is_live_handle(m)) return;
   m->set_pinned(marked);
 }
 
@@ -400,12 +401,11 @@ static void mark_conservative_range(void* sp_lo, void* sp_hi, bool marked) {
 static volatile int g_present_scan = 0;
 
 // Mark one candidate word present iff it is a live (allocated, non-free) handle.
-// Mirrors record_handle's checks but targets the present bitmap. Async-signal-safe.
+// Mirrors record_handle's checks but targets the present bitmap. Async-signal-safe
+// (is_live_handle does only lock-free loads + pointer arithmetic, no allocation).
 static inline void scan_mark_present(void* possible_handle) {
   alaska::Mapping* m = alaska::Mapping::from_handle_safe(possible_handle);
-  if (m == NULL) return;
-  if (not alaska::Runtime::get().handle_table.valid_handle(m)) return;
-  if (m->is_free()) return;
+  if (not alaska::Runtime::get().handle_table.is_live_handle(m)) return;
   alaska::gc::present_mark(m);
 }
 

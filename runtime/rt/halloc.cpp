@@ -24,6 +24,7 @@
 #include <alaska/EventCounters.hpp>
 #include <alaska.h>
 #include <errno.h>
+#include <stdlib.h>
 
 
 
@@ -196,10 +197,30 @@ void alaska_hfree_now(void *ptr) {
 #endif
 
 #if ALASKA_ENABLE_REFCOUNT
-  // Drop the references this aggregate held before its memory is recycled, so a
-  // container's outgoing handles can reach refcount 0 and be reclaimed (see
-  // alaska_hfree_dec_children in refcount.cpp). Must run while the object is still
-  // readable -- i.e. before the backing free below.
+  // Deferred dec-on-free is the DEFAULT: move the expensive alaska_hfree_dec_children scan
+  // + backing free off this hot path onto the barrier thread, which drains the per-thread
+  // queue with the world stopped (see ThreadCache::defer_free / drain_deferred and
+  // barrier_thread_func). Opt out with ALASKA_NO_FREE_DEC_DEFER=1 (run the scan inline
+  // instead) or disable dec-on-free entirely with ALASKA_NO_FREE_DEC=1 (then the inline
+  // call below is itself a no-op). Still drop liballocs metadata NOW, while the mapping
+  // resolves; the deferred backing free does not re-notify (tc.hfree never calls
+  // liballocs). The enqueue runs under tc.lock (the get_tc() LockedThreadCache).
+  static int defer = -1;
+  if (defer < 0) {
+    bool free_dec_on = (getenv("ALASKA_NO_FREE_DEC") == nullptr);
+    bool defer_off = (getenv("ALASKA_NO_FREE_DEC_DEFER") != nullptr);
+    defer = (free_dec_on && !defer_off) ? 1 : 0;
+  }
+  if (defer) {
+    alaska_liballocs_notify_free(ptr);
+    get_tc()->defer_free(ptr);
+    return;
+  }
+
+  // Inline path (taken only when deferral is opted out): drop the references this aggregate
+  // held before its memory is recycled, so a container's outgoing handles can reach refcount
+  // 0 and be reclaimed. Must run while the object is still readable -- i.e. before the
+  // backing free below. A no-op if ALASKA_NO_FREE_DEC=1.
   alaska_hfree_dec_children(ptr);
 #endif
 
@@ -241,7 +262,10 @@ static void walk_structure(void *ptr, size_t max_depth, Fn fn) {
   ck::queue<void *> todo(max_depth);
 
   auto schedule_pointer = [&](void *h, alaska::Mapping *m) {
-    if (m == NULL or not rt.handle_table.valid_handle(m) or m->is_free()) return;
+    // is_live_handle, not valid_handle + !is_free: a slot on the allocator free list keeps
+    // its invl bit clear, so is_free() would pass it and we'd walk a raw next-link as if it
+    // were object data. See HandleTable::is_live_handle.
+    if (not rt.handle_table.is_live_handle(m)) return;
     fn(m);
     if (todo.size() >= max_depth) return;
     todo.push(h);

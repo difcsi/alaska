@@ -1,16 +1,3 @@
-/*
- * This file is part of the Alaska Handle-Based Memory Management System
- *
- * Copyright (c) 2023, Nick Wanninger <ncw@u.northwestern.edu>
- * Copyright (c) 2023, The Constellation Project
- * All rights reserved.
- *
- * This is free software.  You are permitted to use, redistribute,
- * and modify it as specified in the file "LICENSE".
- */
-
-#include <ck/map.h>
-#include <ck/lock.h>
 #include <ck/vec.h>
 #include <alaska/alaska.hpp>
 #include <alaska/Runtime.hpp>
@@ -21,58 +8,33 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
-#include <signal.h>
-#include <pthread.h>
 
-namespace alaska::gc { extern unsigned long g_mark_count; }  // diagnostic
+namespace alaska::gc { extern unsigned long g_mark_count; }
 
-ck::HashTable<void*> nullcount_map;
-
-// nullcount_map tracks handles whose reference count has reached zero. Mutators
-// mutate/read it (inc/dec_refcount, size); the in-barrier reclaim iterates it.
-// Every access is serialized by this lock (ck::HashTable rehashes on set/remove,
-// invalidating a concurrent iterator).
+// Handles whose reference count has reached zero are tracked in a lock-free side
+// bitmap -- one bit per handle-table slot (see alaska::gc::nullcount_bm_*). dec->0
+// sets the bit, inc->1 / free clears it, and the in-barrier reclaim scans it.
 //
-// BARRIER SAFETY: a thread parked at Alaska's stop-the-world barrier while holding
-// this lock would block every other thread from acquiring it, and any thread that
-// blocked on it could never reach a safepoint to join -- a deadlock. Anchorage
-// avoids this for its own locks by pre-acquiring them all before signalling, but
-// that does not work here: a mutator about to call a nullcount op during a barrier
-// would still block on a pre-held lock and never join. Instead, every
-// MUTATOR-callable access blocks the barrier signal (SIGUSR2) across the (tiny)
-// critical section via NullcountGuard, so a thread is never parked at the barrier
-// holding it. The in-barrier reclaim runs on the barrier (orchestrator) thread,
-// which its own barrier never signals, so it locks plainly.
-static ck::mutex nullcount_lock;
-
-struct NullcountGuard {
-  sigset_t old;
-  NullcountGuard() {
-    sigset_t block;
-    sigemptyset(&block);
-    sigaddset(&block, SIGUSR2);
-    pthread_sigmask(SIG_BLOCK, &block, &old);
-    nullcount_lock.lock();
-  }
-  ~NullcountGuard() {
-    nullcount_lock.unlock();
-    pthread_sigmask(SIG_SETMASK, &old, nullptr);
-  }
-};
+// This replaced an earlier nullcount_map hashmap guarded by a SIGUSR2-masked lock.
+// An A/B showed the bitmap an order of magnitude cheaper on the refcount hot path --
+// a single atomic OR vs. a lock plus two pthread_sigmask syscalls per dec->0 -- with
+// byte-for-byte identical reclamation, so the hashmap was removed. Because set/clear
+// are single atomic ops the bitmap can never be read
+// torn (unlike a hashmap mid-rehash), so a mutator the barrier parks mid-update is
+// harmless and the reclaim scan needs no lock and never has to skip a cycle.
 
 static inline void nullcount_update(void* ptr, bool add) {
-  NullcountGuard g;
-  // Keep the per-Mapping on-nullcount hint (Mapping::kOnNullcountBit) in lockstep
-  // with map membership, so alaska_inc_refcount can decide whether it even needs to
-  // take this guard without consulting the map. Maintained under the lock so the
-  // bit and the map never disagree for a handle that is genuinely on the list.
   auto *m = alaska::Mapping::from_handle_safe(ptr);
+  if (m == nullptr) return;
+  // Keep the per-Mapping on-nullcount hint (Mapping::kOnNullcountBit) in lockstep
+  // with the bitmap, so the inlined inc fast path (translate.cpp) knows whether a
+  // resurrected handle needs the slow clear without consulting the bitmap.
   if (add) {
-    nullcount_map.set(ptr);
-    if (m) m->set_on_nullcount(true);
+    alaska::gc::nullcount_bm_set(m);
+    m->set_on_nullcount(true);
   } else {
-    nullcount_map.remove(ptr);
-    if (m) m->set_on_nullcount(false);
+    alaska::gc::nullcount_bm_clear(m);
+    m->set_on_nullcount(false);
   }
 }
 
@@ -107,9 +69,9 @@ static thread_local bool in_refcount_operation = false;
  * so the GC reclaim does not free a now-live handle.
  *
  * The recursion guard prevents a re-entrant refcount op (e.g. an allocator
- * birth-bump triggered while the nullcount map rehashes) from recursively taking
- * nullcount_lock and deadlocking. (The fast path never re-enters -- it is a pure
- * CAS -- so the guard only needs to wrap this lock-taking slow path.)
+ * birth-bump triggered while updating GC metadata) from recursively re-entering
+ * this slow path. (The fast path never re-enters -- it is a pure CAS -- so the
+ * guard only needs to wrap this slow path.)
  */
 __attribute__((section("$__ALASKA__refcount")))
 void alaska_inc_refcount_nullcount(void *ptr) {
@@ -133,8 +95,8 @@ void alaska_inc_refcount_nullcount(void *ptr) {
  * GC builds; a plain refcount build just tracks counts and never reclaims.
  *
  * The recursion guard prevents a re-entrant refcount op (e.g. an allocator bump
- * while the nullcount map rehashes) from recursively taking nullcount_lock and
- * deadlocking. (The fast path never re-enters -- it is a pure CAS.)
+ * while updating GC metadata) from recursively re-entering this slow path. (The
+ * fast path never re-enters -- it is a pure CAS.)
  */
 __attribute__((section("$__ALASKA__refcount")))
 void alaska_dec_refcount_slow(void *ptr, int new_count) {
@@ -170,46 +132,58 @@ void alaska_dec_refcount_slow(void *ptr, int new_count) {
  * drive a live object's refcount to 0 and have it reclaimed prematurely. That is
  * the inherent hazard of conservative refcount-on-free. Disable at runtime with
  * ALASKA_NO_FREE_DEC. Called from alaska_hfree_now before the backing memory is
- * recycled, while the object is still readable.
+ * recycled, while the object is still readable -- OR (the default) from the barrier
+ * thread's deferred-free drain (ThreadCache::drain_deferred), which keeps the object
+ * alive in a per-thread queue so this scan runs off the freeing thread's hot path (see
+ * ThreadCache::defer_free and barrier_thread_func; opt out with ALASKA_NO_FREE_DEC_DEFER).
  */
 // True only for a word that decodes to a real, LIVE handle -- the same validation
-// the cycle collector's is_collectable uses. The conservative heap scans below
-// feed arbitrary memory words here, so the decoded mapping MUST be bounds-checked
-// before it is touched: Mapping::from_handle_safe returns a structurally-decoded
-// pointer for ANY value whose top (handle) bit is set, which for junk data is a
-// wild pointer that inc/dec_refcount would dereference and crash on. valid_handle
-// is pure pointer arithmetic (no deref); only after it passes is reading is_free
-// safe. (Mirrors CycleCollector::is_collectable.)
+// the cycle collector's is_collectable uses. The conservative heap scans below feed
+// arbitrary memory words here, so the decoded mapping MUST be bounds-checked before it
+// is touched: Mapping::from_handle_safe returns a structurally-decoded pointer for ANY
+// value whose top (handle) bit is set, which for junk data is a wild pointer that
+// inc/dec_refcount would dereference and crash on. HandleTable::is_live_handle does the
+// bounds-check (pure pointer arithmetic, no deref) before any field is read.
+//
+// It uses is_live_handle, NOT valid_handle() + !is_free(): a slot sitting on the handle
+// allocator's free list keeps its invl bit clear (its word is a raw next-link), so
+// is_free() reports it live and the inc/dec below would CAS-corrupt that link. See
+// HandleTable::is_live_handle. (Mirrors CycleCollector::is_collectable.)
 static inline bool word_is_live_handle(void *p) {
   auto *m = alaska::Mapping::from_handle_safe(p);
-  if (m == nullptr) return false;
-  if (!alaska::Runtime::get().handle_table.valid_handle(m)) return false;
-  if (m->is_free()) return false;
-  return true;
+  return alaska::Runtime::get().handle_table.is_live_handle(m);
 }
 
 void alaska_hfree_dec_children(void *ptr) {
-  // OPT-IN (default OFF): conservative dec-on-free is UNSOUND for programs that
-  // manage memory explicitly and use self-referential structures. Freeing a node
-  // decrements the handles it holds, but a doubly-linked node's forward/back point
-  // at still-live neighbours; over-decrementing them lets the GC reclaim live
-  // nodes mid-traversal, corrupting the structure (observed as a hang in Olden
-  // `health`). Enable only for experiments with ALASKA_FREE_DEC=1.
+  // DEFAULT ON (opt out with ALASKA_NO_FREE_DEC=1): dropping an aggregate's outgoing
+  // handle references on free is required for refcounts to actually reach 0 and be
+  // reclaimed (a stored-once handle is otherwise inc'd but never dec'd). It is paired
+  // with copy-inc (alaska_inc_handles_in_range, also default on) so memcpy'd references
+  // stay balanced. CAVEAT: conservative dec-on-free is UNSOUND for programs that manage
+  // memory explicitly with self-referential structures -- an undercounted reference (a
+  // missed inc, a conservative false positive) can drive a still-referenced node to 0
+  // and have the GC reclaim it (observed as a hang in Olden `health`). Disable there
+  // with ALASKA_NO_FREE_DEC=1.
   static int enabled = -1;
-  if (enabled < 0) enabled = (getenv("ALASKA_FREE_DEC") != nullptr) ? 1 : 0;
+  if (enabled < 0) enabled = (getenv("ALASKA_NO_FREE_DEC") != nullptr) ? 0 : 1;
   if (!enabled) return;
   if (ptr == nullptr || in_refcount_operation) return;
 
-  auto *m = alaska::Mapping::from_handle_safe(ptr);
-  if (m == nullptr || m->is_free()) return;
-
   auto *tc = get_tc_r();
   if (tc == nullptr) return;
-  size_t size = tc->get_size(ptr);
-  if (size < sizeof(void *)) return;
 
-  void **words = (void **)m->get_pointer();
+  // Resolve the object's backing base. For a SIZED handle the base is the mapping's
+  // backing pointer; for a HUGE object there is no mapping and `ptr` already IS the raw
+  // backing pointer. Handling the huge case matters for correctness: the inc barrier
+  // fires on handle stores into a huge object too, so skipping its fields here would
+  // leak those children's refcounts (they would never reach 0 / be reclaimed).
+  auto *m = alaska::Mapping::from_handle_safe(ptr);
+  if (m != nullptr && m->is_free()) return;
+  void **words = (m != nullptr) ? (void **)m->get_pointer() : (void **)ptr;
   if (words == nullptr) return;
+
+  size_t size = tc->get_size(ptr);  // get_size resolves huge sizes via the huge allocator
+  if (size < sizeof(void *)) return;
 
   // Only decrement words that are validated live handles -- a raw word that merely
   // has the handle bit set is NOT safe to hand to dec_refcount (see above).
@@ -234,12 +208,13 @@ void alaska_hfree_dec_children(void *ptr) {
  * `base` is the raw destination pointer, `bytes` the copy length.
  */
 void alaska_inc_handles_in_range(void *base, size_t bytes) {
-  // OPT-IN (default OFF): same conservative-scan class as alaska_hfree_dec_children
-  // (its inc-side partner). It is only meaningful when dec-on-free is also enabled,
-  // and it over-increments handle-looking data, so it stays off unless requested
-  // with ALASKA_COPY_INC=1.
+  // DEFAULT ON (opt out with ALASKA_NO_COPY_INC=1): inc-side partner of dec-on-free
+  // (alaska_hfree_dec_children). A byte copy of handle-containing memory creates new heap
+  // references without firing the store barrier; this re-balances them so the matching
+  // dec-on-free does not underflow and free a live object. Kept in lockstep with
+  // dec-on-free's default so the two stay balanced.
   static int enabled = -1;
-  if (enabled < 0) enabled = (getenv("ALASKA_COPY_INC") != nullptr) ? 1 : 0;
+  if (enabled < 0) enabled = (getenv("ALASKA_NO_COPY_INC") != nullptr) ? 0 : 1;
   if (!enabled) return;
   if (base == nullptr || bytes < sizeof(void *)) return;
   if (in_refcount_operation) return;
@@ -277,44 +252,39 @@ unsigned long alaska_get_refcount(void *ptr) {
 }
 
 int alaska_nullcount_map_size(){
-  NullcountGuard g;
-  return nullcount_map.size();
+  return (int)alaska::gc::nullcount_bm_count();
 }
 
 void alaska_nullcount_map_foreach(void (*fn)(void* ptr)) {
-  NullcountGuard g;
-  for (auto it = nullcount_map.begin(); it != nullcount_map.end(); ++it) {
-    fn(*it);
-  }
+  ck::vec<alaska::Mapping *> cands;
+  alaska::gc::nullcount_bm_collect(cands);
+  for (auto *m : cands) fn(m->to_handle());
 }
 
-// Copy the current set of zero-refcount handles into `out` (capacity `cap`) under
-// the lock, so the caller iterates a private snapshot instead of the live map
-// (which mutators rehash concurrently). Returns the *total* number of entries; if
-// that exceeds `cap` the caller should grow `out` and call again.
+// Copy the current set of zero-refcount handles into `out` (capacity `cap`).
+// Returns the *total* number of entries; if that exceeds `cap` the caller should
+// grow `out` and call again.
 size_t alaska_nullcount_snapshot(void **out, size_t cap) {
-  NullcountGuard g;
+  ck::vec<alaska::Mapping *> cands;
+  alaska::gc::nullcount_bm_collect(cands);
   size_t n = 0;
-  size_t total = 0;
-  for (auto it = nullcount_map.begin(); it != nullcount_map.end(); ++it) {
-    if (n < cap) out[n++] = *it;
-    total++;
-  }
-  return total;
+  for (auto *m : cands)
+    if (n < cap) out[n++] = m->to_handle();
+  return cands.size();
 }
 
 // Drop a handle from the zero-refcount set. Called by hfree when freeing a handle that
-// reached refcount 0: without this the dead handle lingers in nullcount_map, and once
-// its mapping slot is recycled by a later allocation the reused (live) handle inherits a
-// stale "collectable" entry and the stackscan reclaim frees it out from under the
-// mutator. Clears the per-Mapping hint too, so the bit and the map stay in lockstep (see
-// nullcount_update). Inlines that pair rather than calling nullcount_update to avoid
-// double-locking the non-recursive nullcount_lock the guard already holds.
+// reached refcount 0: without this the dead handle lingers in the bitmap, and once its
+// mapping slot is recycled by a later allocation the reused (live) handle inherits a
+// stale "collectable" bit and the stackscan reclaim frees it out from under the mutator.
+// Clears the per-Mapping hint too, so the bit and the hint stay in lockstep (see
+// nullcount_update).
 void alaska_nullcount_forget(void *ptr) {
-  NullcountGuard g;
-  nullcount_map.remove(ptr);
   auto *m = alaska::Mapping::from_handle_safe(ptr);
-  if (m) m->set_on_nullcount(false);
+  if (m) {
+    alaska::gc::nullcount_bm_clear(m);
+    m->set_on_nullcount(false);
+  }
 }
 
 // Record a handle as zero-refcount. The cycle collector calls this (weakly) to
@@ -381,55 +351,41 @@ namespace alaska {
   // did NOT mark present -- i.e. that is not on any thread's stack. With the world
   // stopped the present set is a perfect snapshot, so a single pass is provably
   // correct (no two-cycle/hazard). Frees via tc.hfree, exactly like
-  // CycleCollector::reclaim. Runs on the barrier (orchestrator) thread, which its
-  // own barrier never signals, so it locks nullcount_lock plainly; mutators are all
-  // parked at the barrier and -- thanks to NullcountGuard -- none holds the lock.
-  // Collect-then-free avoids mutating nullcount_map mid-iteration; hfree (which does
-  // not touch nullcount_map) runs after the lock is dropped.
+  // CycleCollector::reclaim.
+  //
+  // The zero-refcount set is the lock-free bitmap (alaska::gc::nullcount_bm_*),
+  // mutated only by atomic OR/AND. A mutator the barrier parked mid-update therefore
+  // cannot leave it torn (unlike a hashmap mid-rehash), and the world is stopped so
+  // no set races this scan -- so unlike the old hashmap path this needs no lock and
+  // never has to skip a cycle.
   size_t reclaim_dead_handles(alaska::ThreadCache &tc) {
     size_t candidates = 0;
     ck::vec<void *> to_free;
 
-    // Try (do NOT block) to take nullcount_lock. The world is stopped, so the
-    // only possible holder is a mutator the barrier parked mid-nullcount-update
-    // -- in which case the map may even be mid-rehash and inconsistent. Blocking
-    // here would deadlock: that thread cannot release the lock until we end the
-    // barrier, which we cannot do until this callback returns. Skipping the cycle
-    // is both deadlock-free and correct -- we reclaim on the next barrier, when
-    // the lock is free and the map is consistent. (Masking SIGUSR2 around the
-    // mutator's critical section does NOT prevent this: under liballocs/systrap a
-    // syscall inside the section -- e.g. the rehash mmap -- still lets the pending
-    // barrier signal through and parks the thread while it holds the lock.)
-    if (nullcount_lock.try_lock() != 0) {
-      if (getenv("RECLAIM_DEBUG"))
-        fprintf(stderr, "[reclaim] nullcount_lock contended (parked mutator); skipping cycle\n");
-      return 0;
-    }
-    for (auto it = nullcount_map.begin(); it != nullcount_map.end(); ++it) {
-      void *h = *it;
+    ck::vec<alaska::Mapping *> cands;
+    alaska::gc::nullcount_bm_collect(cands);
+    for (auto *m : cands) {
       candidates++;
-      auto *m = alaska::Mapping::from_handle_safe(h);
-      if (m == nullptr) continue;
       if (m->is_free()) continue;
-      if (m->get_refcount() != 0) continue;        // re-published (defensive)
-      if (alaska::gc::present_test(m)) continue;    // on some thread's stack
-      // Manual lifetime policy overrides the GC: a pinned handle is kept alive
-      // even at refcount 0 and stack-unreachable. It stays in nullcount_map and is
-      // reconsidered on later barriers, becoming reclaimable once unpinned (hfree).
+      if (m->get_refcount() != 0) continue;       // re-published (defensive)
+      if (alaska::gc::present_test(m)) continue;   // on some thread's stack
+      // Manual lifetime policy overrides the GC: a pinned handle is kept alive even
+      // at refcount 0 and stack-unreachable. Its bit stays set and it is reconsidered
+      // on later barriers, becoming reclaimable once unpinned (hfree).
       if (&__liballocs_alaska_manual_pinned &&
           __liballocs_alaska_manual_pinned(m->get_pointer())) continue;
-      to_free.push(h);
+      to_free.push(m->to_handle());
     }
-    // Remove the reclaimed handles from the map AND clear their per-Mapping hint, so
-    // the bit and the map stay in lockstep (see nullcount_update). Done under the lock
-    // we still hold. Clearing the bit also means the hfree below sees is_on_nullcount()
-    // == false and skips its own (now redundant) nullcount_forget relock.
+    // Clear the reclaimed handles' bits AND the per-Mapping hint, keeping the two in
+    // lockstep (see nullcount_update). Clearing the hint also means the hfree below
+    // sees is_on_nullcount() == false and skips its own redundant nullcount_forget.
     for (auto *h : to_free) {
-      nullcount_map.remove(h);
       auto *m = alaska::Mapping::from_handle_safe(h);
-      if (m) m->set_on_nullcount(false);
+      if (m) {
+        alaska::gc::nullcount_bm_clear(m);
+        m->set_on_nullcount(false);
+      }
     }
-    nullcount_lock.unlock();
 
     for (auto *h : to_free) {
       if (&__liballocs_notify_alaska_free) {
@@ -439,7 +395,7 @@ namespace alaska {
       } else {
         // hfree(h);
         ::alaska_hfree_dec_children(h);
-        tc.hfree(h); // optimisation in case liballocs is 
+        tc.hfree(h); // optimisation in case liballocs is
       }
       
       

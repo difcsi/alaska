@@ -41,6 +41,11 @@ promote_free.add_argument('--no-promote-free', dest='promote_free', action='stor
     default=None, help='Suppress hfree of promoted objects (for Python-escaped '
                        'objects that outlive their C frame).')
 
+# Keep-raw (non-escaping malloc/calloc kept on the libc allocator) is ON by
+# default; --no-keep-raw disables it for this build (read by AlaskaReplacementPass).
+parser.add_argument('--no-keep-raw', dest='no_keep_raw', action='store_true',
+    help='Disable the keep-raw optimization (promote every malloc/calloc to a handle).')
+
 args = parser.parse_args()
 
 # The stack-promote pass reads these from the environment (inherited by opt).
@@ -51,6 +56,8 @@ if os.environ.get('ALASKA_HEAP_HINTS') or os.environ.get('ALASKA_STACK_PROMOTE')
   args.stack_promote = True
 if args.promote_free is not None:
   os.environ['ALASKA_STACK_PROMOTE_FREE'] = '1' if args.promote_free else '0'
+if args.no_keep_raw:
+  os.environ['ALASKA_NO_KEEP_RAW'] = '1'
 
 # print(args)
 

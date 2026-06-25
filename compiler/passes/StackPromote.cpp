@@ -42,6 +42,7 @@
 // `ALASKA_STACK_PROMOTE_FREE=0|1` overrides the default either way. An object
 // whose address is *returned* is never freed (that free would always be wrong).
 
+#include <alaska/EscapeAnalysis.h>
 #include <alaska/Passes.h>
 #include <alaska/Utils.h>
 
@@ -98,139 +99,9 @@ static bool skipFunction(const Function &F) {
   return false;
 }
 
-// Classification of how a stack object's address is used.
-struct EscapeInfo {
-  bool taken = false;     // address escapes the object in any way
-  bool toHinted = false;  // address flows into a hinted function's pointer arg
-  bool returned = false;  // address is returned from the function
-  bool unsafe = false;    // used in a way we must not promote (atomics, va_list)
-  // lifetime/invariant markers on the object; meaningless once it is on the
-  // heap, so they are removed at promotion time.
-  SmallPtrSet<IntrinsicInst *, 4> lifetimeMarkers;
-};
-
-// Walk the def-use chain of `AI`, following pointer-producing transient
-// instructions (bitcast/gep/addrspacecast/phi/select), and classify every use.
-// When `hints` is non-null, also record whether the address reaches a call to
-// one of those functions as a pointer argument.
-static EscapeInfo analyzeEscape(AllocaInst *AI, const std::set<std::string> *hints) {
-  EscapeInfo info;
-  SmallVector<Value *, 16> work;
-  SmallPtrSet<Value *, 16> seen;
-  work.push_back(AI);
-  seen.insert(AI);
-
-  while (!work.empty()) {
-    Value *V = work.pop_back_val();
-    for (Use &U : V->uses()) {
-      auto *I = dyn_cast<Instruction>(U.getUser());
-      if (!I) {
-        // A constant expression (e.g. ptrtoint in a global initializer) takes
-        // the address out of our sight; be conservative.
-        info.taken = true;
-        continue;
-      }
-
-      // Reading/writing *through* the pointer is a use of the object, not an
-      // escape of its address. Storing the address itself, however, escapes.
-      if (auto *li = dyn_cast<LoadInst>(I)) {
-        if (li->getPointerOperand() == V) continue;
-        info.taken = true;
-        continue;
-      }
-      if (auto *si = dyn_cast<StoreInst>(I)) {
-        if (si->getValueOperand() == V) {  // the address is the value stored
-          info.taken = true;
-          continue;
-        }
-        if (si->getPointerOperand() == V) continue;  // storing into the object
-        info.taken = true;
-        continue;
-      }
-
-      // Transient pointer producers: keep walking.
-      if (isa<BitCastInst>(I) || isa<GetElementPtrInst>(I) ||
-          isa<AddrSpaceCastInst>(I) || isa<PHINode>(I) || isa<SelectInst>(I)) {
-        if (seen.insert(I).second) work.push_back(I);
-        continue;
-      }
-
-      if (auto *ii = dyn_cast<IntrinsicInst>(I)) {
-        switch (ii->getIntrinsicID()) {
-          case Intrinsic::lifetime_start:
-          case Intrinsic::lifetime_end:
-          case Intrinsic::invariant_start:
-          case Intrinsic::invariant_end:
-            info.lifetimeMarkers.insert(ii);
-            continue;
-          case Intrinsic::dbg_declare:
-          case Intrinsic::dbg_value:
-          case Intrinsic::dbg_label:
-          case Intrinsic::memcpy:
-          case Intrinsic::memmove:
-          case Intrinsic::memset:
-            continue;  // accesses / debug info, not escapes
-          case Intrinsic::vastart:
-          case Intrinsic::vacopy:
-          case Intrinsic::vaend:
-            info.unsafe = true;  // va_list slot: ABI-sensitive, never promote
-            continue;
-          default:
-            info.taken = true;  // unknown intrinsic taking the address
-            continue;
-        }
-      }
-
-      // Atomic accesses are not handled by the translate pass (only plain
-      // load/store are sinks), so promoting an object accessed atomically would
-      // dereference a raw handle. Refuse to promote such objects.
-      if (auto *rmw = dyn_cast<AtomicRMWInst>(I)) {
-        if (rmw->getPointerOperand() == V) info.unsafe = true;
-        else info.taken = true;
-        continue;
-      }
-      if (auto *cx = dyn_cast<AtomicCmpXchgInst>(I)) {
-        if (cx->getPointerOperand() == V) info.unsafe = true;
-        else info.taken = true;
-        continue;
-      }
-
-      if (auto *cb = dyn_cast<CallBase>(I)) {
-        // Inline asm (and asm-goto) may rely on the operand being a real stack
-        // address; handing it a handle would corrupt the access. Never promote.
-        if (cb->isInlineAsm()) {
-          info.unsafe = true;
-          continue;
-        }
-        bool isArg = false;
-        for (unsigned a = 0, n = cb->arg_size(); a < n; a++) {
-          if (cb->getArgOperand(a) == V) {
-            isArg = true;
-            break;
-          }
-        }
-        info.taken = true;
-        if (isArg && hints) {
-          if (auto *callee =
-                  dyn_cast<Function>(cb->getCalledOperand()->stripPointerCasts())) {
-            if (hints->count(std::string(callee->getName()))) info.toHinted = true;
-          }
-        }
-        continue;
-      }
-
-      if (isa<ReturnInst>(I)) {
-        info.taken = true;
-        info.returned = true;
-        continue;
-      }
-
-      // ptrtoint / icmp and anything else: the address has escaped our view.
-      info.taken = true;
-    }
-  }
-  return info;
-}
+// `EscapeInfo` and `analyzeEscape` live in <alaska/EscapeAnalysis.h>, shared with
+// AlaskaReplacementPass. StackPromote uses the default (allocator-unaware) mode,
+// so its behavior is unchanged by the extraction.
 
 // Decide whether to free promoted objects at function exit, given the mode.
 // Default: free in promote-all mode (leak-free stack semantics), do not free in
@@ -300,7 +171,7 @@ PreservedAnalyses AlaskaStackPromotePass::run(Module &M, ModuleAnalysisManager &
       TypeSize ts = DL.getTypeAllocSize(AI->getAllocatedType());
       if (ts.isScalable()) continue;
 
-      EscapeInfo esc = analyzeEscape(AI, hintsMode ? &hints : nullptr);
+      alaska::EscapeInfo esc = alaska::analyzeEscape(AI, hintsMode ? &hints : nullptr);
       if (esc.unsafe) continue;
       bool promote = hintsMode ? esc.toHinted : esc.taken;
       if (!promote) continue;

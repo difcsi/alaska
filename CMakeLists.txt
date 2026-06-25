@@ -519,6 +519,25 @@ add_custom_target(heap-promote
   COMMENT "Building and running the stack-to-heap promotion test (off/all/hinted)"
 )
 
+# keep-raw: exercise the keep-raw optimization for non-escaping malloc/calloc.
+# Keep-raw is ON by default; the test also builds a --no-keep-raw baseline. The
+# program self-checks and exits non-zero on mismatch, so any divergence between
+# the two builds fails the target -- keeping non-escaping objects raw must be
+# transparent.
+add_custom_target(keep-raw
+  COMMAND bash ${CMAKE_SOURCE_DIR}/test/keep_raw_events.sh ${CMAKE_INSTALL_PREFIX}/bin/alaska ${CMAKE_SOURCE_DIR}/test/keep_raw.c ${CMAKE_BINARY_DIR}
+  COMMENT "Building and running the keep-raw non-escaping malloc test (off/on)"
+)
+
+# keep-raw-events: build keep_raw.c off/on and assert (via the runtime event
+# counters) that the keep-raw build performs strictly fewer hallocs with
+# identical output. SKIPS the halloc-delta check on a non-measurement build
+# (event counters off) rather than failing. Needs ALASKA_MEASURE=1 to be useful.
+add_custom_target(keep-raw-events
+  COMMAND bash ${CMAKE_SOURCE_DIR}/test/keep_raw_events.sh ${CMAKE_INSTALL_PREFIX}/bin/alaska ${CMAKE_SOURCE_DIR}/test/keep_raw.c ${CMAKE_BINARY_DIR}
+  COMMENT "Comparing halloc counts with/without keep-raw (needs ALASKA_MEASURE=1 build)"
+)
+
 # refcount-collect: integration test that a handle with no references is
 # reclaimed automatically (in bounded time) by the background barrier thread,
 # with no explicit hfree and no forced barrier. The program self-checks and
@@ -571,6 +590,17 @@ add_custom_target(refcount-elision
   COMMAND ${CMAKE_COMMAND} -E env "LDFLAGS=-fuse-ld=bfd $ENV{LDFLAGS}" ${CMAKE_INSTALL_PREFIX}/bin/alaska -O3 ${CMAKE_SOURCE_DIR}/test/refcount_elision.c -o ${CMAKE_BINARY_DIR}/refcount_elision
   COMMAND ${CMAKE_BINARY_DIR}/refcount_elision
   COMMENT "Building and running the refcount barrier-elision soundness test"
+)
+
+# refcount-huge-children: regression test for huge-object dec-on-free. A huge container
+# (no Mapping -- the raw backing pointer is returned) full of handles used to leak its
+# children's refcounts on free because the dec-on-free scan keyed its base/size on the
+# Mapping. Fills a huge handle array, frees it, and checks each child (kept live by a
+# second array) dropped exactly one reference. Exits non-zero if any child was not dec'd.
+add_custom_target(refcount-huge-children
+  COMMAND ${CMAKE_COMMAND} -E env "LDFLAGS=-fuse-ld=bfd $ENV{LDFLAGS}" ${CMAKE_INSTALL_PREFIX}/bin/alaska -O3 ${CMAKE_SOURCE_DIR}/test/refcount_huge_children.c -o ${CMAKE_BINARY_DIR}/refcount_huge_children
+  COMMAND ${CMAKE_BINARY_DIR}/refcount_huge_children
+  COMMENT "Building and running the huge-object dec-on-free regression test"
 )
 
 # unit: run the compiler unit-test suite via tools/unittest.py

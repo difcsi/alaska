@@ -109,6 +109,36 @@ namespace alaska {
 
     bool valid_handle(alaska::Mapping *m) const;
 
+    // True only for a slot that currently holds a LIVE handle: in-range, not freed, and
+    // pointing at a real backing object. This is STRONGER than valid_handle() + !is_free(),
+    // and the distinction is load-bearing for the conservative heap scanners.
+    //
+    // A Mapping slot sitting on the handle allocator's free list (ShardedFreeList) -- or one
+    // still in the bump region, never handed out -- has its 8-byte word overwritten with a
+    // raw `next` link (another slot's address, or NULL). That link leaves the invl/free bit
+    // (bit 62) CLEAR, so is_free() reports such a slot as LIVE. A conservative scan that
+    // trusts is_free() will then hand the slot to inc/dec_refcount, whose whole-word CAS
+    // rewrites the refcount field (bits 47-60) of what is actually a free-list link --
+    // corrupting the allocator's free list and crashing the next allocation in
+    // ShardedFreeList::pop.
+    //
+    // We catch it cheaply: a free-list link decodes (low 47 bits) to an address INSIDE this
+    // table (or NULL), whereas a genuine backing pointer is an object-heap / huge allocation
+    // that never points into the handle table. So reject any mapping whose backing falls in
+    // [m_table, m_table + slab_count*slab_size). Every conservative scanner -- dec-on-free,
+    // copy-inc, and the cycle collector's child walk -- must gate on this, not is_free().
+    inline bool is_live_handle(alaska::Mapping *m) const {
+      if (m == nullptr) return false;
+      if (!valid_handle(m)) return false;
+      if (m->is_free()) return false;
+      uintptr_t backing = (uintptr_t)m->get_pointer();
+      if (backing == 0) return false;
+      uintptr_t base = (uintptr_t)m_table;
+      uintptr_t end = base + (uintptr_t)m_slabs.size() * slab_size;
+      if (backing >= base && backing < end) return false;  // a free-list link, not a backing
+      return true;
+    }
+
     // A teardown snapshot of how many handles the table is holding: `total` live
     // (allocated, not free) handles, and how many of those have a nonzero
     // reference count. `nonzero_refcount` is always 0 when refcounting is

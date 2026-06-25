@@ -121,25 +121,30 @@ def build_plot_frame(ov):
 
     for suite in ordered_suites(ov['suite'].unique()):
         sub = ov[ov['suite'] == suite]
+        benches = sorted(sub['benchmark'].unique())
         # Individual benchmarks for this suite.
-        for bench in sorted(sub['benchmark'].unique()):
+        for bench in benches:
             label = bench
             order.append(label)
             for _, r in sub[sub['benchmark'] == bench].iterrows():
                 rows.append({'label': label, 'suite': suite, 'config': r['config'],
                              'overhead': r['overhead'], 'is_geomean': False})
-        # Per-suite geomean.
-        glabel = f'{suite} geomean'
-        order.append(glabel)
-        for cfg, grp in sub.groupby('config'):
-            rows.append({'label': glabel, 'suite': suite, 'config': cfg,
-                         'overhead': geo_mean(grp['overhead']), 'is_geomean': True})
+        # Per-suite geomean. Skip it when the suite has a single benchmark, since
+        # the geomean would just duplicate that lone bar.
+        if len(benches) > 1:
+            glabel = f'{suite} geomean'
+            order.append(glabel)
+            for cfg, grp in sub.groupby('config'):
+                rows.append({'label': glabel, 'suite': suite, 'config': cfg,
+                             'overhead': geo_mean(grp['overhead']), 'is_geomean': True})
 
-    # Overall geomean across every benchmark.
-    order.append('geomean')
-    for cfg, grp in ov.groupby('config'):
-        rows.append({'label': 'geomean', 'suite': 'ALL', 'config': cfg,
-                     'overhead': geo_mean(grp['overhead']), 'is_geomean': True})
+    # Overall geomean across every benchmark. Skip it when only a single benchmark
+    # was run, since it would just duplicate that lone bar.
+    if ov['benchmark'].nunique() > 1:
+        order.append('geomean')
+        for cfg, grp in ov.groupby('config'):
+            rows.append({'label': 'geomean', 'suite': 'ALL', 'config': cfg,
+                         'overhead': geo_mean(grp['overhead']), 'is_geomean': True})
 
     return pd.DataFrame(rows), order
 

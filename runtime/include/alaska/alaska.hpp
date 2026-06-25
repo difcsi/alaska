@@ -121,11 +121,11 @@ namespace alaska {
     static constexpr uint64_t kPinnedBit = 1ULL << 61;
     static constexpr uint64_t kInvlBit = 1ULL << 62;
     // bit 63 (the otherwise-unused `swap` flag): a HINT, maintained by the refcount
-    // runtime, that this handle is currently on the zero-refcount nullcount list.
-    // It lets alaska_inc_refcount skip the (syscall-bracketed) nullcount-map removal
-    // when the handle was never added -- the dominant case for allocate-and-store
-    // workloads. The nullcount_map remains the source of truth; the reclaim path
-    // re-validates every entry, so a drifted hint can never cause a wrong free.
+    // runtime, that this handle is currently in the zero-refcount set (the nullcount
+    // bitmap). It lets alaska_inc_refcount skip the nullcount clear when the handle
+    // was never added -- the dominant case for allocate-and-store workloads. The
+    // bitmap remains the source of truth; the reclaim path re-validates every entry,
+    // so a drifted hint can never cause a wrong free.
     static constexpr uint64_t kOnNullcountBit = 1ULL << 63;
 
     void set_pointer(void *ptr) {
@@ -177,11 +177,11 @@ namespace alaska {
       }
     }
 
-    // Nullcount-list membership hint (see kOnNullcountBit). Relaxed: it is only a
-    // hint read by the refcount fast path; the lock-protected nullcount_map plus
-    // the reclaim re-validation provide the actual correctness. Set/cleared by the
-    // refcount runtime in lockstep with nullcount_map add/remove; cleared for free
-    // by reset()/set_next() (a fresh/recycled slot is never on the list).
+    // Nullcount membership hint (see kOnNullcountBit). Relaxed: it is only a hint
+    // read by the refcount fast path; the nullcount bitmap plus the reclaim
+    // re-validation provide the actual correctness. Set/cleared by the refcount
+    // runtime in lockstep with the bitmap set/clear; cleared for free by
+    // reset()/set_next() (a fresh/recycled slot is never in the set).
     bool is_on_nullcount(void) const {
       uint64_t w = __atomic_load_n(
           reinterpret_cast<uint64_t *>(const_cast<Mapping *>(this)), __ATOMIC_RELAXED);

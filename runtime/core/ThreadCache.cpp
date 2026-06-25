@@ -25,6 +25,14 @@
 // set in step with slot reuse.
 extern "C" void alaska_nullcount_forget(void *handle) __attribute__((weak));
 
+#if ALASKA_ENABLE_REFCOUNT
+// Drop the references an object held, on free (decrement each contained handle's refcount).
+// Defined in rt/refcount.cpp -- weak and address-guarded for the same core->rt link-direction
+// reason as alaska_nullcount_forget above. Internally a no-op if ALASKA_NO_FREE_DEC is set.
+// Used by the deferred dec-on-free path (defer_free / drain_deferred).
+extern "C" void alaska_hfree_dec_children(void *handle) __attribute__((weak));
+#endif
+
 // Number of bytes to reserve at the END of every sized backing allocation for a
 // liballocs trailing `struct insert` (which carries the per-object lifetime-policy
 // mask). Injected by the stackscan build via -DALASKA_LIBALLOCS_INSERT_RESERVE=8;
@@ -235,7 +243,10 @@ namespace alaska {
   }
 
 
-  void ThreadCache::hfree(void *handle) {
+  void ThreadCache::hfree(void *handle) { this->hfree_impl(handle, /*quarantine_slot=*/false); }
+
+  void ThreadCache::hfree_impl(void *handle, bool quarantine_slot) {
+    (void)quarantine_slot;  // unused unless ALASKA_ENABLE_REFCOUNT (deferred-drain path)
     alaska::Mapping *m = alaska::Mapping::from_handle_safe(handle);
     if (unlikely(m == nullptr)) {
       bool worked = this->runtime.heap.huge_allocator.free(handle);
@@ -243,7 +254,7 @@ namespace alaska {
       // ALASKA_ASSERT(worked, "huge free failed");
       return;
     }
-    
+
 #if ALASKA_ENABLE_REFCOUNT
     if(unlikely(m->get_refcount() > 1 )){
       alaska::printf("Warning: Freeing handle %p with a > 1 refcount %lu\n", handle, m->get_refcount());
@@ -264,9 +275,118 @@ namespace alaska {
     // Free the allocation behind a mapping
     free_allocation(*m);
     m->set_pointer(nullptr);
+#if ALASKA_ENABLE_REFCOUNT
+    if (quarantine_slot) {
+      // Deferred-drain path: the backing is freed and the pointer cleared (so the slot's
+      // backing is now 0 and HandleTable::is_live_handle already rejects it), but DON'T
+      // return the slot to the allocatable pool yet. A parent still queued in some thread's
+      // deferred_frees may hold this handle's value in a child word; recycling the slot now
+      // lets the next allocation reuse it, after which that stale word resolves to a live
+      // unrelated mapping and dec-on-free corrupts it (the binarytrees UAF). Hold the slot
+      // for one barrier epoch -- quarantine_rotate releases it once every same-burst parent
+      // has drained and harmlessly skipped this null-backing slot.
+      quarantine_cur.push(m);
+      return;
+    }
+#endif
     // Return the handle to the handle table.
     this->runtime.handle_table.put(m, this);
   }
+
+
+#if ALASKA_ENABLE_REFCOUNT
+  // Backpressure caps for deferred dec-on-free (see defer_free). Tunable; they bound how
+  // long freed memory and handle slots sit undrained between barriers.
+  static constexpr size_t kDeferredMaxCount = 8192;
+  static constexpr size_t kDeferredMaxBytes = 8 * 1024 * 1024;  // 8 MiB queued backing
+  static constexpr size_t kDeferredHugeBytes = 256 * 1024;      // >= this: free inline
+
+  // Enqueue a program-freed handle for deferred dec-on-free instead of paying the
+  // alaska_hfree_dec_children scan + backing free on the freeing thread's hot path. The
+  // barrier thread drains the queue (drain_deferred) with the world stopped. CALLER MUST
+  // HOLD this->lock (the get_tc() LockedThreadCache provides it on the hfree path).
+  //
+  // We replicate, NOW at enqueue, the GC-set bookkeeping ThreadCache::hfree does eagerly
+  // (cycle_collector.forget + nullcount_forget). Otherwise a queued handle whose own
+  // refcount is already 0 lingers in the nullcount set and the barrier's reclaim_dead_handles
+  // frees it while it still sits in our queue -> double free.
+  void ThreadCache::defer_free(void *handle) {
+    alaska::Mapping *m = alaska::Mapping::from_handle_safe(handle);
+
+    // Huge objects have no mapping and hold a lot of memory: never queue them, free inline.
+    // alaska_hfree_dec_children handles the huge case (ptr is the raw backing base), so the
+    // huge object's handle-typed fields are still dec'd before its backing is freed -- the
+    // scan just runs on the freeing thread, not the barrier (huge objects are too big to sit
+    // in the queue).
+    if (unlikely(m == nullptr)) {
+      if (&alaska_hfree_dec_children) alaska_hfree_dec_children(handle);
+      this->hfree(handle);
+      return;
+    }
+    // Lenient skip for an already-freed handle. (Double free of a not-yet-drained handle is
+    // UB, as for malloc; this only catches the easy is_free() case.)
+    if (unlikely(m->is_free())) return;
+
+    // Take the handle out of the GC's view immediately (mirrors ThreadCache::hfree).
+#if ALASKA_ENABLE_CYCLE_COLLECTION
+    this->runtime.cycle_collector.forget(m);
+    if (m->is_on_nullcount() && &alaska_nullcount_forget) alaska_nullcount_forget(handle);
+#endif
+
+    // Large (but non-huge) objects also bypass the queue, to bound resident memory.
+    size_t size = this->get_size(handle);
+    if (size >= kDeferredHugeBytes) {
+      if (&alaska_hfree_dec_children) alaska_hfree_dec_children(handle);
+      this->hfree(handle);
+      return;
+    }
+
+    deferred_frees.push(handle);
+    deferred_bytes += size;
+
+    // Backpressure: on exceeding either cap, drain this thread's whole queue inline now.
+    // That is just today's behaviour batched -- safe because we hold this->lock and every
+    // entry was freed by this thread.
+    if ((size_t)deferred_frees.size() >= kDeferredMaxCount || deferred_bytes >= kDeferredMaxBytes) {
+      this->drain_deferred();
+    }
+  }
+
+  // Drain every queued handle: decrement its children then free its backing. The mapping
+  // SLOT is NOT recycled here -- hfree_impl(quarantine_slot=true) parks it in the quarantine
+  // so a still-queued parent's stale child word cannot alias a reused slot (see hfree_impl
+  // and quarantine_rotate). Re-checks is_free() so a handle already reclaimed elsewhere is
+  // skipped (keeps the drain idempotent w.r.t. reclaim_dead_handles). CALLER MUST HOLD
+  // this->lock -- the barrier holds all tc locks via lock_all_thread_caches(); the inline
+  // overflow path above already holds it.
+  void ThreadCache::drain_deferred(void) {
+    for (auto *h : deferred_frees) {
+      alaska::Mapping *m = alaska::Mapping::from_handle_safe(h);
+      if (m != nullptr && m->is_free()) continue;  // already reclaimed; drop
+      if (&alaska_hfree_dec_children) alaska_hfree_dec_children(h);
+      this->hfree_impl(h, /*quarantine_slot=*/true);
+    }
+    deferred_frees.clear_with_capacity();
+    deferred_bytes = 0;
+  }
+
+  // Roll the deferred-drain handle-slot quarantine forward by one barrier epoch. Releases
+  // the slots withheld a full epoch ago (quarantine_prev) back to the allocatable pool, then
+  // promotes this epoch's withheld slots (quarantine_cur) into quarantine_prev. MUST run once
+  // per barrier AFTER every thread's deferred queue has drained (see barrier_thread_func):
+  // draining first guarantees any parent whose stale child word references a slot still in
+  // quarantine_prev has already run its dec-on-free and skipped that null-backing slot, so
+  // the slot is safe to recycle now. Two generations cover a free-burst that straddles a
+  // barrier. CALLER MUST HOLD this->lock (the barrier holds all tc locks).
+  void ThreadCache::quarantine_rotate(void) {
+    for (auto *m : quarantine_prev)
+      this->runtime.handle_table.put(m, this);
+    quarantine_prev.clear_with_capacity();
+    for (auto *m : quarantine_cur)
+      quarantine_prev.push(m);
+    quarantine_cur.clear_with_capacity();
+  }
+#endif  // ALASKA_ENABLE_REFCOUNT
 
 
   size_t ThreadCache::get_size(void *handle) {

@@ -92,6 +92,24 @@ static void *barrier_thread_func(void *) {
 #endif
 
     rt.with_barrier([&]() {
+#if ALASKA_ENABLE_REFCOUNT
+      // Drain program-deferred frees first (deferred dec-on-free is the default). For every handle the
+      // mutators queued via ThreadCache::defer_free, run the dec-children scan + backing
+      // free here, with the world stopped and all tc locks held by with_barrier -- the same
+      // invariant reclaim_dead_handles relies on. Doing it BEFORE reclaim lets children
+      // decremented to 0 here be reclaimed this same cycle. Iterating rt.tcs is safe:
+      // lock_all_thread_caches() holds tcs_lock for the whole callback. A no-op (empty
+      // queues) unless deferred mode is enabled.
+      for (auto *tcx : rt.tcs)
+        tcx->drain_deferred();
+      // Roll the handle-slot quarantine AFTER every queue has drained: release the slots
+      // withheld a full epoch ago and promote this epoch's. Draining first guarantees any
+      // parent that still referenced a to-be-released slot has already run dec-on-free and
+      // skipped it (its backing is null), so recycling the slot now is safe. See
+      // ThreadCache::quarantine_rotate / hfree_impl (the binarytrees dec-on-free reuse race).
+      for (auto *tcx : rt.tcs)
+        tcx->quarantine_rotate();
+#endif
 #if ALASKA_ENABLE_CYCLE_COLLECTION
       // Heap compaction and cycle collection are duals (Deutsch & Bobrow): both
       // walk the object graph with the world stopped, so Anchorage does them in
@@ -106,7 +124,7 @@ static void *barrier_thread_func(void *) {
 #endif
 #if ALASKA_ENABLE_CYCLE_COLLECTION
       // Stackscan: free zero-refcount handles not marked present (not on any
-      // thread's stack). World stopped + nullcount_lock pre-held by with_barrier.
+      // thread's stack). World stopped; the zero-refcount set is a lock-free bitmap.
       // This is the zero-refcount GARBAGE COLLECTOR, so it is gated on the GC macro
       // (ALASKA_ENABLE_CYCLE_COLLECTION), NOT ALASKA_ENABLE_REFCOUNT: a plain
       // refcount / refcount-anchorage build does pure reference counting and never

@@ -22,7 +22,10 @@
 // All graph mutation happens while the world is stopped (see
 // `CycleCollector::collect`'s contract), so the per-object color/refcount state
 // can be touched without atomics. The only thing that races with application
-// threads is `register_candidate`/`forget`, which are guarded by `lock`.
+// threads is `register_candidate`/`forget`, which append to / drop from a
+// per-handle-address shard guarded by that shard's own lock (so independent
+// mutators do not serialize on a single global lock); collect() drains the shards
+// with try_lock so it can never block on a mutator the barrier parked mid-append.
 
 #include <assert.h>  // ck/func.h uses assert() but does not include it
 #include <alaska/CycleCollector.hpp>
@@ -62,7 +65,11 @@ namespace alaska {
   }
 
   bool CycleCollector::is_collectable(alaska::Mapping *m) {
-    return m != nullptr && rt.handle_table.valid_handle(m) && not m->is_free();
+    // is_live_handle, not valid_handle() + !is_free(): a slot on the handle allocator's free
+    // list keeps its invl bit clear (its word is a raw next-link), so is_free() reports it
+    // live -- and trial deletion's inc/dec_refcount would then CAS-corrupt that link. See
+    // HandleTable::is_live_handle.
+    return rt.handle_table.is_live_handle(m);
   }
 
   // A "child" is any word in the object that decodes to a live handle. This is
@@ -72,7 +79,7 @@ namespace alaska {
   // edge can at worst keep real garbage alive -- it can never free a live
   // object whose refcount is accurate.
   void CycleCollector::visit_children(
-      alaska::ThreadCache &tc, alaska::Mapping *m, const ck::func<void(alaska::Mapping *)> &fn) {
+      alaska::ThreadCache &tc, alaska::Mapping *m, ck::vec<alaska::Mapping *> &out) {
     if (m == nullptr || m->is_free()) return;
     void *handle = m->to_handle();
     size_t size = tc.get_size(handle);
@@ -84,7 +91,7 @@ namespace alaska {
     for (size_t i = 0; i < n; i++) {
       auto *child = alaska::Mapping::from_handle_safe(words[i]);
       if (not is_collectable(child)) continue;
-      fn(child);
+      out.push(child);
     }
   }
 
@@ -103,57 +110,66 @@ namespace alaska {
     if (&alaska_nullcount_add) alaska_nullcount_add(m->to_handle());
   }
 
-  // PossibleRoot(S)
+  // Map a handle to its candidate shard. The low bits of a Mapping pointer are
+  // alignment zeros, so shift them off before masking to spread handles evenly.
+  CycleCollector::CandidateShard &CycleCollector::shard_for(alaska::Mapping *m) {
+    uintptr_t x = reinterpret_cast<uintptr_t>(m) >> 4;
+    return candidate_shards[x & (kCandidateShards - 1)];
+  }
+
+  // PossibleRoot(S). Hot path: append to this handle's shard only. No global lock,
+  // and no `colors` write -- buffer membership *is* the "purple" marker now, and the
+  // transient coloring is established later, in collect(), under no contention.
   void CycleCollector::register_candidate(alaska::Mapping *m) {
     if (m == nullptr) return;
-    ck::scoped_lock l(lock);
-    if (color_of(m) == Color::Purple) return;  // already buffered
-    set_color(m, Color::Purple);
-    if (not buffered.contains(m)) {
-      buffered.add(m);
-      roots.push(m);
-      num_buffered = buffered.size();
-    }
+    auto &sh = shard_for(m);
+    ck::scoped_lock l(sh.lock);
+    if (sh.buffered.contains(m)) return;  // already buffered (dedup within the shard)
+    sh.buffered.add(m);
+    sh.roots.push(m);
+    __atomic_fetch_add(&total_buffered, 1, __ATOMIC_RELAXED);
   }
 
   void CycleCollector::forget(alaska::Mapping *m) {
     if (m == nullptr) return;
-    // Fast path: nothing is buffered, so there is nothing to forget. This keeps
-    // the common hfree path lock-free.
-    if (num_buffered == 0) return;
-    ck::scoped_lock l(lock);
-    if (buffered.contains(m)) {
-      buffered.remove(m);
-      // We leave the (now dangling) entry in `roots`; collect() filters out any
-      // root that is no longer Purple.
-      num_buffered = buffered.size();
+    // Fast path: nothing is buffered anywhere, so there is nothing to forget. Keeps
+    // the common hfree path off the shard locks entirely.
+    if (__atomic_load_n(&total_buffered, __ATOMIC_RELAXED) == 0) return;
+    auto &sh = shard_for(m);
+    ck::scoped_lock l(sh.lock);
+    if (sh.buffered.contains(m)) {
+      sh.buffered.remove(m);
+      // The (now stale) entry is left in sh.roots; the collect() drain skips any
+      // root no longer present in sh.buffered, so it never gets traced.
+      __atomic_fetch_sub(&total_buffered, 1, __ATOMIC_RELAXED);
     }
-    set_color(m, Color::Black);
   }
 
   // MarkGray(S), iterative. Each node is expanded once (the first time it is
   // popped while not already gray); every out-edge of an expanded node performs
   // exactly one trial decrement, matching the recursive form.
   void CycleCollector::mark_gray(alaska::ThreadCache &tc, alaska::Mapping *root) {
-    ck::vec<alaska::Mapping *> stack;
-    stack.push(root);
-    while (not stack.is_empty()) {
-      auto *s = pop_back(stack);
+    trace_stack.clear_with_capacity();
+    trace_stack.push(root);
+    while (not trace_stack.is_empty()) {
+      auto *s = pop_back(trace_stack);
       if (color_of(s) == Color::Gray) continue;
       set_color(s, Color::Gray);
-      visit_children(tc, s, [&](alaska::Mapping *t) {
+      trace_children.clear_with_capacity();
+      visit_children(tc, s, trace_children);
+      for (auto *t : trace_children) {
         t->dec_refcount();  // subtract this internal edge
-        stack.push(t);
-      });
+        trace_stack.push(t);
+      }
     }
   }
 
   // Scan(S), iterative.
   void CycleCollector::scan(alaska::ThreadCache &tc, alaska::Mapping *root) {
-    ck::vec<alaska::Mapping *> stack;
-    stack.push(root);
-    while (not stack.is_empty()) {
-      auto *s = pop_back(stack);
+    trace_stack.clear_with_capacity();
+    trace_stack.push(root);
+    while (not trace_stack.is_empty()) {
+      auto *s = pop_back(trace_stack);
       if (color_of(s) != Color::Gray) continue;
       // A node is live if it still has an external reference (refcount > 0 after
       // trial deletion) or if it is currently pinned -- i.e. reachable directly
@@ -164,7 +180,10 @@ namespace alaska {
         scan_black(tc, s);
       } else {
         set_color(s, Color::White);
-        visit_children(tc, s, [&](alaska::Mapping *t) { stack.push(t); });
+        trace_children.clear_with_capacity();
+        visit_children(tc, s, trace_children);
+        for (auto *t : trace_children)
+          trace_stack.push(t);
       }
     }
   }
@@ -172,16 +191,20 @@ namespace alaska {
   // ScanBlack(S), iterative. Restores the refcounts that mark_gray subtracted
   // for everything reachable from a live node.
   void CycleCollector::scan_black(alaska::ThreadCache &tc, alaska::Mapping *root) {
-    ck::vec<alaska::Mapping *> stack;
-    stack.push(root);
-    while (not stack.is_empty()) {
-      auto *s = pop_back(stack);
+    // Own pair of scratch buffers: scan() calls this while its own trace_stack walk
+    // is in flight, so reusing trace_stack here would corrupt the outer traversal.
+    sb_stack.clear_with_capacity();
+    sb_stack.push(root);
+    while (not sb_stack.is_empty()) {
+      auto *s = pop_back(sb_stack);
       if (color_of(s) == Color::Black) continue;
       set_color(s, Color::Black);
-      visit_children(tc, s, [&](alaska::Mapping *t) {
+      sb_children.clear_with_capacity();
+      visit_children(tc, s, sb_children);
+      for (auto *t : sb_children) {
         t->inc_refcount();  // put back the edge mark_gray removed
-        if (color_of(t) != Color::Black) stack.push(t);
-      });
+        if (color_of(t) != Color::Black) sb_stack.push(t);
+      }
     }
   }
 
@@ -191,14 +214,17 @@ namespace alaska {
   // frees them afterwards.
   void CycleCollector::collect_white(
       alaska::ThreadCache &tc, alaska::Mapping *root, ck::vec<alaska::Mapping *> &out) {
-    ck::vec<alaska::Mapping *> stack;
-    stack.push(root);
-    while (not stack.is_empty()) {
-      auto *s = pop_back(stack);
+    trace_stack.clear_with_capacity();
+    trace_stack.push(root);
+    while (not trace_stack.is_empty()) {
+      auto *s = pop_back(trace_stack);
       if (color_of(s) != Color::White) continue;
       if (buffered.contains(s)) continue;
       set_color(s, Color::Black);
-      visit_children(tc, s, [&](alaska::Mapping *t) { stack.push(t); });
+      trace_children.clear_with_capacity();
+      visit_children(tc, s, trace_children);
+      for (auto *t : trace_children)
+        trace_stack.push(t);
       out.push(s);
     }
   }
@@ -207,22 +233,44 @@ namespace alaska {
     ck::vec<alaska::Mapping *> to_free;
 
     {
-      ck::scoped_lock l(lock);
+      // Drain the per-handle candidate shards into the working buffer. The world is
+      // stopped, but a mutator could be parked mid-register_candidate holding a
+      // shard lock, so try_lock and SKIP a contended shard (its candidates drain
+      // next cycle) -- the same non-blocking discipline reclaim_dead_handles uses.
+      // Blocking here would deadlock against the parked mutator.
+      roots.clear_with_capacity();
+      buffered.clear();
+      for (auto &sh : candidate_shards) {
+        if (sh.lock.try_lock() != 0) continue;
+        for (auto *m : sh.roots) {
+          // Skip entries dropped by forget() (no longer in sh.buffered) and any
+          // cross-shard duplicate (defensive; a handle maps to a single shard).
+          if (sh.buffered.contains(m) && not buffered.contains(m)) {
+            buffered.add(m);
+            roots.push(m);
+          }
+        }
+        size_t live = sh.buffered.size();
+        sh.roots.clear_with_capacity();
+        sh.buffered.clear();
+        sh.lock.unlock();
+        __atomic_fetch_sub(&total_buffered, live, __ATOMIC_RELAXED);
+      }
 
-      // MarkRoots: keep only the genuine purple candidates; everything else is
-      // no longer a possible cycle root and is dropped from the buffer.
+      // MarkRoots: keep only the genuine candidates; everything else is no longer a
+      // possible cycle root and is dropped from the working buffer. Candidacy is now
+      // "was buffered (we are iterating drained roots) and is still a live handle
+      // with refcount > 0"; the old purple-color test is subsumed by buffer
+      // membership, which register_candidate no longer has to stamp on the hot path.
       ck::vec<alaska::Mapping *> work;
       for (auto *s : roots) {
-        bool is_candidate =
-            color_of(s) == Color::Purple && is_collectable(s) && s->get_refcount() > 0;
-        if (is_candidate) {
+        if (is_collectable(s) && s->get_refcount() > 0) {
           work.push(s);
         } else {
           buffered.remove(s);
-          set_color(s, Color::Black);
         }
       }
-      roots.clear();
+      roots.clear_with_capacity();
 
       for (auto *s : work)
         mark_gray(tc, s);
@@ -232,14 +280,11 @@ namespace alaska {
         buffered.remove(s);
         collect_white(tc, s, to_free);
       }
-
-      num_buffered = buffered.size();
     }
 
-    // Hand the reclaimed handles to the stackscan reclaim path. We do this outside
-    // `lock` because reclaim() takes the (separate) nullcount lock; keeping the two
-    // lock regions disjoint avoids any ordering coupling. We are still inside the
-    // barrier, so the world remains stopped and this is safe.
+    // Hand the reclaimed handles to the stackscan reclaim path. reclaim() takes the
+    // (separate) nullcount lock; we are still inside the barrier, so the world
+    // remains stopped and this is safe.
     size_t freed = 0;
     for (auto *s : to_free) {
       reclaim(tc, s);

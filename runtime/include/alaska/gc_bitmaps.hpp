@@ -20,6 +20,7 @@
 #pragma once
 
 #include <alaska/alaska.hpp>
+#include <ck/vec.h>
 
 namespace alaska::gc {
 
@@ -29,5 +30,21 @@ namespace alaska::gc {
   void present_mark(alaska::Mapping *m);
   // Test whether a handle was marked present this cycle. Barrier callback.
   bool present_test(alaska::Mapping *m);
+
+  // --- Nullcount side bitmap ---------------------------------------------------
+  // One bit per handle-table slot marking "this handle's refcount is currently 0".
+  // This is the zero-refcount set that refcount.cpp's reclaim consumes: set on
+  // dec->0, cleared on inc->1 / free, scanned by reclaim. Because the handle-table
+  // base is fixed (HandleTable::grow remaps in place) the bitmap is allocated ONCE
+  // over a generous NORESERVE reservation, so set/clear are a single lock-free
+  // atomic OR/AND with no rehash and no resize -- a mutator parked mid-update can
+  // never leave it inconsistent, so the in-barrier scan needs no lock and never
+  // skips a cycle. (It replaced a lock-guarded hashmap; see refcount.cpp.)
+  void nullcount_bm_set(alaska::Mapping *m);    // dec->0: mark zero-refcount
+  void nullcount_bm_clear(alaska::Mapping *m);  // inc->1 / free: unmark
+  // Append every currently-set handle to `out`. World-stopped (barrier) scan.
+  void nullcount_bm_collect(ck::vec<alaska::Mapping *> &out);
+  // popcount of the whole bitmap (diagnostics / map_size parity).
+  size_t nullcount_bm_count(void);
 
 }  // namespace alaska::gc

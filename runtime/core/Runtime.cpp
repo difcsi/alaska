@@ -123,6 +123,15 @@ namespace alaska {
 
   void Runtime::del_threadcache(ThreadCache *tc) {
     tcs_lock.lock();
+#if ALASKA_ENABLE_REFCOUNT
+    // Return this dying thread's quarantined handle slots to the allocatable pool before the
+    // tc is destroyed -- otherwise they are leaked for the process lifetime. Safe to release
+    // unconditionally here: a thread that is exiting will never drain its own deferred_frees
+    // again, so no still-queued parent of ours can reuse-then-corrupt a released slot (see
+    // ThreadCache::quarantine_rotate). Two rotations flush both generations.
+    tc->quarantine_rotate();
+    tc->quarantine_rotate();
+#endif
     tcs.remove(tc);
     delete tc;
     tcs_lock.unlock();
