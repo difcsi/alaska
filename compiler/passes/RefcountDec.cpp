@@ -1,4 +1,5 @@
 #include <alaska/Passes.h>
+#include <alaska/RefcountElision.h>
 #include <alaska/Translations.h>
 #include <alaska/Utils.h>
 #include <llvm/Analysis/ValueTracking.h>
@@ -11,45 +12,10 @@
 #include <llvm/IR/IRBuilder.h>
 
 using namespace llvm;
-
-// Underlying object of `p`, looking through alaska_translate(). The refcount
-// passes run *after* alaska-translate (see bin/alaska-transform), so a store's
-// pointer is typically `alaska_translate(X)` (possibly behind GEPs/bitcasts).
-// Plain getUnderlyingObject stops at that opaque call and never reaches the
-// alloca / sret arg underneath, defeating the stack/sret skips below. Strip the
-// translate wrapper(s) so those skips see the real backing object.
-static Value *underlyingThroughTranslate(Value *p) {
-  Value *u = getUnderlyingObject(p);
-  while (auto *call = dyn_cast<CallInst>(u)) {
-    auto *callee = call->getCalledFunction();
-    if (callee && callee->getName() == "alaska_translate" && call->arg_size() == 1) {
-      u = getUnderlyingObject(call->getArgOperand(0));
-    } else {
-      break;
-    }
-  }
-  return u;
-}
-
-// Like underlyingThroughTranslate, but also accumulates the *constant byte offset*
-// from the base (so two stores to the same field can be recognized as the same
-// slot). Strips constant-offset GEPs/bitcasts and alaska_translate wrappers in a
-// loop; stops at the first thing it cannot see through (e.g. a variable-index GEP),
-// returning that value as the base.
-static Value *baseAndConstOffset(Value *p, const DataLayout &DL, APInt &off) {
-  Value *cur = p;
-  while (true) {
-    cur = cur->stripAndAccumulateConstantOffsets(DL, off, /*AllowNonInbounds=*/true);
-    auto *call = dyn_cast<CallInst>(cur);
-    if (call && call->getCalledFunction() &&
-        call->getCalledFunction()->getName() == "alaska_translate" &&
-        call->arg_size() == 1) {
-      cur = call->getArgOperand(0);
-      continue;
-    }
-    return cur;
-  }
-}
+// underlyingThroughTranslate / baseAndConstOffset are shared with RefcountInc and now
+// live in alaska/RefcountElision.h.
+using alaska::baseAndConstOffset;
+using alaska::underlyingThroughTranslate;
 
 // If `v` is the value produced by a zeroing allocator (halloc/hcalloc), return the
 // call instruction producing it; else null. Alaska wraps allocations in GC
@@ -246,6 +212,14 @@ class RefcountDecVisitor : public llvm::InstVisitor<RefcountDecVisitor> {
 
     // Check if the pointer operand is also a pointer (handle to handle store)
     if (!pointerOperand->getType()->isPointerTy()) {
+      return;
+    }
+
+    // RefcountInc elided this store's INCREMENT as a redundant self-copy (Tier 2):
+    // inc(new) and dec(old==new) cancel, so the matching DECREMENT must be elided too --
+    // dropping only one side would leak (kept dec) or prematurely free (kept inc). Trust
+    // RefcountInc's tag; it is the sole decider and we never recompute the predicate.
+    if (I.getMetadata(alaska::kRefcountElidedMD)) {
       return;
     }
 

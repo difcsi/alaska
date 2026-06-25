@@ -74,6 +74,18 @@ namespace alaska::events {
     __atomic_fetch_add(&g_objects_moved, moved, __ATOMIC_RELAXED);
   }
 
+#if ALASKA_ENABLE_CACHE_PROBE
+  // Cache-miss characterization probe (CHARACTERIZATION builds only -- heavy, and
+  // its counters are non-atomic, so it assumes a single mutator). Called at the
+  // single refcount-mutation point in Mapping::inc_refcount/dec_refcount with the
+  // address of the touched Mapping. It feeds (a) a simulated direct-mapped cache
+  // that approximates the Mapping-line miss rate without perf, and (b) a flat
+  // bitmap that counts the distinct Mapping cache lines touched. Both are dumped
+  // by alaska_events_dump. See EventCounters.cpp for storage/tuning env vars.
+  void cache_probe_init(void);  // called once from alaska_init (table base must exist)
+  void probe_mapping_line(uintptr_t addr);
+#endif
+
 }  // namespace alaska::events
 
 // Emit the current tallies (see file header for the destination/format). Wired

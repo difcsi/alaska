@@ -59,6 +59,13 @@ alaska_switch(ALASKA_ENABLE_ANCHORAGE         ON)
 # Measurement-only event counters (incref/decref/gc-free/compaction tallies).
 alaska_switch(ALASKA_ENABLE_EVENT_COUNTERS    OFF)
 
+# Cache-miss characterization probe: a simulated direct-mapped cache + distinct
+# handle-table-line bitmap driven from the single refcount-mutation point
+# (Mapping::inc_refcount/dec_refcount). Approximates Mapping-line miss rate and
+# working set without perf (unavailable on this kernel). Heavy and perturbs
+# timing -- characterization builds only, never timing runs. Built via ALASKA_PROBE=1.
+alaska_switch(ALASKA_ENABLE_CACHE_PROBE       OFF)
+
 # Cycle collection reads refcounts; it cannot be built without reference counting.
 if(ALASKA_ENABLE_CYCLE_COLLECTION AND NOT ALASKA_ENABLE_REFCOUNT)
   message(FATAL_ERROR "ALASKA_ENABLE_CYCLE_COLLECTION requires ALASKA_ENABLE_REFCOUNT")
@@ -540,6 +547,30 @@ add_custom_target(refcount-collect-cycle
   COMMAND ${CMAKE_COMMAND} -E env "LDFLAGS=-fuse-ld=bfd $ENV{LDFLAGS}" ${CMAKE_INSTALL_PREFIX}/bin/alaska -O3 ${CMAKE_SOURCE_DIR}/test/refcount_collect_cycle.c -o ${CMAKE_BINARY_DIR}/refcount_collect_cycle
   COMMAND ${CMAKE_BINARY_DIR}/refcount_collect_cycle
   COMMENT "Building and running the cycle-collection auto-reclamation integration test"
+)
+
+# refcount-reclaim-reuse: regression test for a handle-reuse fault in the reclamation
+# path -- an explicitly hfree'd refcount-0 handle was left in the GC nullcount set, so a
+# later allocation that recycled its mapping slot could be reclaimed while live. Builds
+# and explicitly tears down linked lists across rounds (recycling slots while the
+# background collector runs) and self-checks integrity; exits non-zero on corruption.
+add_custom_target(refcount-reclaim-reuse
+  COMMAND ${CMAKE_COMMAND} -E env "LDFLAGS=-fuse-ld=bfd $ENV{LDFLAGS}" ${CMAKE_INSTALL_PREFIX}/bin/alaska -O3 ${CMAKE_SOURCE_DIR}/test/refcount_reclaim_reuse.c -o ${CMAKE_BINARY_DIR}/refcount_reclaim_reuse
+  COMMAND ${CMAKE_BINARY_DIR}/refcount_reclaim_reuse
+  COMMENT "Building and running the refcount reclamation handle-reuse regression test"
+)
+
+# refcount-elision: soundness gate for the compiler's reference-count barrier
+# elisions (Tier 1 non-handle stores, Tier 2 self-copies). Builds linked lists that
+# mix real child handles (whose inc must be kept) with non-handle fields (whose inc
+# is elided), churns the allocator to reuse any wrongly-freed slot, and re-verifies
+# integrity. The program self-checks and exits non-zero on any corruption / premature
+# free / leak / crash. (It uses the COMPILER-inserted store barriers, so it exercises
+# the elision passes themselves.)
+add_custom_target(refcount-elision
+  COMMAND ${CMAKE_COMMAND} -E env "LDFLAGS=-fuse-ld=bfd $ENV{LDFLAGS}" ${CMAKE_INSTALL_PREFIX}/bin/alaska -O3 ${CMAKE_SOURCE_DIR}/test/refcount_elision.c -o ${CMAKE_BINARY_DIR}/refcount_elision
+  COMMAND ${CMAKE_BINARY_DIR}/refcount_elision
+  COMMENT "Building and running the refcount barrier-elision soundness test"
 )
 
 # unit: run the compiler unit-test suite via tools/unittest.py

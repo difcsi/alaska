@@ -303,10 +303,18 @@ size_t alaska_nullcount_snapshot(void **out, size_t cap) {
   return total;
 }
 
-// Drop a handle from the zero-refcount set.
+// Drop a handle from the zero-refcount set. Called by hfree when freeing a handle that
+// reached refcount 0: without this the dead handle lingers in nullcount_map, and once
+// its mapping slot is recycled by a later allocation the reused (live) handle inherits a
+// stale "collectable" entry and the stackscan reclaim frees it out from under the
+// mutator. Clears the per-Mapping hint too, so the bit and the map stay in lockstep (see
+// nullcount_update). Inlines that pair rather than calling nullcount_update to avoid
+// double-locking the non-recursive nullcount_lock the guard already holds.
 void alaska_nullcount_forget(void *ptr) {
   NullcountGuard g;
   nullcount_map.remove(ptr);
+  auto *m = alaska::Mapping::from_handle_safe(ptr);
+  if (m) m->set_on_nullcount(false);
 }
 
 // Record a handle as zero-refcount. The cycle collector calls this (weakly) to
@@ -412,7 +420,15 @@ namespace alaska {
           __liballocs_alaska_manual_pinned(m->get_pointer())) continue;
       to_free.push(h);
     }
-    for (auto *h : to_free) nullcount_map.remove(h);
+    // Remove the reclaimed handles from the map AND clear their per-Mapping hint, so
+    // the bit and the map stay in lockstep (see nullcount_update). Done under the lock
+    // we still hold. Clearing the bit also means the hfree below sees is_on_nullcount()
+    // == false and skips its own (now redundant) nullcount_forget relock.
+    for (auto *h : to_free) {
+      nullcount_map.remove(h);
+      auto *m = alaska::Mapping::from_handle_safe(h);
+      if (m) m->set_on_nullcount(false);
+    }
     nullcount_lock.unlock();
 
     for (auto *h : to_free) {

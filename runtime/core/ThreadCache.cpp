@@ -18,6 +18,13 @@
 #include "alaska/HeapPage.hpp"
 #include <alaska/utils.h>
 
+// Drop a freed handle from the GC's zero-refcount nullcount set (defined in
+// rt/refcount.cpp, which is only linked into libalaska -- the reverse of the
+// core->rt dependency -- so it is weak and the call is address-guarded, mirroring
+// CycleCollector.cpp's use of alaska_nullcount_add). Lets hfree keep the nullcount
+// set in step with slot reuse.
+extern "C" void alaska_nullcount_forget(void *handle) __attribute__((weak));
+
 // Number of bytes to reserve at the END of every sized backing allocation for a
 // liballocs trailing `struct insert` (which carries the per-object lifetime-policy
 // mask). Injected by the stackscan build via -DALASKA_LIBALLOCS_INSERT_RESERVE=8;
@@ -238,14 +245,21 @@ namespace alaska {
     }
     
 #if ALASKA_ENABLE_REFCOUNT
-    if(unlikely(m->get_refcount() > 0 )){
-      alaska::printf("Warning: Freeing handle %p with non-zero refcount %lu\n", handle, m->get_refcount());
+    if(unlikely(m->get_refcount() > 1 )){
+      alaska::printf("Warning: Freeing handle %p with a > 1 refcount %lu\n", handle, m->get_refcount());
     }
 #endif
 #if ALASKA_ENABLE_CYCLE_COLLECTION
     // Drop this handle from the cycle collector before its slot can be recycled,
     // so a later collection never traces a stale/reused mapping.
     this->runtime.cycle_collector.forget(m);
+    // Likewise drop it from the zero-refcount nullcount set: if this handle reached
+    // refcount 0 (e.g. its last heap reference was overwritten) it is listed as
+    // collectable garbage, and leaving it there lets a future allocation that reuses
+    // this mapping slot inherit a stale "on nullcount" entry and be wrongly reclaimed.
+    // Gated on the per-Mapping hint so we only take the nullcount lock when needed,
+    // and address-guarded since the symbol is weak (see the declaration above).
+    if (m->is_on_nullcount() && &alaska_nullcount_forget) alaska_nullcount_forget(handle);
 #endif
     // Free the allocation behind a mapping
     free_allocation(*m);

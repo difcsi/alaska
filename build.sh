@@ -43,11 +43,27 @@ mkdir -p opt
 # would silently keep counters ON forever. Forcing =OFF here makes "measurement" a
 # per-invocation choice driven solely by ALASKA_MEASURE.
 EXTRA_CMAKE_ARGS=()
+# The cache-miss characterization probe reports through the event-counter dump, so
+# turning it on implies a measurement build.
+if [ -n "${ALASKA_PROBE}" ]; then
+  ALASKA_MEASURE=1
+fi
 if [ -n "${ALASKA_MEASURE}" ]; then
   EXTRA_CMAKE_ARGS+=("-DALASKA_ENABLE_EVENT_COUNTERS=ON")
   printf "\e[35m[measurement build: event counters ON]\e[0m\n"
 else
   EXTRA_CMAKE_ARGS+=("-DALASKA_ENABLE_EVENT_COUNTERS=OFF")
+fi
+# Cache-miss characterization probe: set ALASKA_PROBE=1 to compile in the simulated
+# cache / distinct-line instrumentation in the refcount hot path (see CMakeLists and
+# EventCounters.cpp). It perturbs timing, so use it only for characterization, never
+# for figure-7 timing runs. Forced explicitly in both cases for the same
+# cache-stickiness reason as the event counters above.
+if [ -n "${ALASKA_PROBE}" ]; then
+  EXTRA_CMAKE_ARGS+=("-DALASKA_ENABLE_CACHE_PROBE=ON")
+  printf "\e[35m[cache probe build: simulated-cache instrumentation ON]\e[0m\n"
+else
+  EXTRA_CMAKE_ARGS+=("-DALASKA_ENABLE_CACHE_PROBE=OFF")
 fi
 
 # The benchmark configurations. "baseline" (plain bundled clang) is realized in the

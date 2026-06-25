@@ -11,8 +11,12 @@ import pandas as pd
 
 
 # Runtime event metrics collected per run, in dump order (see EventCounters.hpp).
+# The probe_* keys are only emitted by a cache-probe build (ALASKA_PROBE=1); they
+# come back as 0 from plain/measurement builds.
 EVENT_KEYS = ['halloc', 'hfree', 'incref', 'decref', 'gc_frees', 'compactions',
-              'objects_moved', 'handles_total', 'handles_nonzero_rc']
+              'objects_moved', 'handles_total', 'handles_nonzero_rc',
+              'probe_distinct_lines', 'probe_total_touches', 'probe_hits',
+              'probe_misses', 'probe_oob', 'probe_sets']
 
 
 class EventCountingRunner(Runner):
@@ -32,7 +36,13 @@ class EventCountingRunner(Runner):
         # Inject the log path for just this run, then restore (config is reused
         # across runs/pipelines).
         saved_env = config.env
-        config.env = {**(saved_env or {}), 'ALASKA_EVENT_LOG': path}
+        # Forward ALASKA_* runtime knobs (e.g. the cache-probe tuning vars
+        # ALASKA_PROBE_SETS / ALASKA_PROBE_SPAN_GB) from the invoking shell into the
+        # benchmark child. waterline's config.env does not carry the shell
+        # environment, so without this a probe sweep would silently run every config
+        # at the default set count.
+        alaska_env = {k: v for k, v in os.environ.items() if k.startswith('ALASKA_')}
+        config.env = {**(saved_env or {}), **alaska_env, 'ALASKA_EVENT_LOG': path}
         try:
             out = super().run(workspace, config, binary)
         finally:

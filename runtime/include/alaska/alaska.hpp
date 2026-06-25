@@ -246,6 +246,9 @@ namespace alaska {
       // bumps (HandleSlab::alloc/release_*).
       alaska::events::inc_refcount_event();
 #endif
+#if ALASKA_ENABLE_CACHE_PROBE
+      alaska::events::probe_mapping_line(reinterpret_cast<uintptr_t>(this));
+#endif
       return (int)nc;
     }
 
@@ -263,6 +266,9 @@ namespace alaska {
           w, &old, neu, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE));
 #if ALASKA_ENABLE_EVENT_COUNTERS
       alaska::events::dec_refcount_event();
+#endif
+#if ALASKA_ENABLE_CACHE_PROBE
+      alaska::events::probe_mapping_line(reinterpret_cast<uintptr_t>(this));
 #endif
       return (int)nc;
     }

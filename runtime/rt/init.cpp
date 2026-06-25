@@ -145,6 +145,11 @@ void __attribute__((constructor(102))) alaska_init(void) {
   the_runtime = new alaska::Runtime();
   // Attach the runtime's barrier manager
   the_runtime->barrier_manager = &the_barrier_manager;
+#if ALASKA_ENABLE_CACHE_PROBE
+  // Allocate the cache-probe state now that the handle table (and its fixed base
+  // address) exists. The probe fires from Mapping::inc/dec_refcount thereafter.
+  alaska::events::cache_probe_init();
+#endif
 #if ALASKA_ENABLE_EVENT_COUNTERS
   // Dump the measurement counters on the way out. Registered first so it runs
   // LAST (atexit is LIFO) -- after alaska_stop_barrier_thread below has quiesced
