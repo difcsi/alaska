@@ -351,6 +351,11 @@ if (ALASKA_ENABLE_TESTING)
 		target_sources(alaska_test PRIVATE test/cycle_test.cpp)
 	endif()
 
+	# The reuse cache is gated on refcount (see ThreadCache); its test needs the same.
+	if(ALASKA_ENABLE_REFCOUNT)
+		target_sources(alaska_test PRIVATE test/reusecache_test.cpp)
+	endif()
+
 	# The handle-table TLB *simulator* tests depend on alaska::sim (rt/sim.cpp,
 	# packaged as alaska_sim), which is only compiled when ALASKA_HTLB_SIM is ON.
 	# Compiling/linking them unconditionally left alaska_test with undefined

@@ -101,7 +101,33 @@ namespace alaska {
 
 
 
+#if ALASKA_ENABLE_REFCOUNT
+  void ThreadCache::flush_reuse_class(int cls) {
+    ReuseEntry &e = reuse_cache[cls];
+    if (e.m == nullptr) return;
+    alaska::Mapping *m = e.m;
+    e = ReuseEntry{};
+    // Reclaim exactly as the normal hfree_impl tail does: free the backing wherever it
+    // now lives (free_allocation re-walks the page table, so a swapped-out page is freed
+    // local-or-remote correctly), clear the pointer, and return the slot to the table.
+    free_allocation(*m);
+    m->set_pointer(nullptr);
+    this->runtime.handle_table.put(m, this);
+  }
+
+  void ThreadCache::flush_reuse_cache(void) {
+    for (int cls = 0; cls < alaska::num_size_classes; cls++)
+      flush_reuse_class(cls);
+  }
+#endif
+
+
   SizedPage *ThreadCache::new_sized_page(int cls) {
+#if ALASKA_ENABLE_REFCOUNT
+    // The cached entry for this class lives on the page we are about to swap out; reclaim it
+    // the normal way before it stops being our current page.
+    flush_reuse_class(cls);
+#endif
     // Get a new heap
     auto *heap = runtime.heap.get_sizedpage(alaska::class_to_size(cls), this);
 
@@ -141,6 +167,32 @@ namespace alaska {
     }
 
     log_info("ThreadCache::halloc size=%zu", size);
+
+#if ALASKA_ENABLE_REFCOUNT
+    // Perceus-flavored fast path: reuse the slot+backing a uniquely-owned free stashed for
+    // this size class. Classify exactly as allocate_backing_data (padded by the reserve) so
+    // the class matches what the stash computed via size_of().
+    {
+      size_t slot = size + ALASKA_LIBALLOCS_INSERT_RESERVE;
+      int cls = alaska::size_to_class(slot);
+      ReuseEntry &e = reuse_cache[cls];
+      if (e.m != nullptr) {
+        if (e.page == size_classes[cls]) {
+          Mapping *m = e.m;
+          void *ptr = e.ptr;
+          SizedPage *pg = e.page;
+          e = ReuseEntry{};  // consume
+          m->reset();        // refcount -> 0, flags cleared (matches a fresh new_mapping)
+          m->set_pointer(ptr);
+          pg->update_size_slack(ptr, slot);  // size_of() must reflect THIS request
+          if (zero) memset(ptr, 0, size);    // MANDATORY: the cached backing is stale
+          return m->to_handle();
+        }
+        // Stale entry (page swapped out): free it normally, then fall through to a fresh alloc.
+        flush_reuse_class(cls);
+      }
+    }
+#endif
 
     // Allocate a new mapping
     Mapping *m = new_mapping();
@@ -272,6 +324,41 @@ namespace alaska {
     // and address-guarded since the symbol is weak (see the declaration above).
     if (m->is_on_nullcount() && &alaska_nullcount_forget) alaska_nullcount_forget(handle);
 #endif
+
+#if ALASKA_ENABLE_REFCOUNT
+    // Perceus-flavored fast path: a uniquely-owned (refcount <= 1) handle freed on the
+    // SYNCHRONOUS path is the only live reference, so its slot+backing can be re-handed
+    // to the next same-size allocation without aliasing any survivor. Never on the
+    // deferred-drain path (quarantine_slot) -- the quarantine forbids immediate reuse
+    // there (the binarytrees UAF). Stash the still-live (mapping, backing) pair instead
+    // of freeing it: the page Header keeps pointing at `m`, so reuse is near-free.
+    // Also decline if the handle is on the zero-refcount nullcount set: leaving such a
+    // slot live (stashed) would let the barrier's reclaim_dead_handles free its backing
+    // underneath us (double free). The nullcount-forget above only runs under cycle
+    // collection, so guard here independently (is_on_nullcount is available under refcount).
+    if (!quarantine_slot && !m->is_pinned() && !m->is_free() && !m->is_on_nullcount() &&
+        m->get_refcount() <= 1) {
+      void *ptr = m->get_pointer();
+      auto *page = this->runtime.heap.pt.get_unaligned(ptr);
+      if (page != nullptr) {
+        // size_of() is valid for any HeapPage; for a SizedPage it returns the padded slot
+        // size, so size_to_class() recovers the page's own class. The `== size_classes[cls]`
+        // check then guarantees: a SizedPage (LocalityPages are never in size_classes),
+        // locally owned, and still this tc's current page for the class (so the alloc path
+        // will hit it). Only stash when the per-class slot is empty -- otherwise fall
+        // through to the normal free (no eviction; keeps the cache single-entry).
+        int cls = alaska::size_to_class(page->size_of(ptr));
+        if (cls >= 0 && cls < alaska::num_size_classes &&
+            (alaska::HeapPage *)size_classes[cls] == page && reuse_cache[cls].m == nullptr) {
+          // Leave the refcount as-is; it is zeroed at reuse (in halloc) so any spurious
+          // inc/dec a conservative scanner makes during the stash window is wiped.
+          reuse_cache[cls] = ReuseEntry{m, ptr, size_classes[cls]};
+          return;
+        }
+      }
+    }
+#endif
+
     // Free the allocation behind a mapping
     free_allocation(*m);
     m->set_pointer(nullptr);

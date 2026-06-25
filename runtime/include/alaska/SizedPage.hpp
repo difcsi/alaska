@@ -41,6 +41,13 @@ namespace alaska {
     int get_size_class(void) const { return size_class; }
     size_t get_object_size(void) const { return object_size; }
 
+    // Rewrite an already-allocated slot's recorded size for a new (same-class) request.
+    // Used by the reuse cache: a reused backing block keeps its Header mapping, but the
+    // new allocation's size within the class differs, so size_of() must reflect it.
+    inline void update_size_slack(void *ptr, alaska::AlignedSize requested) {
+      ind_to_header(object_to_ind(ptr))->size_slack = this->object_size - requested;
+    }
+
     void dump_html(FILE *stream) override;
     void dump_json(FILE *stream) override;
 

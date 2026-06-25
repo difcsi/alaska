@@ -131,6 +131,9 @@ namespace alaska {
     // ThreadCache::quarantine_rotate). Two rotations flush both generations.
     tc->quarantine_rotate();
     tc->quarantine_rotate();
+    // Reclaim any slots+backings the reuse cache is holding so they are not leaked for the
+    // process lifetime (the dying thread will never alloc from these classes again).
+    tc->flush_reuse_cache();
 #endif
     tcs.remove(tc);
     delete tc;

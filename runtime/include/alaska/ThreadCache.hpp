@@ -82,6 +82,28 @@ namespace alaska {
     alaska::Mapping *new_mapping(void);
     // Swap to a new sized page owned by this thread cache
     alaska::SizedPage *new_sized_page(int cls);
+
+#if ALASKA_ENABLE_REFCOUNT
+    // Perceus-flavored reuse cache (needs the refcount; inert on the default deferred-free
+    // path). One slot per size class: when a uniquely-owned handle (refcount <= 1) is freed
+    // on the SYNCHRONOUS path, hfree_impl stashes its still-live (mapping, backing) pair here
+    // instead of returning the backing to the freelist and the slot to the handle table.
+    // The next same-size halloc re-hands the same handle + backing, skipping the whole
+    // round-trip (the page Header still points at the mapping). `page` is recorded so the
+    // alloc path can verify the page is still this tc's current page for the class before
+    // reusing (a swapped-out page invalidates the entry).
+    struct ReuseEntry {
+      alaska::Mapping *m = nullptr;
+      void *ptr = nullptr;
+      alaska::SizedPage *page = nullptr;
+    };
+    ReuseEntry reuse_cache[alaska::num_size_classes];
+
+    // Drop a cached entry back through the normal free path (free backing + return slot).
+    void flush_reuse_class(int cls);
+    // Flush every cached entry (page swap-out / thread-cache teardown).
+    void flush_reuse_cache(void);
+#endif
     // Swap to a new locality page owned by this thread cache
     alaska::LocalityPage *new_locality_page(size_t required_size);
 
