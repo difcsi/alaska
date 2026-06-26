@@ -42,12 +42,20 @@ extern "C" void alaska_dump(void) { the_runtime->dump(stderr); }
 // Defined in halloc.cpp -- this (anchorage) thread's raw thread cache.
 extern alaska::ThreadCache *get_tc_r(void);
 
+// Defined in barrier.cpp -- register the calling thread as a barrier participant (handler + stack
+// top + registry). Called on the main thread before the periodic barrier thread is created.
+extern "C" void alaska_barrier_register_self(void);
+
 #if ALASKA_ENABLE_REFCOUNT
 // Stackscan reclamation, run inside the barrier (rt/refcount.cpp); present-bitmap
 // control (rt/gc_bitmaps.cpp) + the in-barrier present-scan flag (rt/barrier.cpp).
 namespace alaska { size_t reclaim_dead_handles(alaska::ThreadCache &tc); }
 extern "C" void alaska_gc_present_clear(void);
 extern "C" void alaska_gc_present_scan_set(int on);
+// Mark handle roots held in the main image's globals (data+BSS) present. Globals are a root
+// class the per-thread stack/register scan never covers; without this a global-rooted handle is
+// reclaimed. Run once per barrier before reclaim (see barrier.cpp).
+extern "C" void alaska_gc_scan_globals_present(void);
 #endif
 
 // The periodic barrier thread only exists when some service does work inside the
@@ -93,6 +101,14 @@ static void *barrier_thread_func(void *) {
 
     rt.with_barrier([&]() {
 #if ALASKA_ENABLE_REFCOUNT
+      // Apply every thread's deferred reference-count increments FIRST -- before dec-on-free
+      // and before any reclaim/cycle decision below. The Levanoni-Petrank INV-LIVE linchpin: a
+      // child carrying a pending (logged) inc must be back at full count before drain_deferred's
+      // dec-on-free or reclaim_dead_handles reads it, or a still-live handle could be
+      // undercounted to 0 and freed. World stopped + all tc locks held, so every committed log
+      // entry is visible; a no-op unless ALASKA_DEFER_RC is set.
+      for (auto *tcx : rt.tcs)
+        tcx->drain_inc();
       // Drain program-deferred frees first (deferred dec-on-free is the default). For every handle the
       // mutators queued via ThreadCache::defer_free, run the dec-children scan + backing
       // free here, with the world stopped and all tc locks held by with_barrier -- the same
@@ -109,18 +125,34 @@ static void *barrier_thread_func(void *) {
       // ThreadCache::quarantine_rotate / hfree_impl (the binarytrees dec-on-free reuse race).
       for (auto *tcx : rt.tcs)
         tcx->quarantine_rotate();
+      // Flush every thread's Perceus reuse-cache stash BEFORE the heap walks below. A stashed
+      // entry keeps its mapping pointing at a backing that is still marked allocated in its page
+      // but is held out of the freelist (reuse limbo); compaction would then relocate/free that
+      // backing while reuse still hands out the stale old address -- corrupting the backing and
+      // handle freelists (observed as a 100% SIGSEGV in ShardedFreeList::pop with anchorage on).
+      // A stash is meant to live only until the freeing thread's next alloc, so flushing it at the
+      // barrier almost never discards a useful entry. World-stopped, all tc locks held.
+      for (auto *tcx : rt.tcs)
+        tcx->flush_reuse_cache();
 #endif
+      // DIAGNOSTIC subsystem kill-switches (read once). Isolate which world-stopped GC subsystem
+      // is the source of a premature free: turn each off independently and see which makes the
+      // crash vanish. ALASKA_NO_GC_FREE gates BOTH the cycle collector here and reclaim_dead_handles
+      // (refcount.cpp); ALASKA_NO_COMPACT gates compaction.
+      static int no_gc_free = -1, no_compact = -1;
+      if (no_gc_free < 0) no_gc_free = (getenv("ALASKA_NO_GC_FREE") != nullptr) ? 1 : 0;
+      if (no_compact < 0) no_compact = (getenv("ALASKA_NO_COMPACT") != nullptr) ? 1 : 0;
 #if ALASKA_ENABLE_CYCLE_COLLECTION
       // Heap compaction and cycle collection are duals (Deutsch & Bobrow): both
       // walk the object graph with the world stopped, so Anchorage does them in
       // the same barrier. Collect cycles less often than we compact -- tracing
       // is more expensive and only worthwhile once candidates have accumulated.
-      if (tick % 20 == 0 && rt.cycle_collector.candidate_count() > 0) {
+      if (!no_gc_free && tick % 20 == 0 && rt.cycle_collector.candidate_count() > 0) {
         rt.cycle_collector.collect(*tc);
       }
 #endif
 #if ALASKA_ENABLE_ANCHORAGE
-      rt.heap.compact_sizedpages();
+      if (!no_compact) rt.heap.compact_sizedpages();
 #endif
 #if ALASKA_ENABLE_CYCLE_COLLECTION
       // Stackscan: free zero-refcount handles not marked present (not on any
@@ -130,6 +162,12 @@ static void *barrier_thread_func(void *) {
       // refcount / refcount-anchorage build does pure reference counting and never
       // reclaims here, so it also skips maintaining the nullcount map (see
       // alaska_inc_refcount/alaska_dec_refcount).
+      //
+      // First add the globals to the present set: each participant marked its own stack +
+      // registers when it parked, but no one scans the data/BSS segment, so a handle rooted only
+      // in a global would be reclaimed here. World-stopped, so these marks are committed before
+      // the scan below (and present was cleared at the top of this tick).
+      alaska_gc_scan_globals_present();
       alaska::reclaim_dead_handles(*tc);
 #endif
     });
@@ -154,6 +192,17 @@ static void *barrier_thread_func(void *) {
 static void alaska_stop_barrier_thread(void) {
   barrier_thread_should_stop = 1;
   pthread_join(barrier_thread, NULL);
+#if ALASKA_ENABLE_REFCOUNT
+  // Final flush of the deferred-RC increment logs now that the periodic barrier is gone, so the
+  // exit-time event dump / handle census reflect every increment -- otherwise the last <=1 epoch
+  // of logged-but-undrained increments would undercount refcounts in deferred mode (skewing
+  // handles_nonzero_rc and incref). Best-effort: at process shutdown this thread is effectively
+  // alone (same reasoning as the quiesce above) and add_refcount is atomic. A no-op in eager
+  // mode (every inc_log is empty).
+  auto &rt = alaska::Runtime::get();
+  for (auto *tcx : rt.tcs)
+    tcx->drain_inc();
+#endif
 }
 #endif  // ALASKA_BARRIER_THREAD_ENABLED
 
@@ -175,6 +224,11 @@ void __attribute__((constructor(102))) alaska_init(void) {
   atexit(alaska_events_dump);
 #endif
 #if ALASKA_BARRIER_THREAD_ENABLED
+  // Register THIS (main) thread as a barrier participant BEFORE the periodic barrier thread exists.
+  // Otherwise the first 50ms ticks can fire while the main thread's own registration constructor
+  // hasn't run yet (num_threads==1), so the barrier waits for nobody and compaction relocates the
+  // running, unpinned main thread's objects -- the intermittent startup binarytrees crash.
+  alaska_barrier_register_self();
   pthread_create(&barrier_thread, NULL, barrier_thread_func, NULL);
   atexit(alaska_stop_barrier_thread);
 #endif

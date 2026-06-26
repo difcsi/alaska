@@ -38,6 +38,19 @@ namespace alaska::events {
   extern uint64_t g_halloc_count;
   extern uint64_t g_hfree_count;
 
+  // Deferred reference counting (Levanoni-Petrank; see ThreadCache::defer_inc /
+  // drain_inc). g_rc_deferred = increments appended to a per-thread log; g_rc_applied
+  // = increments applied at the barrier drain; g_rc_coalesced = CAS-eliminations from
+  // merging equal-address runs (mode 2); g_rc_overflow = appends that fell back to an
+  // eager increment because the log was full; g_rc_self_flushes = mutator self-flushes
+  // (Phase 2); g_rc_log_hwm = the deepest per-thread log observed at any drain.
+  extern uint64_t g_rc_deferred;
+  extern uint64_t g_rc_applied;
+  extern uint64_t g_rc_coalesced;
+  extern uint64_t g_rc_overflow;
+  extern uint64_t g_rc_self_flushes;
+  extern uint64_t g_rc_log_hwm;
+
   // A handle was allocated (halloc/hcalloc). Cumulative allocation traffic --
   // nonzero for any benchmark that uses the heap, unlike the teardown census
   // which only sees handles that survive to process exit.
@@ -59,6 +72,35 @@ namespace alaska::events {
   // A reference count was decremented on a real handle.
   static inline void dec_refcount_event(void) {
     __atomic_fetch_add(&g_decref_count, 1, __ATOMIC_RELAXED);
+  }
+
+  // --- Deferred-RC events (Levanoni-Petrank; ThreadCache::defer_inc / drain_inc) ----
+  static inline void rc_deferred_event(void) {
+    __atomic_fetch_add(&g_rc_deferred, 1, __ATOMIC_RELAXED);
+  }
+  static inline void rc_applied_event(uint64_t n) {
+    __atomic_fetch_add(&g_rc_applied, n, __ATOMIC_RELAXED);
+  }
+  static inline void rc_coalesced_event(uint64_t n) {
+    __atomic_fetch_add(&g_rc_coalesced, n, __ATOMIC_RELAXED);
+  }
+  static inline void rc_overflow_event(void) {
+    __atomic_fetch_add(&g_rc_overflow, 1, __ATOMIC_RELAXED);
+  }
+  static inline void rc_self_flush_event(void) {
+    __atomic_fetch_add(&g_rc_self_flushes, 1, __ATOMIC_RELAXED);
+  }
+  // Increments applied via the deferred drain also count toward incref, so the `incref`
+  // metric stays "increments applied" and is identical across defer modes (a divergence
+  // means an increment was lost or double-applied -- the A/B's correctness assert).
+  static inline void inc_refcount_event_n(uint64_t n) {
+    __atomic_fetch_add(&g_incref_count, n, __ATOMIC_RELAXED);
+  }
+  // Track the deepest per-thread log seen at a drain (buffer-sizing guardrail). Called
+  // only from drain_inc; a racy max across concurrent mutator self-drains is acceptable
+  // for a diagnostic, matching the non-atomic cache-probe counters.
+  static inline void rc_observe_hwm(uint64_t n) {
+    if (n > g_rc_log_hwm) g_rc_log_hwm = n;
   }
 
   // The GC reclaimed `n` handles (zero-refcount stackscan reclaim and/or the

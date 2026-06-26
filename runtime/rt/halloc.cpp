@@ -221,6 +221,12 @@ void alaska_hfree_now(void *ptr) {
   // held before its memory is recycled, so a container's outgoing handles can reach refcount
   // 0 and be reclaimed. Must run while the object is still readable -- i.e. before the
   // backing free below. A no-op if ALASKA_NO_FREE_DEC=1.
+  //
+  // H4: if deferred reference counting (ALASKA_DEFER_RC) is also on, apply THIS thread's own
+  // pending increments before the dec-on-free scan, else a deferred inc to one of these
+  // children could be undercounted into a premature free. Drain via get_tc() so it runs under
+  // tc.lock (a concurrent barrier cannot then drain the same log); a no-op when deferral is off.
+  get_tc()->drain_inc();
   alaska_hfree_dec_children(ptr);
 #endif
 
@@ -290,6 +296,9 @@ static void walk_structure(void *ptr, size_t max_depth, Fn fn) {
         schedule_pointer(c, m);
       }
     }
+    // `cursor` is h's raw backing, held across this inner scan; keep h pinned so a barrier mid-walk
+    // cannot let compaction relocate the object and dangle `cursor`. See ALASKA_KEEP_HANDLE_ALIVE.
+    ALASKA_KEEP_HANDLE_ALIVE(h);
   }
 }
 

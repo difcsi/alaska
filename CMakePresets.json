@@ -93,6 +93,19 @@
         "ALASKA_ENABLE_CYCLE_COLLECTION": "ON",
         "ALASKA_ENABLE_ANCHORAGE": "ON"
       }
+    },
+    {
+      "name": "refcount-gc-anchorage-defer",
+      "displayName": "Alaska (reference counting + cycle collection + anchorage + deferred RC)",
+      "inherits": "base-llvm",
+      "binaryDir": "${sourceDir}/build/refcount-gc-anchorage-defer",
+      "cacheVariables": {
+        "CMAKE_INSTALL_PREFIX": "${sourceDir}/opt/alaska-refcount-gc-anchorage-defer",
+        "ALASKA_ENABLE_REFCOUNT": "ON",
+        "ALASKA_ENABLE_CYCLE_COLLECTION": "ON",
+        "ALASKA_ENABLE_ANCHORAGE": "ON",
+        "ALASKA_ENABLE_DEFER_RC": "ON"
+      }
     }
   ],
   "buildPresets": [
@@ -123,6 +136,10 @@
     {
       "name": "refcount-gc-anchorage",
       "configurePreset": "refcount-gc-anchorage"
+    },
+    {
+      "name": "refcount-gc-anchorage-defer",
+      "configurePreset": "refcount-gc-anchorage-defer"
     }
   ]
 }

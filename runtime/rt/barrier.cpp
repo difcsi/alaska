@@ -453,6 +453,29 @@ static inline void present_scan_self(void* sp_lo, ucontext_t* uc, bool from_syst
 extern "C" void alaska_gc_present_scan_set(int on) {
   __atomic_store_n(&g_present_scan, on, __ATOMIC_RELEASE);
 }
+
+// The main executable's initialized data + BSS hold handle-typed C globals, which are GC roots
+// exactly like the stack and registers -- but nothing else scans them. A handle reachable ONLY
+// through a global (or a refcount-0 handle parked there, e.g. a long-lived root in a static) is
+// otherwise invisible to the present-set and reclaim_dead_handles frees it. Conservatively mark
+// every handle-looking word in [__data_start, _end) present, ONCE per barrier (globals are
+// shared, so the orchestrator does this rather than every participant -- unlike the per-thread
+// stack/register scan above). Linker-provided bounds for the main image; this does NOT cover
+// shared-library data segments (libalaska/libc globals are runtime-internal, not app roots).
+// Conservative, so any false positive only over-retains. Pinning is NOT needed here: handles are
+// stable across compaction, so a global's handle value stays valid even if its object moves.
+// Weak so an image without these standard linker symbols still loads (they then resolve to 0 and
+// the scan is skipped). If they resolve to libalaska's own data rather than the executable's it is
+// still safe -- a conservative over-scan only over-retains; for a precise multi-image scan switch
+// to dl_iterate_phdr over each object's writable PT_LOAD.
+extern "C" char __data_start[] __attribute__((weak));
+extern "C" char _end[] __attribute__((weak));
+extern "C" void alaska_gc_scan_globals_present(void) {
+  if (!g_present_scan) return;
+  void *lo = (void *)__data_start, *hi = (void *)_end;
+  if (lo == nullptr || hi == nullptr || lo >= hi) return;  // symbols absent/unresolved
+  scan_conservative_present(lo, hi);
+}
 #else
 // No reclaim pass without reference counting: the barrier handler still calls
 // present_scan_self on every participating thread, so keep it as a no-op.
@@ -744,6 +767,17 @@ static void alaska_barrier_signal_handler_impl(int sig, siginfo_t* info, void* p
   // root set, which is safe for both compaction (handles are relocatable) and the
   // cycle collector (over-pinning only retains garbage, never frees a live object).
   void* sp_lo = (void*)ucontext->uc_mcontext.gregs[REG_RSP];
+  // x86-64 SysV red zone: a leaf / non-frame-adjusting function may keep live values --
+  // including handles spilled by the compiler -- in the 128 bytes BELOW RSP without moving RSP,
+  // and the kernel preserves the interrupted thread's red zone across signal delivery. Scanning
+  // only [RSP, stack_top) would miss a handle parked there, so reclaim_dead_handles frees it (it
+  // is never marked present) or compaction relocates it (it is never pinned) while the mutator
+  // still holds its raw backing pointer -- the residual binarytrees free-list / poison-read
+  // crashes. Drop sp_lo by the red zone so the pin scan, present scan, and unpin all cover it.
+  // The red zone is within the thread's mapped stack, so this never faults; conservative
+  // over-scan only over-retains / over-pins, which is safe for reclaim and compaction alike.
+  static constexpr long kRedZone = 128;
+  sp_lo = (void*)((char*)sp_lo - kRedZone);
   void* sp_hi = alaska::thread_tracking::my_state.stack_top;
   mark_conservative_range(sp_lo, sp_hi, /*pin*/ true);
   mark_registers_conservative(ucontext, /*pin*/ true);
@@ -832,6 +866,14 @@ static void clear_pending_signals(void) {
 // }
 
 // void alaska::barrier::remove_self_thread(void) { alaska::thread_tracking::leave(); }
+
+// Register the CALLING thread as a barrier participant NOW (install its signal handler, record its
+// stack top, add it to the registry). alaska_init calls this on the main thread BEFORE creating the
+// periodic barrier thread, closing the startup race where the first 50ms barriers fired while the
+// main thread was not yet registered -- so the barrier waited for nobody and compacted/relocated
+// the still-running, unpinned main thread's objects (the intermittent binarytrees startup crash).
+// Idempotent: ThreadRegistry::join keys by pthread_self() and record_stack_top guards on a set top.
+extern "C" void alaska_barrier_register_self(void) { alaska::thread_tracking::join(); }
 
 /**
  * This function parses a stackmap emitted from LLVM and pushes all

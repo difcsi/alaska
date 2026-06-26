@@ -17,6 +17,7 @@
 #include "alaska/Heap.hpp"
 #include "alaska/HeapPage.hpp"
 #include <alaska/utils.h>
+#include <stdlib.h>  // getenv/atoi/qsort for the deferred-RC knob and drain
 
 // Drop a freed handle from the GC's zero-refcount nullcount set (defined in
 // rt/refcount.cpp, which is only linked into libalaska -- the reverse of the
@@ -31,6 +32,19 @@ extern "C" void alaska_nullcount_forget(void *handle) __attribute__((weak));
 // reason as alaska_nullcount_forget above. Internally a no-op if ALASKA_NO_FREE_DEC is set.
 // Used by the deferred dec-on-free path (defer_free / drain_deferred).
 extern "C" void alaska_hfree_dec_children(void *handle) __attribute__((weak));
+
+// The plain decrement barrier (rt/refcount.cpp), used by the record-at-enqueue drain to
+// replay the child decrements captured at enqueue time. Weak + address-guarded for the same
+// core->rt link-direction reason as alaska_hfree_dec_children above.
+extern "C" void alaska_dec_refcount(void *handle) __attribute__((weak));
+#endif
+
+#if ALASKA_ENABLE_CYCLE_COLLECTION
+// Drop a resurrected handle from the zero-refcount nullcount set (defined in rt/refcount.cpp;
+// weak + address-guarded for the same core->rt link-direction reason as the externs above).
+// ThreadCache::drain_inc calls it when a deferred (possibly coalesced) increment lifts a
+// handle back off refcount 0, mirroring the eager inc fast path in translate.cpp.
+extern "C" void alaska_inc_refcount_nullcount(void *handle) __attribute__((weak));
 #endif
 
 // Number of bytes to reserve at the END of every sized backing allocation for a
@@ -54,7 +68,28 @@ namespace alaska {
       , runtime(rt)
       , localizer(rt.config, *this) {
     handle_slab = runtime.handle_table.new_slab(this);
+#if ALASKA_ENABLE_REFCOUNT && ALASKA_ENABLE_DEFER_RC
+    // Preallocate the deferred-RC increment log ONCE. Deferral is a COMPILE-TIME choice
+    // (ALASKA_ENABLE_DEFER_RC, set by the *-defer preset), so this whole block -- and the
+    // per-store branch in translate.cpp -- is absent from an eager build: no buffer reserved, no
+    // hot-path cost. Capacity from ALASKA_INC_LOG_CAP (entries; default 4M = 32 MiB/thread). On
+    // allocation failure inc_log stays null and defer_inc reports overflow -> eager increments.
+    const char *e = getenv("ALASKA_INC_LOG_CAP");
+    long v = (e != nullptr) ? atol(e) : 0;
+    inc_log_cap = (v > 0) ? (size_t)v : (1u << 22);
+    inc_log = (alaska::Mapping **)alaska_internal_malloc(inc_log_cap * sizeof(alaska::Mapping *));
+#endif
   }
+
+#if ALASKA_ENABLE_REFCOUNT
+  // Free the deferred-RC log. Reached only at thread-cache teardown (del_threadcache), which
+  // for application threads never runs (the __thread tc pointer has no destructor) and
+  // otherwise happens at process/GC-thread shutdown -- past the point any reclaim could act
+  // on a count -- so dropping the at-most-one-epoch of un-drained entries here is harmless.
+  ThreadCache::~ThreadCache(void) {
+    if (inc_log != nullptr) alaska_internal_free(inc_log);
+  }
+#endif
 
 
   void *ThreadCache::allocate_backing_data(const alaska::Mapping &m, size_t size) {
@@ -295,10 +330,26 @@ namespace alaska {
   }
 
 
+#if ALASKA_ENABLE_REFCOUNT
+  // Kill-switch for the Perceus reuse-cache stash (read once, cached). Default ON.
+  // ALASKA_NO_REUSE_CACHE=1 forces every free through the normal free+put path. DIAGNOSTIC:
+  // a stashed entry keeps its mapping pointing at its backing, so is_live_handle() still
+  // reports it live -- the in-barrier compaction (anchorage) then relocates/frees that backing
+  // and the conservative scanners mutate the slot, corrupting the backing/handle free lists.
+  // The synchronous (inline) free path stashes on nearly every free, so it is the heaviest
+  // user; toggle this to A/B whether the reuse cache is the crash source.
+  static bool reuse_cache_enabled(void) {
+    static int v = -1;
+    if (v < 0) v = (getenv("ALASKA_NO_REUSE_CACHE") != nullptr) ? 0 : 1;
+    return v != 0;
+  }
+#endif
+
   void ThreadCache::hfree(void *handle) { this->hfree_impl(handle, /*quarantine_slot=*/false); }
 
-  void ThreadCache::hfree_impl(void *handle, bool quarantine_slot) {
+  void ThreadCache::hfree_impl(void *handle, bool quarantine_slot, bool allow_reuse) {
     (void)quarantine_slot;  // unused unless ALASKA_ENABLE_REFCOUNT (deferred-drain path)
+    (void)allow_reuse;      // ditto -- only gates the refcount-only reuse-cache stash below
     alaska::Mapping *m = alaska::Mapping::from_handle_safe(handle);
     if (unlikely(m == nullptr)) {
       bool worked = this->runtime.heap.huge_allocator.free(handle);
@@ -336,8 +387,8 @@ namespace alaska {
     // slot live (stashed) would let the barrier's reclaim_dead_handles free its backing
     // underneath us (double free). The nullcount-forget above only runs under cycle
     // collection, so guard here independently (is_on_nullcount is available under refcount).
-    if (!quarantine_slot && !m->is_pinned() && !m->is_free() && !m->is_on_nullcount() &&
-        m->get_refcount() <= 1) {
+    if (reuse_cache_enabled() && allow_reuse && !quarantine_slot && !m->is_pinned() &&
+        !m->is_free() && !m->is_on_nullcount() && m->get_refcount() <= 1) {
       void *ptr = m->get_pointer();
       auto *page = this->runtime.heap.pt.get_unaligned(ptr);
       if (page != nullptr) {
@@ -388,6 +439,34 @@ namespace alaska {
   static constexpr size_t kDeferredMaxBytes = 8 * 1024 * 1024;  // 8 MiB queued backing
   static constexpr size_t kDeferredHugeBytes = 256 * 1024;      // >= this: free inline
 
+  // A/B selector for how the deferred queue is drained (read once, cached).
+  //   DEFAULT (B): RECORD-at-enqueue -- defer_free captures the live child handles while the
+  //                 parent is still coherent (pre-reuse) and drain_deferred replays the decs
+  //                 without re-reading parent memory, so freed slots can recycle immediately and
+  //                 no quarantine is needed. Sound for unbounded free lag.
+  //   ALASKA_FREE_DEC_REREAD=1 (A): LEGACY reread+quarantine -- drain_deferred re-reads each
+  //                 parent's child words and quarantines freed slots for two barrier epochs.
+  //                 UNSOUND, kept only for A/B: the child->parent free lag is unbounded (an
+  //                 interior tree node is freed only after its whole sibling subtree), so a child's
+  //                 slot can be released from the 2-epoch quarantine and reused before the parent
+  //                 drains; the drain-time re-read then decrements the reused slot's new occupant,
+  //                 undercounting a still-held node into a premature free (the binarytrees residual
+  //                 UAF -- a held handle whose backing was released, faulting in alaska_translate).
+  // One build carries both paths; flip at runtime to A/B them (see bench/defer_rc_ab.sh).
+  static bool defer_record_enabled(void) {
+    static int v = -1;
+    if (v < 0) {
+      // Record-mode (B) is the default; opt back into the legacy re-read drain (A) with
+      // ALASKA_FREE_DEC_REREAD=1. ALASKA_FREE_DEC_RECORD is still honored as an explicit override
+      // (=0 forces A, any other value forces B) so existing A/B scripts keep working.
+      const char *rec = getenv("ALASKA_FREE_DEC_RECORD");
+      if (getenv("ALASKA_FREE_DEC_REREAD") != nullptr) v = 0;
+      else if (rec != nullptr) v = (rec[0] != '0') ? 1 : 0;
+      else v = 1;
+    }
+    return v != 0;
+  }
+
   // Enqueue a program-freed handle for deferred dec-on-free instead of paying the
   // alaska_hfree_dec_children scan + backing free on the freeing thread's hot path. The
   // barrier thread drains the queue (drain_deferred) with the world stopped. CALLER MUST
@@ -406,6 +485,11 @@ namespace alaska {
     // scan just runs on the freeing thread, not the barrier (huge objects are too big to sit
     // in the queue).
     if (unlikely(m == nullptr)) {
+      // H4: apply our own pending increments before decrementing this aggregate's children,
+      // else a deferred inc to one of those children could be undercounted into a premature
+      // free. We hold this->lock and it is the same thread, so the drain is race-free. A
+      // no-op when deferral is off / the log is empty.
+      this->drain_inc();
       if (&alaska_hfree_dec_children) alaska_hfree_dec_children(handle);
       this->hfree(handle);
       return;
@@ -423,9 +507,33 @@ namespace alaska {
     // Large (but non-huge) objects also bypass the queue, to bound resident memory.
     size_t size = this->get_size(handle);
     if (size >= kDeferredHugeBytes) {
+      this->drain_inc();  // H4: apply our pending increments before dec-on-free (see the huge bypass above).
       if (&alaska_hfree_dec_children) alaska_hfree_dec_children(handle);
       this->hfree(handle);
       return;
+    }
+
+    // RECORD mode (B): decide WHAT to decrement now, while `handle` is still coherent and no
+    // allocation has reused a just-freed sibling's slot. The is_live_handle check MUST happen
+    // here, not at drain: a child freed earlier in this same burst is still queued (its slot
+    // reserved), so it reads back live and is recorded; one already drained reads back
+    // null-backing and is correctly skipped. Because the whole queue drains atomically, a
+    // recorded child cannot be recycled+reused before its dec is replayed -- so no quarantine
+    // is needed. (drain_deferred replays alaska_dec_refcount over these.)
+    if (defer_record_enabled()) {
+      void **words = (void **)m->get_pointer();
+      if (words != nullptr) {
+        size_t n = size / sizeof(void *);
+        for (size_t i = 0; i < n; i++) {
+          void *w = words[i];
+          if (w == nullptr) continue;
+          alaska::Mapping *cm = alaska::Mapping::from_handle_safe(w);
+          if (this->runtime.handle_table.is_live_handle(cm)) deferred_child_decs.push(w);
+        }
+      }
+      // `words` is `handle`'s raw backing. This runs under this->lock (a barrier blocks acquiring
+      // it), so it is barrier-safe today; keep `handle` pinned as defense-in-depth all the same.
+      ALASKA_KEEP_HANDLE_ALIVE(handle);
     }
 
     deferred_frees.push(handle);
@@ -435,6 +543,13 @@ namespace alaska {
     // That is just today's behaviour batched -- safe because we hold this->lock and every
     // entry was freed by this thread.
     if ((size_t)deferred_frees.size() >= kDeferredMaxCount || deferred_bytes >= kDeferredMaxBytes) {
+      // Apply this thread's pending increments BEFORE draining the free queue, exactly as the
+      // barrier does (init.cpp: drain_inc -> drain_deferred) and as the inline dec-on-free bypass
+      // does (halloc.cpp). Otherwise this inline drain dec-on-frees + recycles slots while stale
+      // inc-log entries for those handles remain; the next barrier's drain_inc then applies them to
+      // a recycled/free-listed slot (the HandleSlab::alloc free-list corruption). Draining here
+      // empties the log (head->0) so no entry outlives the slot it targets. We hold this->lock.
+      this->drain_inc();
       this->drain_deferred();
     }
   }
@@ -447,6 +562,33 @@ namespace alaska {
   // this->lock -- the barrier holds all tc locks via lock_all_thread_caches(); the inline
   // overflow path above already holds it.
   void ThreadCache::drain_deferred(void) {
+    if (defer_record_enabled()) {
+      // RECORD mode (B): replay the child decrements captured at enqueue -- no re-read of any
+      // parent's memory, so a freed child's slot recycling can never turn a drain-time scan
+      // into a dec of a reused slot's new occupant. Decrement BEFORE freeing: a recorded child
+      // may itself be one of the parents freed below, and recycling its slot first would make
+      // the next dec a free-list-link CAS corruption. The barrier applies pending increments
+      // (drain_inc) before this runs, so every recorded child is back at full count first.
+      for (auto *c : deferred_child_decs) {
+        if (&alaska_dec_refcount) alaska_dec_refcount(c);
+      }
+      deferred_child_decs.clear_with_capacity();
+      for (auto *h : deferred_frees) {
+        alaska::Mapping *m = alaska::Mapping::from_handle_safe(h);
+        if (m != nullptr && m->is_free()) continue;  // already reclaimed elsewhere; drop
+        // quarantine_slot=false: recycle the slot immediately. Nothing re-reads this parent's
+        // child words after enqueue, so there is no stale word left to alias the reused slot.
+        // allow_reuse=false: this is a deferred drain -- the synchronous reuse-cache stash would
+        // leave the backing in limbo for the compaction pass that runs later in this same barrier
+        // (see hfree_impl), so free + put it for real instead.
+        this->hfree_impl(h, /*quarantine_slot=*/false, /*allow_reuse=*/false);
+      }
+      deferred_frees.clear_with_capacity();
+      deferred_bytes = 0;
+      return;
+    }
+
+    // LEGACY mode (A, default): re-read each parent's children at drain and quarantine slots.
     for (auto *h : deferred_frees) {
       alaska::Mapping *m = alaska::Mapping::from_handle_safe(h);
       if (m != nullptr && m->is_free()) continue;  // already reclaimed; drop
@@ -472,6 +614,45 @@ namespace alaska {
     for (auto *m : quarantine_cur)
       quarantine_prev.push(m);
     quarantine_cur.clear_with_capacity();
+  }
+
+  // Apply this thread's deferred increments (see ThreadCache::defer_inc) in FIFO order. CALLER
+  // MUST HOLD this->lock. At the barrier this runs world-stopped and MUST precede drain_deferred /
+  // reclaim (the INV-LIVE linchpin: a child with a pending inc must be back at full count before
+  // any dec-on-free or free decision reads it). On the freeing thread it runs before an inline
+  // dec-on-free bypass, under that thread's own lock.
+  //
+  // FIFO, not sorted: address-sorting + coalescing the log was measured to LOSE -- the radix sort
+  // cost more than the locality it recovered, because the batched apply is already memory-level-
+  // parallelism bound -- so that path was dropped. The cache probe fires HERE (not in
+  // add_refcount), modeling the apply-site access pattern.
+  void ThreadCache::drain_inc(void) {
+    uint32_t n = inc_log_head;
+    if (n == 0) return;
+#if ALASKA_ENABLE_EVENT_COUNTERS
+    alaska::events::rc_observe_hwm(n);
+#endif
+    for (uint32_t i = 0; i < n; i++) {
+      alaska::Mapping *m = inc_log[i];
+#if ALASKA_ENABLE_CACHE_PROBE
+      alaska::events::probe_mapping_line((uintptr_t)m);
+#endif
+      int new_count = m->add_refcount(1);
+#if ALASKA_ENABLE_CYCLE_COLLECTION
+      // Resurrection fixup (mirrors the eager inc fast path in translate.cpp): a deferred
+      // increment that lifts a handle off refcount 0 must drop it from the nullcount set so the
+      // barrier reclaim does not free a now-live handle.
+      if (new_count >= 1 && m->is_on_nullcount() && &alaska_inc_refcount_nullcount)
+        alaska_inc_refcount_nullcount(m->to_handle());
+#else
+      (void)new_count;
+#endif
+#if ALASKA_ENABLE_EVENT_COUNTERS
+      alaska::events::inc_refcount_event_n(1);
+      alaska::events::rc_applied_event(1);
+#endif
+    }
+    inc_log_head = 0;
   }
 #endif  // ALASKA_ENABLE_REFCOUNT
 

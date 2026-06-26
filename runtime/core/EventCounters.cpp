@@ -23,6 +23,14 @@ namespace alaska::events {
   uint64_t g_halloc_count = 0;
   uint64_t g_hfree_count = 0;
 
+  // Deferred reference counting (Levanoni-Petrank). See EventCounters.hpp.
+  uint64_t g_rc_deferred = 0;
+  uint64_t g_rc_applied = 0;
+  uint64_t g_rc_coalesced = 0;
+  uint64_t g_rc_overflow = 0;
+  uint64_t g_rc_self_flushes = 0;
+  uint64_t g_rc_log_hwm = 0;
+
 #if ALASKA_ENABLE_CACHE_PROBE
   // --- Cache-miss characterization probe state ---------------------------------
   // Tallies reported at exit. Non-atomic: this build is for single-mutator
@@ -128,6 +136,12 @@ extern "C" void alaska_events_dump(void) {
   unsigned long moved = (unsigned long)__atomic_load_n(&g_objects_moved, __ATOMIC_RELAXED);
   unsigned long halloc = (unsigned long)__atomic_load_n(&g_halloc_count, __ATOMIC_RELAXED);
   unsigned long hfree = (unsigned long)__atomic_load_n(&g_hfree_count, __ATOMIC_RELAXED);
+  unsigned long rc_deferred = (unsigned long)__atomic_load_n(&g_rc_deferred, __ATOMIC_RELAXED);
+  unsigned long rc_applied = (unsigned long)__atomic_load_n(&g_rc_applied, __ATOMIC_RELAXED);
+  unsigned long rc_coalesced = (unsigned long)__atomic_load_n(&g_rc_coalesced, __ATOMIC_RELAXED);
+  unsigned long rc_overflow = (unsigned long)__atomic_load_n(&g_rc_overflow, __ATOMIC_RELAXED);
+  unsigned long rc_self_flushes = (unsigned long)__atomic_load_n(&g_rc_self_flushes, __ATOMIC_RELAXED);
+  unsigned long rc_log_hwm = (unsigned long)__atomic_load_n(&g_rc_log_hwm, __ATOMIC_RELAXED);
 
   // Teardown snapshot of the handle table: how many handles still exist and how
   // many of those still hold a nonzero reference count. The barrier thread has
@@ -161,6 +175,14 @@ extern "C" void alaska_events_dump(void) {
       "handles_total=%lu\nhandles_nonzero_rc=%lu\n",
       halloc, hfree, incref, decref, gc_frees, passes, moved,
       handles_total, handles_nonzero_rc);
+
+  // Deferred-RC tallies (Levanoni-Petrank). Zero in eager mode (ALASKA_DEFER_RC unset/0)
+  // and in non-measurement builds. rc_deferred+rc_overflow == inc-barrier calls; incref ==
+  // rc_applied + rc_overflow (the invariant the A/B checks across defer modes).
+  fprintf(f,
+      "rc_deferred=%lu\nrc_applied=%lu\nrc_coalesced=%lu\n"
+      "rc_overflow=%lu\nrc_self_flushes=%lu\nrc_log_hwm=%lu\n",
+      rc_deferred, rc_applied, rc_coalesced, rc_overflow, rc_self_flushes, rc_log_hwm);
 
 #if ALASKA_ENABLE_CACHE_PROBE
   // Cache-miss characterization probe results (see EventCounters.cpp). probe_misses

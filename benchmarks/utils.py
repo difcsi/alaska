@@ -70,6 +70,10 @@ ALASKA_BUILD_CONFIGS = [
     "refcount-anchorage",
     "refcount-gc",
     "refcount-gc-anchorage",
+    # Deferred (Levanoni-Petrank) reference counting layered on the full stack; built from the
+    # refcount-gc-anchorage-defer preset (ALASKA_ENABLE_DEFER_RC=ON). Compare against
+    # refcount-gc-anchorage to isolate deferral.
+    "refcount-gc-anchorage-defer",
 ]
 
 BASELINE_CONFIG = "baseline"

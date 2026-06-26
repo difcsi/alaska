@@ -66,9 +66,20 @@ alaska_switch(ALASKA_ENABLE_EVENT_COUNTERS    OFF)
 # timing -- characterization builds only, never timing runs. Built via ALASKA_PROBE=1.
 alaska_switch(ALASKA_ENABLE_CACHE_PROBE       OFF)
 
+# Deferred (Levanoni-Petrank) reference counting: the increment barrier appends to a per-thread
+# log applied in a FIFO batch at the barrier, instead of the scattered per-store CAS. A
+# compile-time choice (the *-defer preset turns it on); OFF by default so the eager hot path is
+# byte-identical. Only helps workloads whose increment stream is scattered AND exceeds the LLC
+# (see bench/refchurn); pure overhead otherwise.
+alaska_switch(ALASKA_ENABLE_DEFER_RC          OFF)
+
 # Cycle collection reads refcounts; it cannot be built without reference counting.
 if(ALASKA_ENABLE_CYCLE_COLLECTION AND NOT ALASKA_ENABLE_REFCOUNT)
   message(FATAL_ERROR "ALASKA_ENABLE_CYCLE_COLLECTION requires ALASKA_ENABLE_REFCOUNT")
+endif()
+# Deferring refcount ops requires reference counting to defer.
+if(ALASKA_ENABLE_DEFER_RC AND NOT ALASKA_ENABLE_REFCOUNT)
+  message(FATAL_ERROR "ALASKA_ENABLE_DEFER_RC requires ALASKA_ENABLE_REFCOUNT")
 endif()
 
 # ALASKA_SIZE_BITS is the width of the in-handle offset field, which also dictates

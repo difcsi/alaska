@@ -16,7 +16,10 @@ import pandas as pd
 EVENT_KEYS = ['halloc', 'hfree', 'incref', 'decref', 'gc_frees', 'compactions',
               'objects_moved', 'handles_total', 'handles_nonzero_rc',
               'probe_distinct_lines', 'probe_total_touches', 'probe_hits',
-              'probe_misses', 'probe_oob', 'probe_sets']
+              'probe_misses', 'probe_oob', 'probe_sets',
+              # Deferred reference counting (Levanoni-Petrank; ALASKA_DEFER_RC).
+              'rc_deferred', 'rc_applied', 'rc_coalesced',
+              'rc_overflow', 'rc_self_flushes', 'rc_log_hwm']
 
 
 class EventCountingRunner(Runner):
@@ -197,6 +200,16 @@ _suites = [s.strip() for s in os.environ.get("ALASKA_SUITES", "embench,gap,nas")
 # Per-benchmark selector: run only these named benchmarks within suites that
 # support a `benchmarks=` subset (gcbench, olden). None => run the whole suite.
 _bench_filter = [b.strip() for b in os.environ.get("ALASKA_BENCH", "").split(",") if b.strip()] or None
+# Config (pipeline) subset: ALASKA_CONFIGS=refcount,refcount-gc restricts the sweep to those
+# pipelines (include "baseline" to keep the plain-clang series). Empty => every config. A
+# targeted A/B that touches only one service (e.g. the ALASKA_DEFER_RC knob, which affects only
+# refcount* configs) can skip the rest of the matrix and finish far faster.
+_configs_filter = [c.strip() for c in os.environ.get("ALASKA_CONFIGS", "").split(",") if c.strip()] or None
+if _configs_filter is not None:
+  _known = set(ALASKA_BUILD_CONFIGS) | {BASELINE_CONFIG}
+  _unknown = [c for c in _configs_filter if c not in _known]
+  if _unknown:
+    print(f"warning: ALASKA_CONFIGS has unknown config(s) {_unknown}; known: {sorted(_known)}")
 
 if "embench" in _suites:
   space.add_suite(wl.suites.Embench, iters=EMBENCH_ITERS)
@@ -247,11 +260,17 @@ def add_pipeline(name, prefix, baseline=False):
   space.add_pipeline(pl)
 
 
+# Which configs to actually run this sweep (ALASKA_CONFIGS subsets the matrix; None => all).
+def _want_config(cfg):
+  return _configs_filter is None or cfg in _configs_filter
+
 # baseline: plain bundled clang via --baseline, borrowing one install's driver.
-add_pipeline(BASELINE_CONFIG, config_prefix(BASELINE_DRIVER), baseline=True)
+if _want_config(BASELINE_CONFIG):
+  add_pipeline(BASELINE_CONFIG, config_prefix(BASELINE_DRIVER), baseline=True)
 # One pipeline per Alaska build configuration (noservice, anchorage, refcount, ...).
 for cfg in ALASKA_BUILD_CONFIGS:
-  add_pipeline(cfg, config_prefix(cfg))
+  if _want_config(cfg):
+    add_pipeline(cfg, config_prefix(cfg))
 
 
 run_name = "figure7"

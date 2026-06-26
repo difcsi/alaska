@@ -50,6 +50,46 @@ namespace alaska {
     // ago, and roll the current epoch's quarantine forward. Called once per barrier AFTER
     // every thread's deferred queue has drained (see hfree_impl / quarantine_rotate).
     void quarantine_rotate(void);
+    // Flush the Perceus reuse-cache stash (free its backing + return its slot). Called once per
+    // barrier before the heap-walking passes so no stashed backing sits in reuse limbo during
+    // compaction (see hfree_impl reuse path / barrier_thread_func). Public so the barrier can
+    // call it; also used internally on page swap-out and tc teardown. Caller holds this->lock.
+    void flush_reuse_cache(void);
+
+    // --- Deferred reference-count increment (Levanoni-Petrank) --------------------
+    // The hot-path increment barrier (alaska_inc_refcount -> alaska_defer_inc) appends the
+    // target Mapping here instead of doing the scattered handle-table refcount CAS; the
+    // barrier applies the whole log in one address-sorted, coalesced sweep (drain_inc),
+    // turning ~N scattered table misses into a streaming pass. Runtime-gated by
+    // ALASKA_DEFER_RC. defer_inc is the ONLY ThreadCache method that does NOT take
+    // this->lock: a single-producer append into a preallocated buffer, made safe against
+    // the barrier by the stop-the-world rendezvous (its sole consumer, drain_inc, runs
+    // world-stopped and reads inc_log_head only after every mutator is parked). It returns
+    // false (without appending) when the log is full/unallocated so the caller applies that
+    // one increment eagerly -- correctness never depends on the buffer having room.
+    // drain_inc DOES require this->lock (the barrier holds it via lock_all_thread_caches,
+    // or the freeing thread holds its own before an inline dec-on-free bypass).
+    bool defer_inc(alaska::Mapping *m) {
+      uint32_t h = inc_log_head;
+      if (unlikely(inc_log == nullptr || h >= inc_log_cap)) {
+#if ALASKA_ENABLE_EVENT_COUNTERS
+        alaska::events::rc_overflow_event();
+#endif
+        return false;
+      }
+      inc_log[h] = m;          // (1) write the slot, THEN
+      inc_log_head = h + 1;    // (2) publish it. Plain stores: the stop-the-world barrier is
+                               // the only fence to the (sole) consumer drain_inc. If a barrier
+                               // signal lands between (1) and (2) this entry is just applied
+                               // next epoch; its target is register-live at the store, so the
+                               // conservative present-scan pins it this epoch (INV-LIVE).
+#if ALASKA_ENABLE_EVENT_COUNTERS
+      alaska::events::rc_deferred_event();
+#endif
+      return true;
+    }
+    void drain_inc(void);
+    ~ThreadCache(void);
 #endif
 
     int get_id(void) const { return this->id; }
@@ -73,10 +113,14 @@ namespace alaska {
     // Free an allocation behind a handle, but not the handle
     void free_allocation(const alaska::Mapping &m);
 
-    // Shared body of hfree. When `quarantine_slot` is true (the deferred-drain path) the
+    // Shared body of hfree. When `quarantine_slot` is true (the legacy deferred-drain path) the
     // backing is freed and the pointer cleared, but the mapping slot is withheld from the
     // allocatable pool for one barrier epoch instead of being put back immediately.
-    void hfree_impl(void *handle, bool quarantine_slot);
+    // `allow_reuse` gates the synchronous Perceus reuse-cache stash: it MUST be false on any
+    // deferred-drain path (a stashed entry sits in limbo -- backing off the freelist, mapping
+    // not reset -- which the in-barrier compaction that runs right after the drain then
+    // mishandles into a double free). The synchronous hfree() leaves it true.
+    void hfree_impl(void *handle, bool quarantine_slot, bool allow_reuse = true);
 
     // Allocate a new handle table mapping
     alaska::Mapping *new_mapping(void);
@@ -101,8 +145,7 @@ namespace alaska {
 
     // Drop a cached entry back through the normal free path (free backing + return slot).
     void flush_reuse_class(int cls);
-    // Flush every cached entry (page swap-out / thread-cache teardown).
-    void flush_reuse_cache(void);
+    // flush_reuse_cache() is declared public above (the barrier calls it).
 #endif
     // Swap to a new locality page owned by this thread cache
     alaska::LocalityPage *new_locality_page(size_t required_size);
@@ -142,6 +185,30 @@ namespace alaska {
     // and is released at the next quarantine_rotate.
     ck::vec<alaska::Mapping *> quarantine_cur;
     ck::vec<alaska::Mapping *> quarantine_prev;
+
+    // Record-at-enqueue drain strategy (ALASKA_FREE_DEC_RECORD=1; A/B alternative to the
+    // legacy reread+quarantine path). The live child handles to decrement, captured by
+    // defer_free while the freed parent is still coherent (before any sibling's slot can be
+    // reused) and replayed by drain_deferred. Decoupling the is_live_handle DECISION (made
+    // here, at enqueue) from the dec ARITHMETIC (deferred to the barrier) is what makes the
+    // drain sound without a slot quarantine -- see defer_free / drain_deferred. Guarded by
+    // `lock`, like deferred_frees.
+    ck::vec<void *> deferred_child_decs;
+
+    // Deferred-RC increment log (Levanoni-Petrank; see defer_inc / drain_inc). A fixed,
+    // preallocated single-producer buffer of target mappings awaiting a batched refcount
+    // add. NOT a ck::vec: the hot-path append must be malloc-free and async-signal-safe (a
+    // ck::vec push can realloc), and ck::vec::sort() truncates Mapping* through int.
+    // Allocated once in the ctor; if that allocation fails inc_log stays null and defer_inc
+    // always reports overflow (a clean degrade to eager increments).
+    // Capacity (entries) of the preallocated log, set once from ALASKA_INC_LOG_CAP at ctor
+    // (default 4,194,304 = 32 MiB/thread). A bigger log lets a fast-appending deferred mutator
+    // accumulate a DENSER per-epoch batch before the barrier drains it -- which both avoids the
+    // eager-fallback overflow AND gives the address sort more equal-address / same-line runs to
+    // coalesce. Tune it (no rebuild) until rc_overflow hits 0.
+    size_t inc_log_cap = 0;
+    alaska::Mapping **inc_log = nullptr;          // the log; entries [0, inc_log_head) pending
+    uint32_t inc_log_head = 0;                    // append/commit cursor
 #endif
 
    public:

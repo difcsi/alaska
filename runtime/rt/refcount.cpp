@@ -83,6 +83,37 @@ void alaska_inc_refcount_nullcount(void *ptr) {
 #endif
 }
 
+#if ALASKA_ENABLE_DEFER_RC
+/**
+ * alaska_defer_inc - Append an increment to the calling thread's deferred-RC log.
+ *
+ * The increment barrier (alaska_inc_refcount, in translate.cpp) routes here in a deferred build
+ * (ALASKA_ENABLE_DEFER_RC, the *-defer preset) instead of doing the scattered handle-table CAS on
+ * its hot path. We append the target mapping to this thread's preallocated log
+ * (ThreadCache::defer_inc), to be applied in a FIFO batch at the barrier (ThreadCache::drain_inc).
+ * On log overflow (or before a thread cache exists) we fall back to an eager increment so no
+ * increment is ever lost -- correctness never depends on the buffer having room.
+ *
+ * Sectioned like the rest of the refcount runtime so the RefcountInc pass never instruments it.
+ * Counters: defer_inc tallies rc_deferred; this eager fallback's inc_refcount tallies incref as
+ * usual; the drain tallies rc_applied + incref.
+ */
+__attribute__((section("$__ALASKA__refcount")))
+void alaska_defer_inc(alaska::Mapping *m) {
+  auto *tc = get_tc_r();
+  if (likely(tc != nullptr && tc->defer_inc(m))) return;  // appended -> applied at the barrier
+  // Overflow / no thread cache: apply eagerly (rare). Mirror the inc fast path's nullcount
+  // resurrection fixup so a GC build stays correct on this path too.
+#if ALASKA_ENABLE_CYCLE_COLLECTION
+  bool resurrected;
+  m->inc_refcount_gc(&resurrected);
+  if (resurrected) alaska_inc_refcount_nullcount(m->to_handle());
+#else
+  m->inc_refcount();
+#endif
+}
+#endif  // ALASKA_ENABLE_DEFER_RC
+
 /**
  * alaska_dec_refcount_slow - Slow path of the decrement barrier.
  *
@@ -191,6 +222,11 @@ void alaska_hfree_dec_children(void *ptr) {
   for (size_t i = 0; i < n; i++) {
     if (words[i] != nullptr && word_is_live_handle(words[i])) alaska_dec_refcount(words[i]);
   }
+  // `words` is ptr's raw backing, held live across this whole scan. Today every caller runs
+  // world-stopped (the deferred drain) or under this->lock (the huge bypass), where a barrier
+  // cannot land -- so this is defense-in-depth: keep ptr's handle pinned so that if a caller ever
+  // runs this lock-free, compaction still cannot relocate the object out from under `words`.
+  ALASKA_KEEP_HANDLE_ALIVE(ptr);
 }
 
 /**
@@ -219,6 +255,16 @@ void alaska_inc_handles_in_range(void *base, size_t bytes) {
   if (base == nullptr || bytes < sizeof(void *)) return;
   if (in_refcount_operation) return;
   void **words = (void **)base;
+  // This is the one heap scan that runs on a mutator with NO tc lock held (the compiler calls it
+  // inline at a byte copy), so a stop-the-world barrier CAN fire mid-scan. `base` is a raw backing
+  // pointer with no handle in hand, so recover the destination object's handle once -- a single
+  // page-table read, not per-word (walk() only allocates on a miss, and a live backing's entry is
+  // always present) -- and keep it live across the scan so compaction cannot relocate the copy
+  // destination and leave `words` dangling. See ALASKA_KEEP_HANDLE_ALIVE.
+  void *dest_handle = nullptr;
+  if (auto *hp = alaska::Runtime::get().heap.pt.get_unaligned(base)) {
+    if (auto *dm = hp->mapping_of(base)) dest_handle = dm->to_handle();
+  }
   // Only increment validated live handles. This scans arbitrary copied bytes, so
   // a raw word with the handle bit set is NOT safe to hand to inc_refcount without
   // the bounds check in word_is_live_handle (see there).
@@ -226,6 +272,7 @@ void alaska_inc_handles_in_range(void *base, size_t bytes) {
   for (size_t i = 0; i < n; i++) {
     if (words[i] != nullptr && word_is_live_handle(words[i])) alaska_inc_refcount(words[i]);
   }
+  if (dest_handle) ALASKA_KEEP_HANDLE_ALIVE(dest_handle);
 }
 
 /**
@@ -359,6 +406,20 @@ namespace alaska {
   // no set races this scan -- so unlike the old hashmap path this needs no lock and
   // never has to skip a cycle.
   size_t reclaim_dead_handles(alaska::ThreadCache &tc) {
+    // DIAGNOSTIC kill-switch (ALASKA_NO_GC_FREE=1): skip the stackscan reclaim entirely. The same
+    // env also gates the cycle collector (init.cpp), so NO_GC_FREE disables BOTH world-stopped
+    // freers. If a crash that reproduces with it OFF vanishes with it ON, a GC freer is releasing
+    // a still-live node (Bug 2); combine with ALASKA_NO_COMPACT to separate reclaim/cycle from
+    // compaction. Leaks reclaimable garbage -- diagnostic only.
+    static int no_gc_free = -1;
+    if (no_gc_free < 0) no_gc_free = (getenv("ALASKA_NO_GC_FREE") != nullptr) ? 1 : 0;
+    if (no_gc_free) return 0;
+    // DIAGNOSTIC dump (ALASKA_RECLAIM_TRACE=1): print every node this pass frees, with the state
+    // that drove the decision, so a premature free can be caught and checked against the inc /
+    // dec-on-free paths. World-stopped, so the fprintf ordering is clean.
+    static int trace = -1;
+    if (trace < 0) trace = (getenv("ALASKA_RECLAIM_TRACE") != nullptr) ? 1 : 0;
+
     size_t candidates = 0;
     ck::vec<void *> to_free;
 
@@ -366,7 +427,14 @@ namespace alaska {
     alaska::gc::nullcount_bm_collect(cands);
     for (auto *m : cands) {
       candidates++;
-      if (m->is_free()) continue;
+      // Skip mappings that are NOT live -- but is_free() (the invl bit) is UNRELIABLE for slabs:
+      // SizedAllocator's free list (HandleSlab uses one) links freed slots via a Block.next at
+      // offset 0 and never sets invl, so a mapping already on the handle free list reads
+      // is_free()==false. is_live_handle catches it: a free-list link's "backing" points back INTO
+      // the handle table, which it rejects. Without this, a mapping freed earlier this barrier
+      // (e.g. flush_reuse_cache's put) but still in the nullcount set is re-freed here -> a DOUBLE
+      // put that links a live-valued word onto the slab free list (the HandleSlab::alloc crash).
+      if (!alaska::Runtime::get().handle_table.is_live_handle(m)) continue;
       if (m->get_refcount() != 0) continue;       // re-published (defensive)
       if (alaska::gc::present_test(m)) continue;   // on some thread's stack
       // Manual lifetime policy overrides the GC: a pinned handle is kept alive even
@@ -374,6 +442,12 @@ namespace alaska {
       // on later barriers, becoming reclaimable once unpinned (hfree).
       if (&__liballocs_alaska_manual_pinned &&
           __liballocs_alaska_manual_pinned(m->get_pointer())) continue;
+      if (unlikely(trace)) {
+        fprintf(stderr,
+            "[reclaim] FREE handle=%p mapping=%p backing=%p rc=%lu pinned=%d on_nullcount=%d\n",
+            m->to_handle(), (void *)m, m->get_pointer(), (unsigned long)m->get_refcount(),
+            (int)m->is_pinned(), (int)m->is_on_nullcount());
+      }
       to_free.push(m->to_handle());
     }
     // Clear the reclaimed handles' bits AND the per-Mapping hint, keeping the two in

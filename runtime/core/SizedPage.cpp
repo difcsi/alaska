@@ -15,6 +15,7 @@
 #include <alaska/Logger.hpp>
 #include <alaska/SizedAllocator.hpp>
 #include <string.h>
+#include <stdlib.h>
 #include <ck/template_lib.h>
 
 namespace alaska {
@@ -213,6 +214,27 @@ namespace alaska {
     void *after_heap = ind_to_object(header_to_ind(last_object + 1));
     allocator.reset_bump_allocator(after_heap);
 
+    // DIAGNOSTIC (ALASKA_COMPACT_VERIFY=1): the mappings come out consistent, so if Bug 2 is in
+    // compaction's output it is the bump pointer marking a LIVE slot reusable -- the next bump
+    // alloc (SizedAllocator::extend) would then free_local that live slot, putting object data on
+    // the free list (-> the ShardedFreeList::pop crash). Invariant: NO still-allocated slot may sit
+    // AT OR ABOVE the bump pointer (after_heap). This prints ONLY on the actual corruption (low
+    // volume -- it does not perturb timing like a per-compaction print would). NOTE: live_objects
+    // is dead (always 0; never inc/dec'd on alloc/free), so it is NOT used here.
+    static int verify = -1;
+    if (verify < 0) verify = (getenv("ALASKA_COMPACT_VERIFY") != nullptr) ? 1 : 0;
+    if (unlikely(verify)) {
+      long bump_ind = header_to_ind(last_object) + 1;  // first slot in the reuse/bump region
+      for (long i = bump_ind; i < capacity; i++) {
+        if (!ind_to_header(i)->is_free()) {
+          alaska::Mapping *m = ind_to_header(i)->get_mapping();
+          alaska::printf("[compact-verify] LIVE-ABOVE-BUMP page=%p slot=%ld bump=%ld mapping=%p "
+                         "mptr=%p pinned=%d moved=%ld\n",
+              (void *)this, i, bump_ind, (void *)m, m ? m->get_pointer() : nullptr,
+              m ? (int)m->is_pinned() : -1, moved_objects);
+        }
+      }
+    }
 
     return moved_objects;
   }

@@ -53,6 +53,7 @@ CONFIG_ORDER = [
     "refcount-anchorage",
     "refcount-gc",
     "refcount-gc-anchorage",
+    "refcount-gc-anchorage-defer",
 ]
 
 config_colors = {
@@ -62,6 +63,7 @@ config_colors = {
     "refcount-anchorage": "#8c564b",
     "refcount-gc": "#ff6583",
     "refcount-gc-anchorage": "#ffa600",
+    "refcount-gc-anchorage-defer": "#003f5c",
 }
 
 config_labels = {
@@ -71,6 +73,7 @@ config_labels = {
     "refcount-anchorage": "RC+anchorage",
     "refcount-gc": "RC+GC",
     "refcount-gc-anchorage": "RC+GC+anchorage",
+    "refcount-gc-anchorage-defer": "RC+GC+anchorage+defer",
 }
 
 

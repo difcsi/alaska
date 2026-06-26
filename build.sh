@@ -72,7 +72,7 @@ fi
 # dir, install prefix, and opt/enable-alaska-<config> script. Their feature triple
 # (REFCOUNT / CYCLE_COLLECTION / ANCHORAGE) is set by the matching preset in
 # CMakePresets.json.
-for config in noservice anchorage refcount refcount-anchorage refcount-gc refcount-gc-anchorage; do
+for config in noservice anchorage refcount refcount-anchorage refcount-gc refcount-gc-anchorage refcount-gc-anchorage-defer; do
   INSTALL_DIR=${ROOT}/opt/alaska-${config}
 
   buildstep "configure ${config}" cmake --preset ${config} -S $ROOT "${EXTRA_CMAKE_ARGS[@]}"

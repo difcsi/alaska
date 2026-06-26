@@ -167,14 +167,28 @@ extern "C" void *__alaska_leak(void *ptr) { return alaska_translate(ptr); }
 // is not worth inlining and only fires after a prior dec-to-zero).
 extern "C" void alaska_inc_refcount_nullcount(void *ptr);
 
+// Deferred reference counting (Levanoni-Petrank). DEFERRAL IS A COMPILE-TIME CHOICE
+// (ALASKA_ENABLE_DEFER_RC, set by the *-defer build preset): when on, the increment is appended
+// to a per-thread log (alaska_defer_inc) and applied in a FIFO batch at the barrier
+// (ThreadCache::drain_inc) instead of doing the scattered handle-table CAS here. alaska_defer_inc
+// lives in libalaska -- this file is internalized into every module, so it must only REFERENCE
+// it. When off, the barrier is byte-identical to the original eager path: no buffer, no branch.
+#if ALASKA_ENABLE_DEFER_RC
+extern "C" void alaska_defer_inc(alaska::Mapping *m);
+#endif
+
 extern "C" void alaska_inc_refcount(void *ptr) {
   auto *m = alaska::Mapping::from_handle_safe(ptr);  // null / non-handle -> nullptr
   if (m == nullptr) return;
-  auto new_count = m->inc_refcount();
-#if ALASKA_ENABLE_CYCLE_COLLECTION
-  if (new_count == 1 && m->is_on_nullcount()) {
-    alaska_inc_refcount_nullcount(ptr);
-  }
+#if ALASKA_ENABLE_DEFER_RC
+  alaska_defer_inc(m);
+  return;
+#elif ALASKA_ENABLE_CYCLE_COLLECTION
+  bool resurrected;
+  m->inc_refcount_gc(&resurrected);
+  if (unlikely(resurrected)) alaska_inc_refcount_nullcount(ptr);
+#else
+  m->inc_refcount();
 #endif
 }
 

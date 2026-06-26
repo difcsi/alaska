@@ -34,6 +34,16 @@ static void show_string(const char *msg) { write(1, msg, strlen(msg)); }
 
 #define HANDLE_ADDRSPACE __attribute__((address_space(1)))
 
+// Force a handle to remain live -- in a register or stack slot the barrier's conservative scan
+// (mark_registers_conservative + mark_conservative_range) covers -- up to this point, so an object
+// libalaska is touching through a raw backing pointer derived from it stays pinned across a
+// stop-the-world barrier. libalaska is NOT PinTracking-instrumented, so unlike compiled app code
+// (which materializes handles into localPinSet) it must keep handles alive by hand.
+// Place this AFTER the last use of the raw pointer derived from `h`; 
+// This is needed to prevent compiler optimizations from eliminating the handle copy
+// the compiler then keeps `h` live across the whole span. No-op codegen (empty asm), but the clobber blocks dead-store elimination of `h`.
+#define ALASKA_KEEP_HANDLE_ALIVE(h) __asm__ __volatile__("" : : "r"((void *)(h)) : "memory")
+
 // Fwd decl stuff
 namespace alaska {
   class Mapping;
@@ -252,6 +262,39 @@ namespace alaska {
       return (int)nc;
     }
 
+#if ALASKA_ENABLE_CYCLE_COLLECTION
+    // Increment for the inserted store barrier in GC builds. Identical to inc_refcount()
+    // but folds the nullcount-hint clear into the SAME whole-word CAS: on a 0->1
+    // transition (resurrection of a zero-refcount handle) with the on-nullcount hint set,
+    // kOnNullcountBit is cleared in `neu` and *resurrected is set so the caller can drop
+    // the (separate) nullcount bitmap entry out of line. The hint is tested on `old`,
+    // already loaded by the CAS -- no second atomic load like the old
+    // `&& is_on_nullcount()` gate did on every first store.
+    ALASKA_INLINE int inc_refcount_gc(bool *resurrected) {
+      auto *w = reinterpret_cast<uint64_t *>(this);
+      uint64_t old = __atomic_load_n(w, __ATOMIC_RELAXED);
+      uint64_t neu;
+      uint64_t nc;
+      bool res;
+      do {
+        uint64_t rc = (old >> kRefcountShift) & kRefcountMaxField;
+        nc = (rc + 1) & kRefcountMaxField;  // wrap like the old 14-bit bitfield did
+        neu = (old & ~kRefcountFieldMask) | (nc << kRefcountShift);
+        res = (nc == 1) && (old & kOnNullcountBit);
+        if (res) neu &= ~kOnNullcountBit;
+      } while (!__atomic_compare_exchange_n(
+          w, &old, neu, false, __ATOMIC_RELAXED, __ATOMIC_RELAXED));
+#if ALASKA_ENABLE_EVENT_COUNTERS
+      alaska::events::inc_refcount_event();
+#endif
+#if ALASKA_ENABLE_CACHE_PROBE
+      alaska::events::probe_mapping_line(reinterpret_cast<uintptr_t>(this));
+#endif
+      *resurrected = res;
+      return (int)nc;
+    }
+#endif
+
     // Atomically decrement the reference count and return the new value.
     ALASKA_INLINE int dec_refcount(void) {
       auto *w = reinterpret_cast<uint64_t *>(this);
@@ -277,6 +320,29 @@ namespace alaska {
     ALASKA_INLINE uint64_t get_refcount(void) {
       uint64_t w = __atomic_load_n(reinterpret_cast<uint64_t *>(this), __ATOMIC_ACQUIRE);
       return (w >> kRefcountShift) & kRefcountMaxField;
+    }
+
+    // Atomically add `n` to the reference count and return the new value. The batched
+    // apply of deferred increments (ThreadCache::drain_inc, the Levanoni-Petrank path):
+    // one whole-word CAS applies a whole coalesced run instead of `n` separate
+    // inc_refcount() CASes. Same RELAXED ordering rationale as inc_refcount (a strong-ref
+    // increment publishes nothing; the CAS only prevents tearing against set_pinned/
+    // set_pointer, and during the world-stopped drain nothing races it anyway). Wraps mod
+    // 2^14 exactly like inc_refcount, so applying a deferred run reproduces the eager
+    // result bit for bit. Deliberately carries NO event-counter / cache-probe call: those
+    // fire at the drain_inc apply site so the probe models the post-sort sweep, not here.
+    ALASKA_INLINE int add_refcount(int n) {
+      auto *w = reinterpret_cast<uint64_t *>(this);
+      uint64_t old = __atomic_load_n(w, __ATOMIC_RELAXED);
+      uint64_t neu;
+      uint64_t nc;
+      do {
+        uint64_t rc = (old >> kRefcountShift) & kRefcountMaxField;
+        nc = (rc + (uint64_t)n) & kRefcountMaxField;
+        neu = (old & ~kRefcountFieldMask) | (nc << kRefcountShift);
+      } while (!__atomic_compare_exchange_n(
+          w, &old, neu, false, __ATOMIC_RELAXED, __ATOMIC_RELAXED));
+      return (int)nc;
     }
 #endif
 
