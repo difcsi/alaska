@@ -15,6 +15,7 @@
 
 #include <alaska/core/Runtime.hpp>
 #include <alaska/alaska.hpp>
+#include <alaska/EventCounters.hpp>
 #include <rt/barrier.hpp>
 #include <pthread.h>
 #include <stdio.h>
@@ -159,6 +160,14 @@ void __attribute__((constructor(102))) alaska_init(void) {
     int port = atoi(port_env);
     pthread_create(&cmd_thread, NULL, cmd_thread_function, (void *)(intptr_t)port);
   }
+
+#if ALASKA_ENABLE_EVENT_COUNTERS
+  // Dump the runtime event tallies at process exit (see alaska/EventCounters.hpp).
+  atexit(alaska_events_dump);
+#if ALASKA_ENABLE_CACHE_PROBE
+  alaska::events::cache_probe_init();  // table base exists now
+#endif
+#endif
 }
 
 void __attribute__((destructor)) alaska_deinit(void) {}

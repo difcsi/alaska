@@ -184,6 +184,23 @@ namespace alaska {
 
     bool valid_handle(alaska::Mapping *m) const;
 
+    // Bounds- and alignment-check a decoded mapping pointer WITHOUT dereferencing
+    // junk, then confirm the slot is not free. Ported from main-rc for the cycle
+    // collector's conservative child scan, which feeds arbitrary memory words here.
+    // PORT-NOTE: main-rc distinguishes free-list slots by an `invl` bit; dev's
+    // is_free() uses a null/same-page test instead, so a slot sitting on the
+    // allocator free list may still read as "live" here. Acceptable for the
+    // (opt-in) cycle collector; revisit if false frees appear under validation.
+    inline bool is_live_handle(alaska::Mapping *m) const {
+      uintptr_t p = (uintptr_t)m;
+      uintptr_t base = (uintptr_t)m_table;
+      if (p < base) return false;
+      size_t span = (size_t)m_capacity * slab_size;
+      if (p >= base + span) return false;
+      if ((p - base) % sizeof(alaska::Mapping) != 0) return false;
+      return !m->is_free();
+    }
+
 
 
     inline alaska::HandleSlab *get_slab(alaska::Mapping *m) {

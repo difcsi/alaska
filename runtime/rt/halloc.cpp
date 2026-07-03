@@ -21,6 +21,7 @@
 #include <ck/set.h>
 #include <alaska/core/Runtime.hpp>
 #include <alaska/core/ThreadCache.hpp>
+#include <alaska/EventCounters.hpp>
 #include <alaska.h>
 #include <errno.h>
 #include <stdlib.h>
@@ -43,6 +44,9 @@ static void *_halloc(size_t sz, int zero) {
     alaska::handle_memset(result, 0, sz);
   }
 
+#if ALASKA_ENABLE_EVENT_COUNTERS
+  if (result != NULL) alaska::events::halloc_event();
+#endif
   return result;
 }
 
@@ -95,6 +99,18 @@ void hfree(void *ptr) {
 #ifdef ALASKA_HTLB_SIM
   extern void alaska_htlb_sim_invalidate(uintptr_t handle);
   alaska_htlb_sim_invalidate((uintptr_t)ptr);
+#endif
+
+#if ALASKA_ENABLE_CYCLE_COLLECTION
+  // Drop the handle from the zero-refcount set and the cycle-candidate buffer so a
+  // recycled slot never inherits stale GC state (see rt/refcount.cpp).
+  extern void alaska_nullcount_forget(void *ptr);
+  extern void alaska_cycle_forget(void *ptr);
+  alaska_nullcount_forget(ptr);
+  alaska_cycle_forget(ptr);
+#endif
+#if ALASKA_ENABLE_EVENT_COUNTERS
+  alaska::events::hfree_event();
 #endif
 
   // Simply ask the thread cache to free it!

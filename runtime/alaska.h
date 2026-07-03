@@ -102,6 +102,23 @@ void alaska_dec_refcount(void *ptr);
 // Returns the refcount if ptr is a valid handle, or 0 if ptr is NULL or not a handle
 unsigned long alaska_get_refcount(void *ptr);
 
+// --- Zero-refcount reclamation (ported from main-rc; opt-in) ---------------
+// The zero-refcount "nullcount" set is maintained in a side bitmap. These are
+// always linkable; when ALASKA_ENABLE_CYCLE_COLLECTION is off nothing populates
+// the set, so they report empty / reclaim nothing.
+int alaska_nullcount_map_size(void);                 // # handles currently at refcount 0
+void alaska_nullcount_map_foreach(void (*fn)(void *ptr));
+size_t alaska_nullcount_snapshot(void **out, size_t cap);
+void alaska_nullcount_forget(void *ptr);             // drop a handle from the set (called on free)
+size_t alaska_refcount_reclaim(void);                // stop-the-world reclaim; returns # freed
+
+// --- Cycle collector (Bacon & Rajan; ported from main-rc; opt-in) ----------
+// Defined in the cycle collector; stubbed to 0 when ALASKA_ENABLE_CYCLE_COLLECTION
+// is off so tools/tests link either way.
+size_t alaska_cycle_candidate_count(void);           // buffered "purple" candidate roots
+size_t alaska_cycles_collected(void);                // total handles reclaimed via cycles
+size_t alaska_collect_cycles(void);                  // run one synchronous cycle collection
+
 #ifdef __cplusplus
 }
 #endif
