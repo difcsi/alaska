@@ -1,0 +1,8 @@
+# Heap-hints list for test/heap_hints.c.
+#
+# One function name per line. Blank lines and lines starting with '#' are
+# ignored. An address-taken stack object is promoted to the heap only if its
+# address flows into the pointer argument of one of the functions listed here.
+# (LinkPy's stub generator emits a file in exactly this format.)
+mirror
+sum

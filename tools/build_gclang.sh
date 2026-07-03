@@ -6,11 +6,6 @@ ROOT="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )/../"
 mkdir -p $ROOT/local
 pushd $ROOT/local
 
-if [ ! -f "${ROOT}/.config" ]; then
-	echo "ERROR: run 'make menuconfig' first";
-	exit;
-fi
-
 PREFIX=$ROOT/local
 mkdir -p ${PREFIX}/{bin,lib}
 
@@ -21,7 +16,7 @@ if [ ! -f ${PREFIX}/bin/gclang ]; then
 	# install go
 	KERNEL=$(uname | tr '[:upper:]' '[:lower:]')
 
-	case $(uname -p) in
+	case $(uname -m) in
 		x86_64)
 			ARCH=amd64
 			;;
