@@ -47,6 +47,13 @@ static void show_string(const char *msg) { write(1, msg, strlen(msg)); }
 // check if a pointer is word aligned.
 #define IS_WORD_ALIGNED(x) \
   ((((uintptr_t)__builtin_assume_aligned((x), 1)) & (sizeof(void *) - 1)) == 0)
+
+// Keep a handle "referenced" across a region without emitting any code: the empty
+// asm forces the compiler to hold `h` in a register/stack slot with a memory
+// clobber, so a stop-the-world barrier's conservative stack scan pins the object
+// and compaction cannot relocate it out from under a raw backing pointer we hold.
+// Ported from main-rc (used by the conservative refcount scans below).
+#define ALASKA_KEEP_HANDLE_ALIVE(h) __asm__ __volatile__("" : : "r"((void *)(h)) : "memory")
 // Fwd decl stuff
 namespace alaska {
   class Mapping;
@@ -228,6 +235,18 @@ namespace alaska {
     }
 
     static ALASKA_INLINE bool is_handle_slow(void *ptr) { return ((uint64_t)ptr >> 62) == 0b10; }
+
+    // Cheap early-out for a conservatively-scanned memory word: only a sign-bit-set
+    // value whose decoded mapping address is 8-aligned (as every real slot is) can
+    // name a handle. Lets the refcount conservative scans skip the handle-table
+    // bounds load for the vast majority of non-handle words. Ported from main-rc
+    // (mirrors dev's from_handle shift so decode() lands on an aligned Mapping).
+    static ALASKA_INLINE bool could_be_aligned_handle(void *ptr) {
+      constexpr unsigned kShift = ALASKA_SIZE_BITS - ALASKA_SQUEEZE_BITS;
+      constexpr uintptr_t kAlignBits = (uintptr_t)(sizeof(alaska::Mapping) - 1) << kShift;
+      constexpr uintptr_t kSignBit = 1ULL << 63;
+      return ((uintptr_t)ptr & (kSignBit | kAlignBits)) == kSignBit;
+    }
     // Extract an encoded mapping out of the bits of a handle. This variant of the function
     // will first check if the pointer provided is a handle. If it is not, this method will
     // return null.

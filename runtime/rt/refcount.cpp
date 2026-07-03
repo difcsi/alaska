@@ -11,6 +11,7 @@
 
 #include <alaska/alaska.hpp>
 #include <alaska/core/Runtime.hpp>
+#include <alaska/core/ThreadCache.hpp>
 #include <alaska/gc_bitmaps.hpp>
 #include <alaska/EventCounters.hpp>
 #include <ck/vec.h>
@@ -44,6 +45,17 @@
 extern "C" void hfree(void *ptr);
 // Cycle-collector candidate hook (CycleCollector.cpp); stubbed when the gate is off.
 extern "C" void alaska_cycle_register_candidate(void *ptr);
+
+// True only for a memory word that decodes to a real, LIVE handle. The conservative
+// heap scans below feed arbitrary words here, so the decoded mapping MUST be
+// bounds-checked (is_live_handle: pure pointer arithmetic, no deref) before any
+// field is touched -- from_handle structurally decodes ANY sign-bit-set value, which
+// for junk data is a wild pointer that inc/dec_refcount would dereference and crash on.
+static inline bool word_is_live_handle(void *p) {
+  if (!alaska::Mapping::could_be_aligned_handle(p)) return false;
+  auto *m = alaska::Mapping::from_handle(p);
+  return alaska::Runtime::get().handle_table.is_live_handle(m);
+}
 
 extern "C" {
 
@@ -169,6 +181,92 @@ size_t alaska_nullcount_snapshot(void **out, size_t cap) {
 void alaska_nullcount_forget(void *ptr) {
   auto *m = alaska::Mapping::from_handle_safe(ptr);
   if (m != nullptr) alaska::gc::nullcount_bm_clear(m);
+}
+
+/**
+ * alaska_hfree_dec_children - Drop the references an aggregate held, on free.
+ *
+ * When an object is freed its outgoing handle references die too, so decrement each
+ * contained (validated live) handle's reference count. This is what finally lets
+ * refcounts return to zero for handles only reachable through heap containers:
+ * without it a stored-once handle is inc'd (on the heap write barrier) but never
+ * dec'd, so its count never reaches 0 and reclamation never triggers. Paired with
+ * copy-inc (alaska_inc_handles_in_range) so memcpy'd references stay balanced.
+ *
+ * Ported from main-rc. Defined always (so links regardless of gate); the work is
+ * gated behind ALASKA_ENABLE_CYCLE_COLLECTION so dev's default hfree is unchanged.
+ * CAVEAT (main-rc): conservative dec-on-free is UNSOUND for programs that manage
+ * self-referential structures explicitly -- an undercounted reference can drive a
+ * live node to 0 and have the GC reclaim it. Opt out at runtime with ALASKA_NO_FREE_DEC=1.
+ * PORT-NOTE: only handles SIZED handles (dev huge-object-without-mapping path skipped).
+ */
+void alaska_hfree_dec_children(void *ptr) {
+#if ALASKA_ENABLE_CYCLE_COLLECTION
+  static int enabled = -1;
+  if (enabled < 0) enabled = (getenv("ALASKA_NO_FREE_DEC") != nullptr) ? 0 : 1;
+  if (!enabled) return;
+  if (ptr == nullptr || in_refcount_operation) return;
+
+  auto *m = alaska::Mapping::from_handle_safe(ptr);
+  if (m == nullptr || m->is_free()) return;  // only real, live SIZED handles
+  void **words = (void **)m->get_pointer();
+  if (words == nullptr) return;
+
+  auto *tc = alaska::ThreadCache::current();
+  if (tc == nullptr) return;
+  size_t size = tc->get_size(ptr);
+  if (size < sizeof(void *)) return;
+
+  size_t n = size / sizeof(void *);
+  for (size_t i = 0; i < n; i++) {
+    if (words[i] != nullptr && word_is_live_handle(words[i])) alaska_dec_refcount(words[i]);
+  }
+  // Keep ptr's handle live across the scan so compaction cannot relocate the object
+  // out from under `words` if a caller ever runs this without the world stopped.
+  ALASKA_KEEP_HANDLE_ALIVE(ptr);
+#else
+  (void)ptr;
+#endif
+}
+
+/**
+ * alaska_inc_handles_in_range - Inc the handles a byte copy deposited.
+ *
+ * The store barrier (RefcountInc) only increments on pointer-TYPED stores, so a
+ * memcpy/memmove of handle-containing memory creates new heap references WITHOUT
+ * incrementing them -- they would then be dec'd on free with no matching inc, an
+ * underflow that could free a live object. The compiler instruments every byte copy
+ * with a call here over the destination range to keep inc/dec balanced.
+ *
+ * Ported from main-rc. Defined ALWAYS (the compiler emits calls to it); the work is
+ * gated so it is a no-op in dev's default (non-reclaiming) build. Opt out at runtime
+ * with ALASKA_NO_COPY_INC=1.
+ */
+void alaska_inc_handles_in_range(void *base, size_t bytes) {
+#if ALASKA_ENABLE_CYCLE_COLLECTION
+  static int enabled = -1;
+  if (enabled < 0) enabled = (getenv("ALASKA_NO_COPY_INC") != nullptr) ? 0 : 1;
+  if (!enabled) return;
+  if (base == nullptr || bytes < sizeof(void *)) return;
+  if (in_refcount_operation) return;
+
+  void **words = (void **)base;
+  // Recover the destination object's handle once and keep it live across the scan so
+  // a barrier that fires mid-scan (this runs lock-free on a mutator) cannot let
+  // compaction relocate the copy destination and leave `words` dangling.
+  void *dest_handle = nullptr;
+  if (auto *tc = alaska::ThreadCache::current()) {
+    if (auto *dm = tc->reverse_lookup(base)) dest_handle = dm->to_handle();
+  }
+  size_t n = bytes / sizeof(void *);
+  for (size_t i = 0; i < n; i++) {
+    if (words[i] != nullptr && word_is_live_handle(words[i])) alaska_inc_refcount(words[i]);
+  }
+  if (dest_handle) ALASKA_KEEP_HANDLE_ALIVE(dest_handle);
+#else
+  (void)base;
+  (void)bytes;
+#endif
 }
 
 /**

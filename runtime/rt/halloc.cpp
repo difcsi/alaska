@@ -102,10 +102,14 @@ void hfree(void *ptr) {
 #endif
 
 #if ALASKA_ENABLE_CYCLE_COLLECTION
-  // Drop the handle from the zero-refcount set and the cycle-candidate buffer so a
-  // recycled slot never inherits stale GC state (see rt/refcount.cpp).
+  // Drop the references this aggregate held (while it is still readable), so the
+  // children's refcounts can reach 0 and be reclaimed. Then drop this handle from
+  // the zero-refcount set and cycle-candidate buffer so a recycled slot never
+  // inherits stale GC state (see rt/refcount.cpp).
+  extern void alaska_hfree_dec_children(void *ptr);
   extern void alaska_nullcount_forget(void *ptr);
   extern void alaska_cycle_forget(void *ptr);
+  alaska_hfree_dec_children(ptr);
   alaska_nullcount_forget(ptr);
   alaska_cycle_forget(ptr);
 #endif

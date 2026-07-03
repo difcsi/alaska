@@ -16,6 +16,7 @@ unvalidated code compiles out of it.
 | Atomic refcount | ✅ | `Mapping::inc/dec_refcount` now whole-word CAS, **dev's Mapping layout preserved** (field mutated through the bitfield). |
 | Zero-refcount reclaim | ✅ (gated) | `alaska_refcount_reclaim` + nullcount query API; uses dev's barrier handle-**pinning** instead of a separate present bitmap. |
 | Cycle collector | ✅ (gated) | Bacon-Rajan trial deletion (`alaska/CycleCollector.{hpp,cpp}`), adapted to dev's ThreadCache/Runtime; C-API stubs when off. |
+| Dec-on-free + copy-inc | ✅ (gated) | `alaska_hfree_dec_children` (drops an aggregate's child refs on free) + `alaska_inc_handles_in_range` (re-balances memcpy'd handle refs, emitted by RefcountInc). Uses dev's `ThreadCache::get_size`/`reverse_lookup` + `is_live_handle` + `could_be_aligned_handle`/`ALASKA_KEEP_HANDLE_ALIVE`. Defined always (links), work gated so dev's default free is unchanged and inc/dec stay balanced. Env opt-outs `ALASKA_NO_FREE_DEC` / `ALASKA_NO_COPY_INC`. |
 | Compiler passes | ✅ | RefcountInc/Dec (advanced), EscapeAnalysis, StackPromote, HoistInductionTranslate, RefcountElision, keep-raw; wired into dev's pipeline/driver. |
 | Tests / repro | ✅ | `test/refcount_*`, `keep_raw*`, `heap_hints*`, `repro/segdump.c` (standalone, dev has no CTest harness). |
 | Build tools | ✅ | `tools/cmake/*`, `build_gclang.sh`, `get_llvm.sh` fixes. |
@@ -25,12 +26,9 @@ unvalidated code compiles out of it.
 - **Mapping bit-layout redesign** — NOT done; dev keeps its own layout (its
   `pending_fault` bit and packed word are preserved). main-rc's nullcount HINT bit
   is dropped; the side bitmap is the source of truth.
-- **Deferred (Levanoni–Petrank) increments** (`ALASKA_ENABLE_DEFER_RC`),
-  **conservative dec-on-free** (`alaska_hfree_dec_children`) and **copy-inc**
-  (`alaska_inc_handles_in_range`) — depend on main-rc-only primitives
-  (`heap.pt.get_unaligned`, `could_be_aligned_handle`, `ALASKA_KEEP_HANDLE_ALIVE`).
-  Without dec-on-free, heap-stored handles are inc'd but not dec'd on container free,
-  so the reclaim will under-collect until this is ported. Highest-value follow-up.
+- **Deferred (Levanoni–Petrank) increments** (`ALASKA_ENABLE_DEFER_RC`) — not ported
+  (needs a per-thread deferred-inc log on ThreadCache). Gate exists but is inert.
+  (Dec-on-free + copy-inc — previously listed here — are now ported; see the table.)
 - **liballocs integration**, **Yukon runtime hooks**, **Perceus reuse cache** — not
   ported (the runtime `runtime/core/liballoc.c`, `liballocs_export.cpp`, huge-object
   refcount paths). Compiler-side StackPromote *is* in.
