@@ -338,6 +338,11 @@ size_t alaska_collect_cycles(void) {
   if (rt == nullptr) return 0;
   size_t freed = 0;
   rt->with_barrier([&]() {
+#if ALASKA_ENABLE_DEFER_RC
+    // Apply deferred increments before trial deletion reads refcounts (Levanoni-Petrank).
+    for (auto *tcx : rt->tcs)
+      tcx->drain_inc();
+#endif
     // The barrier holds every thread-cache lock on this thread, so the raw tc is safe.
     if (auto *tc = alaska::ThreadCache::current()) freed = cycle_collector().collect(*tc);
   });

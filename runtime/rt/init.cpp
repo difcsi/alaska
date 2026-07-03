@@ -46,6 +46,13 @@ static void *barrier_thread_func(void *) {
     usleep(sleep_time);
 
     rt.with_barrier([&]() {
+#if ALASKA_ENABLE_DEFER_RC
+      // Levanoni-Petrank: apply every thread's deferred increments FIRST, before any
+      // dec-on-free / reclaim / compaction reads a count. World stopped + logs quiescent
+      // (all mutators parked), so no lock is needed. A no-op unless deferred mode is on.
+      for (auto *tcx : rt.tcs)
+        tcx->drain_inc();
+#endif
       toWait = rt.scheduler.tick(toWait);
 
 #if ALASKA_ENABLE_ANCHORAGE

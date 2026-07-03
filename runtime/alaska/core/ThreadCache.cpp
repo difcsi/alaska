@@ -18,8 +18,11 @@
 #include "alaska/heaps/HeapPage.hpp"
 #include <alaska/util/utils.h>
 #include <alaska/util/lphash_set.h>
+#include <alaska/gc_bitmaps.hpp>
+#include <alaska/internal/alaska_internal_malloc.h>
 
 #include <execinfo.h>
+#include <stdlib.h>
 
 namespace alaska {
 
@@ -31,7 +34,52 @@ namespace alaska {
       size_classes[i] = nullptr;
     }
     this->current_slab = nullptr;
+
+#if ALASKA_ENABLE_DEFER_RC
+    // Preallocate the deferred-RC increment log ONCE (Levanoni-Petrank; see defer_inc /
+    // drain_inc). Deferral is a COMPILE-TIME choice (ALASKA_ENABLE_DEFER_RC, the *-defer
+    // preset), so this block is absent from an eager build -- no buffer, no hot-path cost.
+    // Capacity (entries) from ALASKA_INC_LOG_CAP (default 4M = 32 MiB/thread). On allocation
+    // failure inc_log stays null and defer_inc reports overflow -> eager increments.
+    const char *e = getenv("ALASKA_INC_LOG_CAP");
+    long v = (e != nullptr) ? atol(e) : 0;
+    inc_log_cap = (v > 0) ? (size_t)v : (1u << 22);
+    inc_log = (alaska::Mapping **)alaska_internal_malloc(inc_log_cap * sizeof(alaska::Mapping *));
+#endif
   }
+
+#if ALASKA_ENABLE_DEFER_RC
+  // Apply this thread's deferred increments in FIFO order (see defer_inc). Runs
+  // world-stopped at the barrier (init.cpp / reclaim / cycle collect) before any free
+  // decision reads a count. FIFO, not sorted: address-sorting the log was measured to lose
+  // (radix sort cost > locality recovered) in main-rc, so this is a plain replay.
+  void ThreadCache::drain_inc(void) {
+    uint32_t n = inc_log_head;
+    if (n == 0) return;
+#if ALASKA_ENABLE_EVENT_COUNTERS
+    alaska::events::rc_observe_hwm(n);
+#endif
+    for (uint32_t i = 0; i < n; i++) {
+      alaska::Mapping *m = inc_log[i];
+      int new_count = m->inc_refcount();  // dev's inc_refcount already tallies incref
+#if ALASKA_ENABLE_CYCLE_COLLECTION
+      // Resurrection fixup: a deferred inc lifting a handle off refcount 0 must drop it
+      // from the nullcount set so the barrier reclaim does not free a now-live handle.
+      if (new_count >= 1) alaska::gc::nullcount_bm_clear(m);
+#else
+      (void)new_count;
+#endif
+#if ALASKA_ENABLE_EVENT_COUNTERS
+      alaska::events::rc_applied_event(1);  // incref already counted by inc_refcount()
+#endif
+    }
+    inc_log_head = 0;
+  }
+
+  ThreadCache::~ThreadCache(void) {
+    if (inc_log != nullptr) alaska_internal_free(inc_log);
+  }
+#endif  // ALASKA_ENABLE_DEFER_RC
 
 
 

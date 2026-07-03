@@ -16,6 +16,7 @@ unvalidated code compiles out of it.
 | Atomic refcount | ✅ | `Mapping::inc/dec_refcount` now whole-word CAS, **dev's Mapping layout preserved** (field mutated through the bitfield). |
 | Zero-refcount reclaim | ✅ (gated) | `alaska_refcount_reclaim` + nullcount query API; uses dev's barrier handle-**pinning** instead of a separate present bitmap. |
 | Cycle collector | ✅ (gated) | Bacon-Rajan trial deletion (`alaska/CycleCollector.{hpp,cpp}`), adapted to dev's ThreadCache/Runtime; C-API stubs when off. |
+| Deferred RC (Levanoni-Petrank) | ✅ (gated) | `ALASKA_ENABLE_DEFER_RC`: per-thread preallocated inc-log on ThreadCache (`defer_inc`/`drain_inc`, ctor alloc/dtor free), the inc barrier routes through `defer_inc` (eager fallback on overflow), and every world-stopped barrier (periodic / reclaim / cycle-collect) drains all logs FIRST so no free decision reads an undercounted handle. Cap via `ALASKA_INC_LOG_CAP`. |
 | Anchorage (compaction) | ✅ (gated) | `ALASKA_ENABLE_ANCHORAGE` now wires dev's existing `Heap::compact_sizedpages()`/`SizedPage::compact()` into the barrier thread each tick (init.cpp), + an `ALASKA_ENABLE_EVENT_COUNTERS` compaction tally. dev already had the compaction machinery; it was never called. Kill-switch `ALASKA_NO_COMPACT`. |
 | Dec-on-free + copy-inc | ✅ (gated) | `alaska_hfree_dec_children` (drops an aggregate's child refs on free) + `alaska_inc_handles_in_range` (re-balances memcpy'd handle refs, emitted by RefcountInc). Uses dev's `ThreadCache::get_size`/`reverse_lookup` + `is_live_handle` + `could_be_aligned_handle`/`ALASKA_KEEP_HANDLE_ALIVE`. Defined always (links), work gated so dev's default free is unchanged and inc/dec stay balanced. Env opt-outs `ALASKA_NO_FREE_DEC` / `ALASKA_NO_COPY_INC`. |
 | Compiler passes | ✅ | RefcountInc/Dec (advanced), EscapeAnalysis, StackPromote, HoistInductionTranslate, RefcountElision, keep-raw; wired into dev's pipeline/driver. |
@@ -27,9 +28,8 @@ unvalidated code compiles out of it.
 - **Mapping bit-layout redesign** — NOT done; dev keeps its own layout (its
   `pending_fault` bit and packed word are preserved). main-rc's nullcount HINT bit
   is dropped; the side bitmap is the source of truth.
-- **Deferred (Levanoni–Petrank) increments** (`ALASKA_ENABLE_DEFER_RC`) — not ported
-  (needs a per-thread deferred-inc log on ThreadCache). Gate exists but is inert.
-  (Dec-on-free + copy-inc — previously listed here — are now ported; see the table.)
+- (Deferred increments, dec-on-free + copy-inc, and anchorage — previously listed here
+  as deferred — are now ported; see the status table above.)
 - **liballocs integration**, **Yukon runtime hooks**, **Perceus reuse cache** — not
   ported (the runtime `runtime/core/liballoc.c`, `liballocs_export.cpp`, huge-object
   refcount paths). Compiler-side StackPromote *is* in.

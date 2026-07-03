@@ -81,6 +81,19 @@ void alaska_inc_refcount(void *ptr) {
   }
 
   in_refcount_operation = true;
+#if ALASKA_ENABLE_DEFER_RC
+  // Deferred (Levanoni-Petrank) mode: append the increment to this thread's log to be
+  // applied in a batch at the barrier (ThreadCache::drain_inc), keeping the scattered
+  // handle-table CAS off the store-barrier hot path. On overflow / no thread cache, fall
+  // through to an eager increment so no increment is ever lost.
+  {
+    auto *tc = alaska::ThreadCache::current();
+    if (likely(tc != nullptr && tc->defer_inc(mapping))) {
+      in_refcount_operation = false;
+      return;
+    }
+  }
+#endif
   mapping->inc_refcount();
 #if ALASKA_ENABLE_CYCLE_COLLECTION
   // Resurrected a (possibly) zero-refcount handle: drop it from the zero set. The
@@ -288,6 +301,12 @@ size_t alaska_refcount_reclaim(void) {
   if (rt == nullptr) return 0;
   size_t freed = 0;
   rt->with_barrier([&]() {
+#if ALASKA_ENABLE_DEFER_RC
+    // Apply pending deferred increments before reading any refcount, so a handle with a
+    // logged-but-unapplied inc is back at full count and not freed here (Levanoni-Petrank).
+    for (auto *tcx : rt->tcs)
+      tcx->drain_inc();
+#endif
     ck::vec<alaska::Mapping *> cands;
     alaska::gc::nullcount_bm_collect(cands);
     for (auto *m : cands) {
