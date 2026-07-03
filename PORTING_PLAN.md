@@ -1,6 +1,53 @@
 # Porting `main-rc` features onto `dev` (→ `dev_rc`)
 
-Status: **plan + analysis complete; integration not yet applied.**
+Status: **best-effort port applied (build-unverified — needs NOELLE + pinned LLVM).**
+
+## Port status (what landed)
+
+Committed on this branch, dependency-ordered. Everything new is gated so dev's
+**default** build (cycle collection OFF) is behaviorally unchanged and the new,
+unvalidated code compiles out of it.
+
+| Area | State | Notes |
+|---|---|---|
+| Feature gates | ✅ | `ALASKA_ENABLE_{REFCOUNT,CYCLE_COLLECTION,EVENT_COUNTERS,CACHE_PROBE,DEFER_RC}` CMake switches → compile defs; cycle/defer→refcount checks. Cycle collection defaults **OFF** on dev. |
+| Event counters | ✅ | `alaska/EventCounters.{hpp,cpp}` + gated hooks (inc/dec/halloc/hfree) + `atexit` dump + optional cache probe. |
+| GC side bitmaps | ✅ | `alaska/gc_bitmaps.{hpp}` + `core/gc_bitmaps.cpp` (present + nullcount), indexed off `HandleTable::get_base()`. |
+| Atomic refcount | ✅ | `Mapping::inc/dec_refcount` now whole-word CAS, **dev's Mapping layout preserved** (field mutated through the bitfield). |
+| Zero-refcount reclaim | ✅ (gated) | `alaska_refcount_reclaim` + nullcount query API; uses dev's barrier handle-**pinning** instead of a separate present bitmap. |
+| Cycle collector | ✅ (gated) | Bacon-Rajan trial deletion (`alaska/CycleCollector.{hpp,cpp}`), adapted to dev's ThreadCache/Runtime; C-API stubs when off. |
+| Compiler passes | ✅ | RefcountInc/Dec (advanced), EscapeAnalysis, StackPromote, HoistInductionTranslate, RefcountElision, keep-raw; wired into dev's pipeline/driver. |
+| Tests / repro | ✅ | `test/refcount_*`, `keep_raw*`, `heap_hints*`, `repro/segdump.c` (standalone, dev has no CTest harness). |
+| Build tools | ✅ | `tools/cmake/*`, `build_gclang.sh`, `get_llvm.sh` fixes. |
+
+### Deliberately deferred / not ported (see inline PORT-NOTEs)
+
+- **Mapping bit-layout redesign** — NOT done; dev keeps its own layout (its
+  `pending_fault` bit and packed word are preserved). main-rc's nullcount HINT bit
+  is dropped; the side bitmap is the source of truth.
+- **Deferred (Levanoni–Petrank) increments** (`ALASKA_ENABLE_DEFER_RC`),
+  **conservative dec-on-free** (`alaska_hfree_dec_children`) and **copy-inc**
+  (`alaska_inc_handles_in_range`) — depend on main-rc-only primitives
+  (`heap.pt.get_unaligned`, `could_be_aligned_handle`, `ALASKA_KEEP_HANDLE_ALIVE`).
+  Without dec-on-free, heap-stored handles are inc'd but not dec'd on container free,
+  so the reclaim will under-collect until this is ported. Highest-value follow-up.
+- **liballocs integration**, **Yukon runtime hooks**, **Perceus reuse cache** — not
+  ported (the runtime `runtime/core/liballoc.c`, `liballocs_export.cpp`, huge-object
+  refcount paths). Compiler-side StackPromote *is* in.
+- **Benchmark/plot harness** (`plotgen/`, `benchmarks/`, `run_all.sh`) — main-only;
+  dev has no such harness, so intentionally skipped.
+- `a.json` crash dump — dropped (artifact).
+
+### To validate / enable
+1. Build with defaults → should match dev (new code gated out).
+2. `cmake -DALASKA_ENABLE_CYCLE_COLLECTION=ON -DALASKA_ENABLE_EVENT_COUNTERS=ON`,
+   then exercise `test/refcount_*`. Expect follow-up build fixes (unverified here).
+3. Watch dev's disk-swap/Localizer/handle-fault behavior — the atomic-refcount CAS
+   is the only change to a hot dev path in the default build.
+
+---
+
+## Original analysis
 
 This document specifies how to rebuild `dev_rc` as `dev` + the feature stack that
 `main-rc` adds on top of `main`. It exists because the port is **not** a
