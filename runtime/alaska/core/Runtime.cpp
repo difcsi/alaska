@@ -20,6 +20,7 @@
 #include <stdlib.h>
 #include <alaska/util/utils.h>
 #include <alaska/internal/alaska_internal_malloc.h>
+#include <alaska/EventCounters.hpp>
 
 namespace alaska {
   // The default instance of a barrier manager.
@@ -28,22 +29,67 @@ namespace alaska {
   static Runtime *g_runtime = nullptr;
   static volatile bool runtime_initialized = false;
 
-  // Atomically increment the reference count
+  // Refcount width is whatever dev's MappingData bitfield declares (12 bits).
+  // Increments/decrements wrap within that field, matching the old ++/-- bitfield.
+  static constexpr unsigned kRefcountFieldBits = 12;
+  static constexpr uint64_t kRefcountFieldMax = (1ULL << kRefcountFieldBits) - 1;
+
+  // Atomically increment the reference count and return the new value.
+  //
+  // Ported from main-rc: the count is mutated with a whole-word compare-exchange
+  // (relaxed -- a strong-ref increment needs atomicity, not synchronization) so it
+  // never tears against a concurrent set_pinned()/set_pointer()/reset() or the
+  // collector reading refcounts while mutators run. Unlike main-rc we do NOT hard-code
+  // the field's bit position: we round-trip the whole 8-byte word through a temporary
+  // Mapping and mutate `data.refcount` through the bitfield itself, so dev's existing
+  // MappingData layout (and its pending_fault bit) is preserved exactly.
   int Mapping::inc_refcount(void) {
-    //alaska::printf("incrc this->data = 0x%lx\n", *(uint64_t*)&this->data);
-    return ++this->data.refcount; // ensure we have the real mapping
+    auto *w = reinterpret_cast<uint64_t *>(this);
+    uint64_t old = __atomic_load_n(w, __ATOMIC_RELAXED);
+    uint64_t neu;
+    int nc;
+    do {
+      Mapping tmp;
+      __builtin_memcpy(&tmp, &old, sizeof(uint64_t));
+      nc = (int)((tmp.data.refcount + 1) & kRefcountFieldMax);
+      tmp.data.refcount = nc;
+      __builtin_memcpy(&neu, &tmp, sizeof(uint64_t));
+    } while (!__atomic_compare_exchange_n(
+        w, &old, neu, false, __ATOMIC_RELAXED, __ATOMIC_RELAXED));
+#if ALASKA_ENABLE_EVENT_COUNTERS
+    alaska::events::inc_refcount_event();
+#endif
+    return nc;
   }
 
-  // Atomically decrement the reference count and return the new value
+  // Atomically decrement the reference count and return the new value. Keeps
+  // acquire/release ordering so a dec-to-zero synchronizes-with the reclaimer.
   int Mapping::dec_refcount(void) {
-    //alaska::printf("decrc this->data = 0x%lx\n", *(uint64_t*)&this->data);
-    return --this->data.refcount; // ensure we have the real mapping
+    auto *w = reinterpret_cast<uint64_t *>(this);
+    uint64_t old = __atomic_load_n(w, __ATOMIC_RELAXED);
+    uint64_t neu;
+    int nc;
+    do {
+      Mapping tmp;
+      __builtin_memcpy(&tmp, &old, sizeof(uint64_t));
+      nc = (int)((tmp.data.refcount - 1) & kRefcountFieldMax);
+      tmp.data.refcount = nc;
+      __builtin_memcpy(&neu, &tmp, sizeof(uint64_t));
+    } while (!__atomic_compare_exchange_n(
+        w, &old, neu, false, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED));
+#if ALASKA_ENABLE_EVENT_COUNTERS
+    alaska::events::dec_refcount_event();
+#endif
+    return nc;
   }
 
   // Get the current reference count
   uint64_t Mapping::get_refcount(void) {
-    //alaska::printf("getrc this->data = 0x%lx\n", *(uint64_t*)&this->data);
-    return this->data.refcount; // ensure we have the real mapping
+    auto *w = reinterpret_cast<uint64_t *>(this);
+    uint64_t word = __atomic_load_n(w, __ATOMIC_RELAXED);
+    Mapping tmp;
+    __builtin_memcpy(&tmp, &word, sizeof(uint64_t));
+    return tmp.data.refcount;
   }
 
 

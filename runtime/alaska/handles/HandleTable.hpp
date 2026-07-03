@@ -203,6 +203,25 @@ namespace alaska {
     void *get_base(void) const { return (void *)m_table; }
 
 
+    // Teardown snapshot of the handle table used by the event-counter dump
+    // (see alaska/EventCounters.hpp): how many handles are currently live and,
+    // of those, how many still hold a nonzero reference count. Ported from
+    // main-rc, adapted to dev's for_each_handle (which already skips free /
+    // never-allocated slots via Mapping::is_free()).
+    struct HandleCensus {
+      size_t total = 0;
+      size_t nonzero_refcount = 0;
+    };
+    HandleCensus census_handles(void) {
+      HandleCensus census;
+      for_each_handle([&](alaska::Mapping *m) {
+        census.total++;
+        if (m->get_refcount() != 0) census.nonzero_refcount++;
+      });
+      return census;
+    }
+
+
     void enable_mlock() { do_mlock = true; }
 
     const ck::vec<alaska::HandleSlab *> &get_slabs(void) const { return m_slabs; }

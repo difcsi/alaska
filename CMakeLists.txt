@@ -43,6 +43,29 @@ alaska_option(ALASKA_LIBRARY_TYPE      SHARED) # build translate.bc and stub.bc
 alaska_switch(ALASKA_YUKON             OFF)
 alaska_switch(ALASKA_YUKON_NO_HARDWARE OFF)
 
+# --- Ported from main-rc: independent feature gates for the refcount / GC stack.
+# Each is a compile definition (=1) only when ON; OFF leaves the macro undefined,
+# so `#if ALASKA_ENABLE_X` compiles the feature out with zero hot-path cost.
+#   REFCOUNT         inc/dec refcount barriers + zero-refcount reclaim
+#   CYCLE_COLLECTION Bacon & Rajan trial-deletion cycle collector (needs REFCOUNT)
+#   EVENT_COUNTERS   measurement-only tallies dumped at exit (measurement preset)
+#   CACHE_PROBE      Mapping-line cache-miss characterization (single-mutator)
+#   DEFER_RC         deferred (Levanoni-Petrank) increments (needs REFCOUNT)
+# Cycle collection is defaulted OFF here (unlike main-rc's ON) because it is newly
+# ported onto dev's runtime and unverified; enable once validated.
+alaska_switch(ALASKA_ENABLE_REFCOUNT         ON)
+alaska_switch(ALASKA_ENABLE_CYCLE_COLLECTION OFF)
+alaska_switch(ALASKA_ENABLE_EVENT_COUNTERS   OFF)
+alaska_switch(ALASKA_ENABLE_CACHE_PROBE      OFF)
+alaska_switch(ALASKA_ENABLE_DEFER_RC         OFF)
+
+if(ALASKA_ENABLE_CYCLE_COLLECTION AND NOT ALASKA_ENABLE_REFCOUNT)
+  message(FATAL_ERROR "ALASKA_ENABLE_CYCLE_COLLECTION requires ALASKA_ENABLE_REFCOUNT")
+endif()
+if(ALASKA_ENABLE_DEFER_RC AND NOT ALASKA_ENABLE_REFCOUNT)
+  message(FATAL_ERROR "ALASKA_ENABLE_DEFER_RC requires ALASKA_ENABLE_REFCOUNT")
+endif()
+
 alaska_option(ALASKA_SIZE_BITS 32)
 alaska_option(CMAKE_BUILD_TYPE Release)
 alaska_option_nodef(ALASKA_ENABLE_COMPONENTS "compiler;compiler-rts")
