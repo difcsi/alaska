@@ -58,6 +58,12 @@ alaska_switch(ALASKA_ENABLE_CYCLE_COLLECTION OFF)
 alaska_switch(ALASKA_ENABLE_EVENT_COUNTERS   OFF)
 alaska_switch(ALASKA_ENABLE_CACHE_PROBE      OFF)
 alaska_switch(ALASKA_ENABLE_DEFER_RC         OFF)
+# ANCHORAGE: dev has NO anchorage heap-defragmentation service implemented yet, so
+# this gate is currently INERT -- it is accepted (and emits ALASKA_ENABLE_ANCHORAGE=1
+# when ON) purely so main-rc's presets/harness configure and build cleanly. Until the
+# service is ported, anchorage builds are equivalent to their non-anchorage
+# counterparts. Defaulted OFF.
+alaska_switch(ALASKA_ENABLE_ANCHORAGE        OFF)
 
 if(ALASKA_ENABLE_CYCLE_COLLECTION AND NOT ALASKA_ENABLE_REFCOUNT)
   message(FATAL_ERROR "ALASKA_ENABLE_CYCLE_COLLECTION requires ALASKA_ENABLE_REFCOUNT")
@@ -72,6 +78,16 @@ alaska_option_nodef(ALASKA_ENABLE_COMPONENTS "compiler;compiler-rts")
 
 
 alaska_option(ALASKA_REVISION unknown)
+
+# ALASKA_CONFIG: optional path to a shared build-configuration .cmake file (ported
+# from main-rc's harness; the CMakePresets set it to configs/config.alaska.cmake).
+# It is include()d here -- AFTER the alaska_switch()/alaska_option() calls above -- so
+# it can set handle-layout tunables (ALASKA_SIZE_BITS/ALASKA_SQUEEZE_BITS) and debug
+# toggles without redefining the feature gates, which each preset supplies directly.
+if(ALASKA_CONFIG)
+  message(STATUS "Including ALASKA_CONFIG: ${ALASKA_CONFIG}")
+  include(${ALASKA_CONFIG})
+endif()
 
 set(ALASKA_VERSION 2)
 

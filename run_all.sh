@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+
+
+buildstep() {
+  mkdir -p results
+  NAME=$1
+  shift
+  printf "Generating results for \e[32m${NAME}\e[0m\n"
+  printf "    console output will be saved to results/${NAME}.log\n"
+  printf "    Running..."
+  # "$@" 2>&1 | sed $'s|^|\x1b[32m['"${NAME}"$']\x1b[39m |' || exit 1
+  "$@" >results/${NAME}.log 2>&1
+
+  printf " DONE!\n"
+}
+
+confirm_continue() {
+  read -p "$1 (y/N) " answer
+
+  if [[ $answer =~ ^[Yy]$ ]]; then
+    echo "Continuing"
+  else
+    # User declined, exit or perform alternative action
+    echo "Exiting..."
+    exit 1
+  fi
+}
+
+#if [ -z "$TMUX" ]; then
+#  # $TMUX is empty or not defined
+#  echo "We have detected you are not running in a tmux session. This is highly recommended,"
+#  echo "as running the entire artifact could take a day or more, if SPEC is enabled."
+#  echo "Note: This may be a false positive if you are in a docker container"
+#  confirm_continue "Are you sure you want to continue without TMUX?"
+#fi
+
+
+
+
+spec_location=""
+
+for location in ./ ~ /; do
+  if [[ -f "$location/SPEC2017.tar.gz" ]]; then
+    spec_location=$(realpath "$location/SPEC2017.tar.gz")
+    break
+  fi
+done
+
+if [[ "$spec_location" == "" ]]; then
+  printf "\e[31m"
+  echo "We didn't find a SPEC install in any of these locations: /SPEC2017.tar.gz, ./SPEC2017.tar.gz, or ~/SPEC2017.tar.gz."
+  echo "The artifact will work correctly but figure 7 will not contain SPEC, and figure 8 will not be generated."
+  printf "\e[0m"
+  # confirm_continue "Would you like to continue?"
+else
+  echo "Found SPEC here: $spec_location"
+fi
+
+$spec_location="" 
+
+#memory=$(free -h | grep Mem | awk '{print $7}')
+#generate_figure11=false
+#read -p "Would you like to generate figure 11? It requires upwards of 200GiB of memory. You have ${memory}B free now. (y/N) " answer
+#if [[ $answer =~ ^[Yy]$ ]]; then
+#  generate_figure11=true
+#fi
+#echo $generate_figure11
+
+generate_figure11=false
+
+
+
+
+
+
+echo "Setting up virtual environment"
+make venv
+
+#./build.sh
+
+make results/figure7.pdf
+
+# Compile-time overhead chart, plotted from the same figure-7 sweep.
+buildstep "figure_compile" make results/figure_compile.pdf
+
+if [[ "$spec_location" != "" ]]; then
+  make results/figure8.pdf
+else
+  echo "Skipping figure 8, because SPEC is not found"
+fi
+
+buildstep "figure9" make results/figure9.pdf
+
+buildstep "figure10" make results/figure10.pdf
+
+if [[ "$generate_figure11" == "true" ]]; then
+  buildstep "figure11" make results/figure11.pdf
+else
+  echo "Skipping Figure 11"
+fi
+
+buildstep "figure12" make results/figure12.pdf
