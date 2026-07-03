@@ -1,0 +1,1129 @@
+{
+    "type": "started",
+    "key": "v2:837cba1a3be461d3705b172a01ca26666aff7fc5387c86fc6b2d55542cddbd12",
+    "agentId": "aa1297208eba14f71"
+}
+{
+    "type": "started",
+    "key": "v2:203d9bb100ceaa245ef357e94c8c74d0762e32d7a9e95c2afb40375cded93fe0",
+    "agentId": "afcba05696aa1f41f"
+}
+{
+    "type": "started",
+    "key": "v2:eb569090343c6c0c8e86830029b177654f5ec30081b10946ac77bb78b754d9ee",
+    "agentId": "a0e40ab701f5dbb62"
+}
+{
+    "type": "started",
+    "key": "v2:86c7cd861778bf5805e3174c3ea3feb7ec633236e68793473cc6e82e3443d929",
+    "agentId": "a4f1716482307ce4d"
+}
+{
+    "type": "started",
+    "key": "v2:9867efc26d829449f8b7dac9d7a2320b351c5b23b67558ec4d243e6690162c8b",
+    "agentId": "a21a4176fba5033bf"
+}
+{
+    "type": "started",
+    "key": "v2:96a1599d0ddd0a59dec859a1fbd0373a9465e38090001be8d7897b16a39c2238",
+    "agentId": "afa208a0eb6e9902f"
+}
+{
+    "type": "started",
+    "key": "v2:cc568e56bdc1f2adba031463ce163f77b8e78111133287d7adc4e4954b956076",
+    "agentId": "ace727389c7084b5b"
+}
+{
+    "type": "started",
+    "key": "v2:21510cb61a9fa0db3e56301666c4e5da6ea26be91f35b30b962d875da98c8746",
+    "agentId": "af03576c98c9c9786"
+}
+{
+    "type": "result",
+    "key": "v2:86c7cd861778bf5805e3174c3ea3feb7ec633236e68793473cc6e82e3443d929",
+    "agentId": "a4f1716482307ce4d",
+    "result": {
+        "hypotheses": [
+            {
+                "id": "alloc-no-oid-bounds-check",
+                "mechanism": "SizedPage::alloc blindly trusts allocator.alloc()'s pointer: it computes oid = object_to_ind(o) and immediately does ind_to_header(oid)->set_mapping(&m) with NO oid < capacity check and NO is_free check, so a pointer o at/above page_end makes headers+oid*8 land on a live object's obj[0] and deposit (&m)/8 = 0x80015xxx there.",
+                "location": "runtime/core/SizedPage.cpp:27-34 (alloc); the dangerous store is line 33 h->set_mapping(&m); indexing helpers runtime/include/alaska/SizedPage.hpp:105-111",
+                "preconditions": "allocator.alloc() returns an object pointer o with object_to_ind(o) >= capacity+1. For the 16B node class (object_size=16, capacity=87381, objects start = page_base+699056), hitting obj[0] of live object j requires oid = 87382+2j, i.e. o = page_end + 16 + 32*j. Reaching that needs a corrupted/poisoned value popped from the ShardedFreeList (a non-object address used as a free-list node), which alloc never validates.",
+                "reachability": "high",
+                "signature_fit": "Eager-RC/GC agnostic (alloc runs in every config); SIZE_BITS=32 makes set_mapping write exactly the low 32 bits = (Mapping*)/8 = 0x80000000+slot; corrupts obj[0] of a live node; independent of NO_COMPACT/NO_REUSE_CACHE/NO_GC_FREE/NO_FREE_DEC because it is the plain bump/free-list alloc path, not any of those features; rate ~1/64-1/250 matches a rare bad free-list link surviving until that slot is popped.",
+                "why_header_shaped": "The value written is set_mapping's payload (uint64_t)&m/8. The handle table base is 0x8000000000000000>>(32-3)=0x400000000 (Configuration.hpp:21-22, HandleTable.cpp:39-44), Mapping at base+slot*8, so /8 = 0x80000000+slot -> low word 0x80015xxx with size_slack(top 32 bits) zero. It is a Header low word, not a heap pointer, precisely because it is the divided handle-table address, and it is written into bits[0,32) (the _mapping half) of the aliased 8-byte unit.",
+                "confirming_experiment": "Add an always-on assert at SizedPage.cpp:31-32: ALASKA_ASSERT(oid >= 0 && oid < capacity, ...) plus ALASKA_ASSERT(ind_to_header(oid)->is_free()) before set_mapping. A read-only confirmation: grep the alloc body to confirm no bounds/is_free guard exists (it does not), and confirm object_to_ind is an unchecked signed division (SizedPage.hpp:106-108)."
+            },
+            {
+                "id": "header-low-word-aliases-obj0",
+                "mechanism": "Under SIZE_BITS=32 the Header packs as uint64_t _mapping:32 (bits 0-31) + uint32_t size_slack:32 (bits 32-63) into one 8-byte unit (sizeof==8); set_mapping writes ONLY bits[0,32), so when a header address aliases a live 16B node, the deposited 0x80015xxx overwrites exactly the low 4 bytes of obj[0] (the 'left' pointer), leaving the value 0x00000000_80015xxx with bit63 clear.",
+                "location": "runtime/include/alaska/SizedPage.hpp:63-70 (Header bitfield + set_mapping); store site runtime/core/SizedPage.cpp:33",
+                "preconditions": "A header write (set_mapping at alloc SizedPage.cpp:33) targeting an oid whose address headers+oid*8 == &node.left of a live node. No static_assert(sizeof(Header)==8) exists anywhere (grep finds none), so the layout is implicit; it is correct (8 bytes) only because uint32_t size_slack:32 lands exactly on the 32-bit boundary at bit 32 and does not straddle, but nothing enforces this if ALASKA_SIZE_BITS ever != 32.",
+                "reachability": "high",
+                "signature_fit": "Explains the exact crash value shape: top 32 bits zero (size_slack untouched/zero by a narrow 32-bit store), low 32 bits = 0x80000000+slot. Survives all listed kill-switches because it is just the bit layout of the store, orthogonal to compaction/reuse/gc/dec. Matches 'TOP BIT (bit 63) CLEAR so alaska_translate returns raw -> SIGSEGV'.",
+                "why_header_shaped": "_mapping is the low half of the unit and holds (Mapping*)/8 = 0x80000000+slot; size_slack is the high half and is zero (set right after, or never set on a narrow store), giving precisely a Header low word and not a heap pointer. A ShardedFreeList next-link would instead be a full objects[]/heap address (~0x7fxx...), which is NOT 0x8000xxxx-shaped, confirming the deposit is a header _mapping word.",
+                "confirming_experiment": "Read-only: confirm sizeof reasoning by noting no packed/aligned attribute and the Itanium-ABI 32-bit-boundary placement (SizedPage.hpp:63-66). A single always-on static_assert(sizeof(SizedPage::Header)==8) added to SizedPage.hpp would confirm the size; an assert that h->size_slack==0 immediately after the alloc store would confirm the high half stays zero on the wild write."
+            },
+            {
+                "id": "geometry-airtight-rules-out-inbounds-alias",
+                "mechanism": "For every size class the header region [0, 8*capacity) and the object region [round_up(8*capacity,16), end) never overlap and objects_end never exceeds page_size, so NO in-bounds oid (0..capacity-1) can ever address object memory; therefore the wild header-shaped store can ONLY come from an out-of-bounds oid (>= capacity+1), i.e. an OOB object pointer, not from a layout/round_up off-by-one.",
+                "location": "runtime/core/SizedPage.cpp:60-91 (set_size_class: capacity/headers/objects); SizedAllocator extend clamp runtime/include/alaska/SizedAllocator.hpp:124-137 (line 128 caps end at objects_end)",
+                "preconditions": "Class 0 (16B node): capacity = floor(2097152/24) = 87381; header region = [0,699048); objects = round_up(699048,16) = 699056; objects_end = 699056 + 87381*16 = 2097152 = exact page end; an 8-byte gap [699048,699056) separates the regions. All 72 classes recomputed: overrun(obj_end-page_size) <= 0 for every class, and header_end <= objects_start for every class (no header[capacity-1]/object[0] overlap).",
+                "reachability": "medium",
+                "signature_fit": "This is an elimination result, not a trigger: it tightens the search to OOB object pointers. It is consistent with the signature (rare ~1/64-1/250, survives all kill-switches) because the only remaining mechanism is alloc returning a pointer past objects_end, popped from a poisoned free list, which alloc does not bounds-check (see alloc-no-oid-bounds-check).",
+                "why_header_shaped": "Confirms the corrupt value is NOT explainable by a header/object aliasing within bounds; the deposit must be set_mapping's (Mapping*)/8 low word reached via oid>=capacity+1. The decode 0x80015xxx = slot ~88064 is a HANDLE-TABLE index, larger than capacity 87381 only by coincidence; it identifies which Mapping was stored, not the oid, removing the 'index==capacity off-by-one' suspicion.",
+                "confirming_experiment": "Read-only: recompute geometry per class (done) and verify SizedAllocator::extend line 128 clamps end to objects_end so the bump path cannot produce oid>=capacity. Add an always-on assert in alloc that o < page end (o < (char*)objects + capacity*object_size) to catch the OOB pointer at its source."
+            }
+        ]
+    }
+}
+{
+    "type": "started",
+    "key": "v2:c9b14149a29ecb676dd8e819be9fa5c322a0614f556b98a8738b0c496603dd82",
+    "agentId": "a4351f91ec915b3b1"
+}
+{
+    "type": "started",
+    "key": "v2:4336b9258ea7af96ecb5fd56177ca37a9b162de8aa77ebe220b7e46b54eac5e3",
+    "agentId": "a5dfdd2b075767590"
+}
+{
+    "type": "started",
+    "key": "v2:831eefa3c0b117edadda391232deeb4a82df8f7648f439e852420cfa20a6356e",
+    "agentId": "a24ced68b7a5fc4e2"
+}
+{
+    "type": "started",
+    "key": "v2:df66c280e4122e8e602cf6d8a430f0574f74aff7d84a251296bad62fa49266fe",
+    "agentId": "ab285587299430a96"
+}
+{
+    "type": "started",
+    "key": "v2:cc674811976230f3dd61cad1f1379e5d9aff16f9f919b530f6cb73c66696a0e1",
+    "agentId": "a016abf6ba3254413"
+}
+{
+    "type": "started",
+    "key": "v2:8b03d81aa16568fabd0a1f640dc179ec07d9803b094a247dc08b1e4d45250566",
+    "agentId": "a7e4251cdfd0e6894"
+}
+{
+    "type": "started",
+    "key": "v2:4c3174f4c977dc70d303d42a5160cff5bfda7b2f9362daeb687ea64faa58117d",
+    "agentId": "a6252495671feb5dc"
+}
+{
+    "type": "started",
+    "key": "v2:3d9d75322c04183a95d764fc417dd6580c04a9c69b0afbf417b6353832fc4c11",
+    "agentId": "a44ecea626f5610ec"
+}
+{
+    "type": "started",
+    "key": "v2:e2ad1c548857b60c58e919efdc1f73bb521b316ff4a529608a464333db72ac41",
+    "agentId": "a21a044b94f80da43"
+}
+{
+    "type": "result",
+    "key": "v2:df66c280e4122e8e602cf6d8a430f0574f74aff7d84a251296bad62fa49266fe",
+    "agentId": "ab285587299430a96",
+    "result": {
+        "verdict": "REFUTED",
+        "reason": "The hypothesis's value-provenance sub-claim is correct and unguarded: Header packs as `uint64_t _mapping:(64-32)` + `uint32_t size_slack:32` = 8 bytes (SizedPage.hpp:63-66), `set_mapping` writes `_mapping=(Mapping*)/8` into the low 32 bits (SizedPage.hpp:67), and there is indeed NO `static_assert(sizeof(Header)==8)` anywhere (grep over SizedPage.hpp/.cpp finds none). So a deposited `_mapping` word genuinely has the shape `0x00000000_80000000+slot` (top bit clear). BUT that is only the description of the value; the actual DEFECT requires the precondition that alloc's `set_mapping` (SizedPage.cpp:33) target an `oid` whose header address `headers+oid*8` aliases `&node.left` of a live object — and a structural geometry guard makes that impossible. alloc:33 derives `oid = object_to_ind(o)` (SizedPage.cpp:31) from `o = allocator.alloc()` (SizedPage.cpp:27). Every object pointer the allocator can return is confined to `[objects_start, objects_end)`: the bump path clamps `end` to `objects_end` (SizedAllocator.hpp:128) where `objects_end = objects + capacity*object_size` (configure, SizedAllocator.hpp:142), and the free list only holds pointers previously produced by `extend`/releases of real in-bounds objects. Hence `object_to_ind(o) = (o-objects)/object_size` (SizedPage.hpp:106-108) yields `oid ∈ [0, capacity)`, and `ind_to_header(oid) = headers+oid` (SizedPage.hpp:105) occupies bytes `[oid*8, oid*8+8) ⊂ [0, capacity*8)`. Because `objects = round_up(headers + capacity*8, alignment)` (SizedPage.cpp:84) and round_up never decreases its argument, `objects >= capacity*8` for EVERY capacity, so the entire header region (top = capacity*8) lies at or below `objects` and is disjoint from the live-object region. For the 16B node class the gap is exactly 16 bytes (cap=87381: header top=699048, objects=699056). Therefore the alloc-path header store provably cannot land in obj[0] of a live node. The only other Header-low-word writers are compaction (SizedPage.cpp:198,293,297) — ruled out (eager config; crash survives ALASKA_NO_COMPACT) — and jumble (test-only). The hypothesis as a standalone defect is refuted by the geometry; the missing static_assert is a latent fragility (would bite if ALASKA_SIZE_BITS were changed), not the mechanism of THIS crash.",
+        "evidence": "runtime/core/SizedPage.cpp:84 (objects = round_up(headers+capacity*8,16) >= capacity*8, disjoint from header region for all capacities); SizedAllocator.hpp:128,142 (object pointers clamped to [objects_start, objects_end)); runtime/include/alaska/SizedPage.hpp:105-108 (oid in [0,capacity) -> header byte range < capacity*8); SizedPage.cpp:31-33 (alloc derives oid from in-bounds allocator pointer). Latent gap (not the cause): no static_assert(sizeof(Header)==8) anywhere."
+    }
+}
+{
+    "type": "result",
+    "key": "v2:e2ad1c548857b60c58e919efdc1f73bb521b316ff4a529608a464333db72ac41",
+    "agentId": "a21a044b94f80da43",
+    "result": {
+        "verdict": "SURVIVES",
+        "reason": "The hypothesis is a geometric ELIMINATION result, and its core claim is verifiably correct, so it does not contradict the crash signature. I confirmed every load-bearing fact: page_size = 2MiB (HeapPage.hpp:24-25); sizeof(Header)==8 under SIZE_BITS=32 (SizedPage.hpp:63-70 — uint64_t _mapping:32 in bits 0-31 and uint32_t size_slack:32 in bits 32-63, no packed attribute, and the whole-Header copy *left=*right at SizedPage.cpp:195 confirms 8-byte word intent); and the layout math in set_size_class (SizedPage.cpp:60-91). Recomputing all 72 size classes shows zero header/object overlap and zero objects_end > page_size; for the 16-byte node class (which the hypothesis mislabels 'class 0' but is actually cls=1, SizeClass.cpp:110 SC(2)=16, with identical arithmetic) objects_end = exactly 2097152 with an 8-byte gap [699048,699056). Since ind_to_header(oid)=headers+oid*8 (SizedPage.hpp:105) and any in-bounds oid (<capacity) yields a header-write address < obj_start, an in-bounds oid provably cannot reach object memory — so within-bounds header/object aliasing is correctly ruled out. The extend bump path is clamped to objects_end (SizedAllocator.hpp:128), confirming the bump allocator never produces oid>=capacity, leaving a poisoned free-list 'next' (ShardedFreeList.hpp:68-76,99-104) as the only route to an OOB pointer. This elimination conclusion is orthogonal to value shape, kill-switches (NO_COMPACT/NO_REUSE_CACHE/NO_GC_FREE/NO_FREE_DEC), and the ~1/64-1/250 / sub-50ms timing — it neither produces a differently-shaped value nor is disabled by any switch. The hypothesis explicitly disclaims being the trigger ('This is an elimination result, not a trigger'), so its forward speculation about an OOB-oid deposit is out of scope for the signature-consistency lens; what it actually asserts does not contradict the signature.",
+        "evidence": "runtime/include/alaska/SizedPage.hpp:105 (ind_to_header = headers+oid) and SizedPage.cpp:84,90 (objects placed after capacity headers; allocator configured with objects_end=objects+capacity*osz), plus SizedAllocator.hpp:128 (bump clamp) — together these make in-bounds oid header writes land strictly below obj_start, leaving the OOB-via-poisoned-freelist path (ShardedFreeList.hpp:68-76) as the only unguarded gap, exactly as the elimination concludes."
+    }
+}
+{
+    "type": "result",
+    "key": "v2:cc674811976230f3dd61cad1f1379e5d9aff16f9f919b530f6cb73c66696a0e1",
+    "agentId": "a016abf6ba3254413",
+    "result": {
+        "verdict": "REFUTED",
+        "reason": "The hypothesis has two separable claims. The VALUE-SHAPE sub-claim is correct: under SIZE_BITS=32 the Header is `uint64_t _mapping:(64-32)` (bits 0-31) + `uint32_t size_slack:32` (bits 32-63), sizeof==8 by Itanium-ABI placement, and `set_mapping` (SizedPage.hpp:67) deposits `(Mapping*)/8 == 0x80000000+slot` into the low 32 bits, so IF such a store hit objects[] the deposited word would be exactly 0x8000xxxx with the top 32 bits zero. There is genuinely no static_assert on sizeof(Header) (grep finds none). But the REACHABILITY claim fails at its own named store site (alloc-time set_mapping, SizedPage.cpp:33). For that store to corrupt obj[0] of a live node at the observed slot ~88064, `object_to_ind(o)=(o-objects)/object_size` must be ~88064 (683 past capacity 87381), which requires the allocator to return an object pointer o ~10928 bytes PAST the page end. That cannot happen: SizedAllocator::extend hard-caps the bump pointer at objects_end (SizedAllocator.hpp:127-129), objects_end is configured to objects+capacity*object_size which equals the 2 MiB page end exactly (SizedAllocator.hpp:142; SizedPage.cpp:84,90; geometry recomputed: cap=87381, objects=699056, objects_end=2097152==page end), and the free list only ever holds in-range objects from extend or release_* of prior in-range allocs. Hence allocator.alloc() never yields an out-of-page o, so oid at SizedPage.cpp:31 is always < capacity and the alloc set_mapping can never write into objects[]. This is exactly the prompt's already-eliminated 'SizedPage::alloc handing a live/oob slot' item (structurally clean via the objects_end cap, not an explicit assert). The hypothesis identifies NO concrete hole in that elimination -- it restates the precondition ('an oid whose address headers+oid*8 == &node.left of a live node') without any mechanism that produces such an oid at the alloc store -- so per the audit rules it must be dropped.",
+        "evidence": "runtime/include/alaska/SizedAllocator.hpp:127-129 (extend caps bump_next at objects_end) and :142 (objects_end = objects + capacity*object_size == page end); SizedPage.cpp:31-33 (oid = object_to_ind(o); set_mapping store, no bounds escape possible); SizedPage.hpp:106-108 (object_to_ind divides by object_size from same objects base); geometry: capacity 87381, objects_end 2097152 == page_size, so corrupt oid ~88064 needs o ~10928 B past page end, unreachable."
+    }
+}
+{
+    "type": "result",
+    "key": "v2:831eefa3c0b117edadda391232deeb4a82df8f7648f439e852420cfa20a6356e",
+    "agentId": "a24ced68b7a5fc4e2",
+    "result": {
+        "verdict": "UNCERTAIN",
+        "reason": "Under the signature-consistency lens the hypothesis is NOT contradicted on value shape: SizedPage::alloc (runtime/core/SizedPage.cpp:33) does h->set_mapping(&m) with NO oid<capacity and NO is_free guard (confirmed: no such check exists in alloc nor in SizedAllocator::alloc, SizedAllocator.hpp:89-99 — the prompt's claimed \"always-on oid-bounds+is_free check\" is absent from this source). set_mapping deposits _mapping=(uint64_t)&m/8 (SizedPage.hpp:67); with handle_table_location=0x8000000000000000>>(32-3)=0x400000000 (Configuration.hpp:21-22) that is 0x80000000+slot, and alloc's very next line size_slack=object_size-size=16-16=0 (SizedPage.cpp:34) zeroes the top 32 bits, so the 8-byte store at headers+oid is exactly 0x00000000_80015xxx. ind_to_header(oid)=headers+8*oid aliases obj[0] of live node j precisely when oid=87382+2j (headers stride 8 vs object stride 16, objects~page_base+699056), matching the observed value in a LIVE node's obj[0]. So the write SITE faithfully reproduces the signature value. The mechanism FAILS as a root cause, however, because it is circular: for pop() to hand alloc an o>=page_end the free list must already hold a poisoned link of value page_end+16+32*j, and the only two writers of free-list entries cannot produce that — extend() clamps end to objects_end (SizedAllocator.hpp:128) and free_local/free_remote store the previous head, always a valid object pointer or null (ShardedFreeList.hpp:101,114). The hypothesis itself concedes the link must be \"corrupted/poisoned … which alloc never validates\" but never identifies the upstream wild write, so it merely relocates the wild write one hop and cannot establish survival under NO_COMPACT/NO_REUSE_CACHE/NO_GC_FREE/NO_FREE_DEC (the originating poison is unspecified). Not refuted on shape or timing, but unfalsifiable/incomplete as stated — the unguarded store is real and would produce the exact value, but only if some other bug delivers an OOB pointer to it.",
+        "evidence": "runtime/core/SizedPage.cpp:31-34 (oid=object_to_ind(o); set_mapping(&m); size_slack=0 — no bounds/is_free guard); runtime/include/alaska/SizedAllocator.hpp:128 (extend clamps to objects_end, cannot seed OOB link); runtime/include/alaska/ShardedFreeList.hpp:101,114 (free_*/next stores prior head only); runtime/include/alaska/Configuration.hpp:21-22 + runtime/include/alaska/SizedPage.hpp:67 (value-shape 0x80000000+slot)"
+    }
+}
+{
+    "type": "result",
+    "key": "v2:4336b9258ea7af96ecb5fd56177ca37a9b162de8aa77ebe220b7e46b54eac5e3",
+    "agentId": "a5dfdd2b075767590",
+    "result": {
+        "verdict": "REFUTED",
+        "reason": "The hypothesis's structural claim is true — SizedPage::alloc (runtime/core/SizedPage.cpp:27-34) blindly does oid=object_to_ind(o); ind_to_header(oid)->set_mapping(&m) with NO oid<capacity and NO is_free guard, and object_to_ind (SizedPage.hpp:106-108) is an unchecked signed division. So IF allocator.alloc() ever returned a pointer with oid>=capacity+1, line 33's set_mapping would deposit (&m)/8 = 0x80000000+slot, a header-shaped low word, into a live object's obj[0], and that would be config-agnostic (surviving NO_COMPACT/NO_REUSE_CACHE/NO_GC_FREE/NO_FREE_DEC). The REACHABILITY lens defeats it, though: in this workload allocator.alloc() can never return an OOB pointer. The bump path (SizedAllocator::extend, SizedAllocator.hpp:124-137) clamps end to objects_end (line 128), and the geometry is exactly self-consistent — for the 16B node class capacity=87381, objects_start=699056, objects_end=699056+87381*16=2097152=page_end exactly, header region [0,699048) never overlaps objects [699056,2097152), and ind_to_header(capacity-1) sits at byte 699040, still inside the header region. So every bump pointer is in [objects_start,objects_end), oid in [0,capacity). The ONLY other source is free_list.pop, and every producer that feeds the SizedPage free list — SizedPage::release_local/remote (SizedPage.cpp:44,54, object base from m.get_pointer()), compact (SizedPage.cpp:162,215, ind_to_object of in-bounds indices, and itself killed by NO_COMPACT which the crash survives), and extend (line 132, clamped) — passes only in-bounds object bases. Even compact's reset_bump_allocator(after_heap=ind_to_object(capacity)=objects_end) leaves a subsequent extend a no-op loop, no OOB. Thus a fresh/uncorrupted free list cannot yield oid>=capacity+1. The hypothesis's own precondition concedes this: it states reaching the OOB state 'needs a corrupted/poisoned value popped from the ShardedFreeList' — i.e. it presupposes a prior wild write already corrupted a next link. That is circular: alloc is at most the AMPLIFIER that would convert a pre-existing free-list corruption into a header-shaped store, not the ORIGINATOR of the corruption. As a root-cause hypothesis it has no producer for its precondition in this code and is refuted.",
+        "evidence": "runtime/include/alaska/SizedAllocator.hpp:128 (extend clamps end to objects_end) + SizedAllocator.hpp:142 (objects_end = objects+count*size, == page_end for cap=87381 per geometry) + SizedAllocator.hpp:131-132 (only in-bounds pointers freed) refute reachability; the unchecked store the hypothesis names is real at runtime/core/SizedPage.cpp:31-33 and runtime/include/alaska/SizedPage.hpp:106-108, but its OOB precondition has no producer — every free_list feeder (SizedPage.cpp:44,54,162,215) supplies in-bounds bases."
+    }
+}
+{
+    "type": "result",
+    "key": "v2:3d9d75322c04183a95d764fc417dd6580c04a9c69b0afbf417b6353832fc4c11",
+    "agentId": "a44ecea626f5610ec",
+    "result": {
+        "verdict": "SURVIVES",
+        "reason": "The hypothesis is an elimination result and every part of it checks out against source. (1) The in-bounds geometry is provably airtight: recomputing all 72 size classes from the real table (SizeClass.cpp:108-123, SC(sz)=sz*16), sizeof(Header)=8 (the uint64_t:32/uint32_t:32 bitfield in SizedPage.hpp:64-65 packs to 8B), round_up (utils.h:52), page_size=2097152 (HeapPage.hpp:24-25) and the exact set_size_class formula (SizedPage.cpp:66-90) yields, for every usable class 0-62, objects_end <= page_size (max overrun = 0, classes 0 and 2) and objects_start >= header_end (min gap = 0, class 1). For class 0 (the 16B binarytrees node): cap=87381, header_end=699048, objects_start=699056 (gap=8), objects_end=2097152 exactly. So NO in-bounds oid 0..capacity-1 maps ind_to_header(oid)=headers+oid into object memory, ruling out a layout/round_up off-by-one and any header/object aliasing within bounds. (2) set_mapping(&m) in alloc (SizedPage.cpp:33) is the ONLY writer that can deposit a header-shaped (Mapping/8) LOW word into obj[0]: release writes set_mapping(nullptr)/0 (SizedPage.cpp:42,52,198 -> zero low word), update_size_slack writes only the top 32 bits (SizedPage.hpp:48), and compact/jumble/dump index only in-bounds loop variables (compact also gated by NO_COMPACT). (3) SizedPage::alloc (lines 26-36) has NO oid-bounds and NO is_free check, so an OOB object pointer would silently produce ind_to_header(oid>=capacity) and a header store into a live object -- directly contradicting the prompt's 'always-on check' elimination, which is absent on this branch. (4) The bump path cannot produce the OOB block: SizedAllocator::extend clamps end to objects_end (SizedAllocator.hpp:128). Hence the only remaining producer is a poisoned free list handing alloc a block past objects_end -- exactly the separate lane this hypothesis defers to. Under the LENS I cannot refute: binarytrees hits class 0, alloc is unconditionally on the allocation path with no guard, no kill-switch disables alloc's unchecked indexing, and nothing makes the path deferred-only/huge-only/multi-thread-only. The narrowing to an OOB object pointer is sound and its precondition is plausibly reachable here.",
+        "evidence": "runtime/core/SizedPage.cpp:26-36 (alloc: object_to_ind->ind_to_header->set_mapping with no oid bounds/is_free guard, the gap that lets an OOB pointer write a header into a live object); runtime/include/alaska/SizedAllocator.hpp:128 (bump path clamps end to objects_end, so OOB must come from the free list); runtime/core/SizedPage.cpp:66-90 + SizeClass.cpp:108-123 (geometry confirming class 0 gap=8, no overlap/overrun any class)"
+    }
+}
+{
+    "type": "result",
+    "key": "v2:8b03d81aa16568fabd0a1f640dc179ec07d9803b094a247dc08b1e4d45250566",
+    "agentId": "a7e4251cdfd0e6894",
+    "result": {
+        "verdict": "REFUTED",
+        "reason": "Under the SIGNATURE-CONSISTENCY lens this hypothesis is not a mechanism, it is a vacuous restatement of the value shape, and its only concrete distinguishing claim is false. (1) The verified geometry makes alloc's header write UNREACHABLE to a live node's obj[0]. With SIZE_BITS=32 the Header is uint64_t _mapping:32 + uint32_t size_slack:32 in one 8-byte unit (sizeof==8), so ind_to_header (SizedPage.hpp:105) strides 8 bytes; for the 16B node class capacity = (double)2097152/(round_up(16,16)+8)=87381 (SizedPage.cpp:66-67), header region = [memory, memory+87381*8 = memory+699048) and objects = round_up(memory+699048,16) = memory+699056 (SizedPage.cpp:81-84). These are DISJOINT. alloc's set_mapping (SizedPage.cpp:33) runs on oid = object_to_ind(allocator.alloc()) (SizedPage.cpp:31), and the allocator only ever returns addresses in [objects, objects_end) via bump+freelist (SizedAllocator.hpp:89-137), so oid is always in [0, capacity). For all such oid, headers+oid lands in [memory, memory+699040] -- always below objects (699056), never in the object region. There is no off-by-one: even oid==capacity gives offset 699048 < 699056. So alloc's header store can never alias a live node's left pointer. The hypothesis just ASSERTS this aliasing precondition ('an oid whose address headers+oid*8 == &node.left') without supplying any path that produces it, conflating the handle-table slot index ~88064 (which sets the deposited VALUE 0x80000000+slot) with the page oid (which would have to exceed capacity=87381 to reach object memory). (2) The central distinguishing claim -- 'set_mapping writes ONLY bits[0,32), leaving top half zero' -- is irrelevant to the shape: in EVERY real header-write path set_mapping is immediately followed by a size_slack store (alloc SizedPage.cpp:33-34; compact SizedPage.cpp:198-199), and for a 16B node size_slack = object_size - size = 16-16 = 0, so the top 32 bits are explicitly written to 0 regardless of store width. The observed 0x00000000_80015xxx (bit63 clear -> alaska_translate returns raw at translate.cpp:108 -> SIGSEGV) follows from the SEMANTICS (size_slack==0), not from any narrow-store quirk, so the narrow-store distinction adds zero explanatory power. The hypothesis is consistent with the value shape and the kill-switch survival only because it is the prompt's own 'why the value identifies the write' observation re-labeled as a hypothesis; it identifies no defect that turns an in-bounds alloc oid into an object-region store.",
+        "evidence": "runtime/core/SizedPage.cpp:31-34 (alloc uses object_to_ind of allocator.alloc(), then set_mapping+size_slack both fire); runtime/core/SizedPage.cpp:66-67,81-84 (capacity=87381, header region ends 699048, objects at 699056 -- disjoint); runtime/include/alaska/SizedPage.hpp:105-107 (ind_to_header stride 8, object_to_ind range); runtime/include/alaska/SizedAllocator.hpp:89-137 (alloc only returns [objects,objects_end), so oid in [0,capacity)); runtime/core/translate.cpp:108 (bit63-clear -> raw deref)"
+    }
+}
+{
+    "type": "result",
+    "key": "v2:4c3174f4c977dc70d303d42a5160cff5bfda7b2f9362daeb687ea64faa58117d",
+    "agentId": "a6252495671feb5dc",
+    "result": {
+        "verdict": "SURVIVES",
+        "reason": "This is an elimination hypothesis (geometry airtight => no in-bounds aliasing => deposit must come from oid>=capacity+1), and I found NO existing guard that refutes either part. Part 1 (airtight geometry) is provably correct: using the exact source formulas — capacity=(double)page_size/(round_up(object_size,16)+sizeof(Header)) truncated to long (SizedPage.cpp:66-67), objects=round_up(capacity*8,16) (SizedPage.cpp:84), round_up(x,y)=((x)+(y)-1)&~((y)-1) (utils.h:52), sizeof(Header)==8 from the uint64_t:32 + uint32_t:32 bitfield under ALASKA_SIZE_BITS=32 (SizedPage.hpp:64-65) — I recomputed all 72 classes and for every one hdr_end<=obj_start and obj_end<=page_size, with no FP-vs-integer-floor discrepancy. For class 0: capacity=87381, hdr_end=699048, obj_start=699056 (8-byte gap), obj_end=2097152=exact page end. So no in-bounds oid (0..capacity-1) can ever address object memory. Part 2's threshold is geometrically exact: the smallest oid whose header write headers+oid*8 lands at an object's byte-offset-0 (where obj[0] lives) is precisely capacity+1=87382, matching the hypothesis. The cited clamp (SizedAllocator.hpp:128, end capped at objects_end) is real and does prevent the bump path from producing oid>=capacity (max freed object = objects_end-object_size, oid=capacity-1). Critically, the LENS guard the hypothesis depends on being ABSENT is in fact absent: SizedPage::alloc (SizedPage.cpp:26-36) does the header write h->set_mapping with NO oid-bounds and NO is_free check; ShardedFreeList::pop/free_local/free_remote (ShardedFreeList.hpp:68-120) and object_to_ind/ind_to_header (SizedPage.hpp:105-108) do no bounds checking; the only ALASKA_ASSERT is in compact (SizedPage.cpp:197), off the alloc path and likely compiled out in Release. The prompt's prior elimination ('alloc clean via an always-on oid+is_free check') describes a guard that does NOT exist in this source tree — a concrete gap, exactly what the hypothesis relies on. No guard blocks an OOB object pointer (oid>=capacity+1) popped from a poisoned free list from reaching the header write, so the hypothesis is not refuted.",
+        "evidence": "runtime/core/SizedPage.cpp:26-36 (alloc has no oid bounds / is_free guard before h->set_mapping); the only would-be guard, ALASKA_ASSERT, is at SizedPage.cpp:197 (compact only); the cited real clamp is SizedAllocator.hpp:128; geometry confirmed from SizedPage.cpp:66-67,84 + utils.h:52 + SizedPage.hpp:64-65,105-108"
+    }
+}
+{
+    "type": "result",
+    "key": "v2:203d9bb100ceaa245ef357e94c8c74d0762e32d7a9e95c2afb40375cded93fe0",
+    "agentId": "afcba05696aa1f41f",
+    "result": {
+        "hypotheses": [
+            {
+                "id": "alloc-setmapping-oob-oid",
+                "mechanism": "SizedPage::alloc writes h->set_mapping(&m) where h=ind_to_header(oid)=headers+oid; if allocator.alloc() ever returns a backing pointer o that does not belong to THIS page's object region, oid=object_to_ind(o)=(o-objects)/16 can be >= 87382, pushing headers+oid INTO the objects[] region and depositing the low-32 word m/8=0x80000000+slot onto a live node's obj[0].",
+                "location": "runtime/core/SizedPage.cpp:31-33 (oid/ind_to_header/set_mapping); geometry in SizedPage.cpp:66-84 and SizedPage.hpp:105-110",
+                "preconditions": "A SizedAllocator free-list (local_free/remote_free) or bump pointer for a class-0 page contains/produces a pointer that is not in [objects, objects_end). The header region [0,699048) and object region [699056,2097152) abut, so any oid>=87382 (object o at/after objects_end) lands set_mapping in object memory. capacity=87381=0x15555 and the corrupt slot ~0x15xxx are NOT the same number (0x15xxx is a handle-slot id, not a page index), so this is index miscomputation, not a capacity boundary off-by-one.",
+                "reachability": "medium",
+                "signature_fit": "set_mapping(&m) writes exactly _mapping=(Mapping*)/8=0x80000000+slot into the LOW 32 bits of a Header (size_slack untouched, top 32 bits 0) -> 0x00000000_80015xxx, the precise crash word. Eager-RC/SIZE_BITS=32 irrelevant to the write. Survives NO_COMPACT (init.cpp:155 gated) because this is the ALLOC path, not compaction; survives NO_GC_FREE/NO_FREE_DEC/NO_REUSE_CACHE (none gate alloc). Rate depends on how often a bad pointer enters the free list, plausibly ~1/64-1/250.",
+                "why_header_shaped": "The value is literally Header::set_mapping's computation _mapping=(uint64_t)&m/8; with the fixed handle table base 0x400000000 (HandleTable.cpp:43, MAP_FIXED, grow() uses mremap w/o MAYMOVE so base never moves) this equals 0x80000000+slot. It is a 32-bit store into bytes 0-3 of the aliased object word, so the full 64-bit obj[0] reads 0x0000_0000_8001_5xxx -- top bit (63) clear, exactly the value alaska_translate returns raw (translate.cpp:108).",
+                "confirming_experiment": "Add an always-on assertion at SizedPage.cpp:31 immediately after oid=object_to_ind(o): ALASKA_ASSERT(oid>=0 && oid<capacity, ...). Equivalently assert that o>=objects && o<((char*)objects+capacity*object_size). If it fires, the free list is handing out an out-of-range backing and set_mapping is the wild write."
+            },
+            {
+                "id": "localize-not-gated-by-no-compact",
+                "mechanism": "ThreadCache::localize relocates an object (locality_page->alloc -> md->mapping=&m raw-pointer write, plus memcpy/memset/set_pointer/release_remote on the source SizedPage). It is invoked by Localizer::feed_hotness_buffer (which ALSO directly calls compact_locality_pages()+compact_sizedpages()) and by localize_structure, NONE of which are gated by ALASKA_NO_COMPACT -- so 'crash survives NO_COMPACT' does NOT exonerate any relocation reached through these paths.",
+                "location": "runtime/core/ThreadCache.cpp:705-737 (localize) and runtime/core/Localizer.cpp:73-74 (compact calls inside feed_hotness_buffer, NOT behind no_compact); compare init.cpp:144,155 where only compact_sizedpages is gated",
+                "preconditions": "The binarytrees workload would have to reach feed_hotness_buffer (yukon.cpp:156-166 / rt/sim.cpp:92-96) or call localize_structure (halloc.cpp:316). The periodic barrier thread (init.cpp:76-181) does NOT call any of these, and plain binarytrees.c does not call localize_structure -- so for THIS benchmark the gap is real in code but likely not exercised. Confirm whether the harness wraps binarytrees with localize_structure / hotness feeding.",
+                "reachability": "low",
+                "signature_fit": "This is the lane's explicit NO_COMPACT-coverage check: confirmed HOLE -- compaction at Localizer.cpp:73-74 and the whole localize relocation are NOT behind ALASKA_NO_COMPACT. If binarytrees never triggers them the crash signature still survives NO_COMPACT for an unrelated reason; if it does, a SizedPage::compact *left=*right (SizedPage.cpp:195) header-shaped write would not be suppressed by NO_COMPACT and would fit the 0x80015xxx signature exactly.",
+                "why_header_shaped": "If reached, SizedPage::compact's *left=*right (SizedPage.cpp:195) and set_mapping (198) copy/write a Header word; a left/right index error (header_to_ind/ind_to_object scaling) or a memmove with object_size mismatch could deposit _mapping=0x80000000+slot into object memory. localize itself writes a raw Mapping* (0x4000xxxxx, not /8) so it is NOT header-shaped; only the SizedPage::compact it pulls in is.",
+                "confirming_experiment": "READ-ONLY: grep the binarytrees harness/driver for calls to localize_structure or feed_hotness_buffer; and confirm no_compact (init.cpp:144) is never consulted at Localizer.cpp:73-74. If the harness never localizes, drop this; otherwise wrap Localizer.cpp:73-74 in if(!no_compact) and re-run the NO_COMPACT A/B."
+            },
+            {
+                "id": "shared-page-handoff-stale-freelist",
+                "mechanism": "A class-0 SizedPage is handed between thread caches (put_page sets owner=null; find_or_alloc_page re-adopts it WITHOUT calling set_size_class, so its geometry/free-list persist). If a remote free (release_remote -> atomic free_remote) publishes a backing pointer concurrently with the new owner's swap()/pop()/extend() (plain, non-atomic local_free ops), the local free list can be left with a malformed/duplicated link, so a later allocator.alloc() returns a bogus o and SizedPage::alloc's set_mapping(headers+object_to_ind(o)) lands in a live object's obj[0].",
+                "location": "runtime/include/alaska/ShardedFreeList.hpp:68-92 (pop/swap non-atomic local side vs atomic remote), runtime/include/alaska/SizedAllocator.hpp:89-137 (alloc/alloc_slow/extend), Heap.hpp:191-220 (find_or_alloc_page reuses page without set_size_class), SizedPage.cpp:49-56 (release_remote header write then atomic publish)",
+                "preconditions": "Multi-threaded binarytrees (or runtime GC/barrier thread owning a tc) where one thread frees onto a page currently owned by another, and the owner runs alloc_slow->swap concurrently. swap() reads num_remote_free then atomic_set(num_remote_free,0) non-atomically w.r.t. free_remote's atomic_inc, so counts and the linked list can desync; a corrupted next link yields an out-of-page o.",
+                "reachability": "low",
+                "signature_fit": "Produces the same wrong-oid -> set_mapping header-shaped write as alloc-setmapping-oob-oid, so identical 0x00000000_80015xxx signature, eager-RC-agnostic, survives all GC kill-switches and NO_COMPACT (pure alloc/free path). Intermittency (~1/64-1/250) is consistent with a narrow swap/free_remote race window. NOTE: binarytrees as written is single-threaded, so this needs a second mutator (e.g. the barrier/GC thread allocating) -- weaker than hypothesis 1.",
+                "why_header_shaped": "Same as hypothesis 1: the deposited value is Header::set_mapping's _mapping=m/8=0x80000000+slot, a 32-bit low-word store; the race only supplies the bad pointer that makes object_to_ind/ind_to_header alias object memory.",
+                "confirming_experiment": "READ-ONLY: confirm whether more than one thread can hold/alloc-from the same class-0 page in the binarytrees run (is the GC/barrier thread allocating class-0?). Plus the same oid-bounds assert from hypothesis 1 at SizedPage.cpp:31 would catch the resulting bad o."
+            }
+        ]
+    }
+}
+{
+    "type": "started",
+    "key": "v2:3d194cd20b50ec461ce84458f2d73b851fe17a969ccac470e6a03976351f3c02",
+    "agentId": "a80ef616599d18876"
+}
+{
+    "type": "started",
+    "key": "v2:96f7cbed5cc4458abe76ea88d88824e806c6bb6e3714f6db055cc1fd6e331a79",
+    "agentId": "a2d5e24569312de5c"
+}
+{
+    "type": "started",
+    "key": "v2:94c46cb0b41cbb427cac6e1e2cc6484d010c49c3db0da5ecc8f73b31ebbb2fc4",
+    "agentId": "aa70ed9612dc50a7b"
+}
+{
+    "type": "started",
+    "key": "v2:741b711f5178c9dfe227718e0759cfa6ecc0a16cb34149b9f4f1d403f386300b",
+    "agentId": "a4b6eb7a3954c35db"
+}
+{
+    "type": "started",
+    "key": "v2:75be3377aac7b689c9540cce703ebc2bf70142af89b454b648f237e6706860a9",
+    "agentId": "ab79bba34c1946af7"
+}
+{
+    "type": "started",
+    "key": "v2:c4d845bfb93634f8f562bf3fe7f61945dceebb8942ac5ce3394fb57f8b76a61e",
+    "agentId": "aca5fd753b3989153"
+}
+{
+    "type": "started",
+    "key": "v2:cffa96860fe87b433761d1f04f372fac9e7a7065a3705b0bb6150069cadb82a5",
+    "agentId": "a0a905e5ca6853f8d"
+}
+{
+    "type": "started",
+    "key": "v2:ad720895837b34bde6a1e65630700c844ebfa510887d1064dd8fd7b3acde5680",
+    "agentId": "ac76ee730476fefe4"
+}
+{
+    "type": "started",
+    "key": "v2:b8e2953c23c5c6b6652408d30d97a773891e87abc724a2acc32c40a489a154b9",
+    "agentId": "a9dd7f77319ccfac5"
+}
+{
+    "type": "result",
+    "key": "v2:3d194cd20b50ec461ce84458f2d73b851fe17a969ccac470e6a03976351f3c02",
+    "agentId": "a80ef616599d18876",
+    "result": {
+        "verdict": "REFUTED",
+        "reason": "The signature-fit is perfect — SizedPage::alloc's h->set_mapping(&m) at runtime/core/SizedPage.cpp:33 writes _mapping=(uint64_t)&m/8 (=0x80000000+slot) into the LOW 32 bits of a Header, leaving size_slack (top 32 bits) zero, i.e. exactly 0x00000000_80015xxx; and there is genuinely NO bounds check on oid at the alloc site (SizedPage.cpp:31-33), so if the precondition held the wild write would be unguarded. But the hypothesis's precondition — that allocator.alloc() can return a backing o outside [objects,objects_end) so oid=object_to_ind(o)>=capacity — is refuted by upstream guards on every channel that feeds the free list/bump. (1) BUMP: SizedAllocator::extend clamps end to objects_end (runtime/include/alaska/SizedAllocator.hpp:128) and only frees slots objects+k*object_size for 0<=k<capacity; for class 0 the geometry (capacity=87381, objects start at offset 699056) puts objects_end = 699056+87381*16 = 2097152 exactly at the 2 MiB page boundary, so no bump slot can exceed it and object_to_ind always recovers k<capacity. (2) FREES: ThreadCache::free_allocation (runtime/core/ThreadCache.cpp:120) routes every free through pt.get_unaligned(ptr) to the page that actually contains ptr, and ptr is always a backing originally produced by that same page's in-region alloc, so a page's free list can never receive a cross-page or header-region pointer; remote vs local only changes which list within the SAME page. (3) COMPACT: free_slot=ind_to_object(header_to_ind(right)) is in-region by construction (right in [headers,headers+capacity)), and the crash survives ALASKA_NO_COMPACT anyway. Geometry is set exactly once per page (Heap.cpp:182), PageManager::free_page is never called in the runtime, and SizedAllocator::configure resets the free list — so no stale-geometry entries survive. With no channel able to deliver an out-of-region pointer, oid stays < capacity and headers+oid stays in the header region; the named alloc-time wild write cannot occur.",
+        "evidence": "runtime/include/alaska/SizedAllocator.hpp:128 (extend clamps end to objects_end); runtime/core/ThreadCache.cpp:120 (free_allocation routes ptr to its true page via pt.get_unaligned); runtime/core/SizedPage.cpp:31-33 (alloc has no oid bounds check, so defense is purely the upstream invariant)"
+    }
+}
+{
+    "type": "result",
+    "key": "v2:96f7cbed5cc4458abe76ea88d88824e806c6bb6e3714f6db055cc1fd6e331a79",
+    "agentId": "a2d5e24569312de5c",
+    "result": {
+        "verdict": "REFUTED",
+        "reason": "The hypothesis requires SizedPage::alloc to receive a backing pointer `o` with `object_to_ind(o) >= capacity` (>=87382) so that `ind_to_header(oid)=headers+oid` lands in objects[] and `set_mapping` deposits a 0x80015xxx Header word onto a live node. That precondition cannot arise in this workload/config. (1) Each SizedPage's SizedAllocator is bound to exactly ONE 2MiB page's object region: configure(objects,object_size,capacity) sets objects_end=objects+capacity*object_size (SizedAllocator.hpp:140-142), and the geometry makes objects_end == page_end exactly (objects start 699056, objects_end 699056+87381*16 = 2097152 = page_size; verified against round_up in utils.h:52 and SizedPage.cpp:66-84). (2) Pointers can enter a page's free list only via extend() — which is hard-clamped to objects_end (SizedAllocator.hpp:128, `if (end > objects_end) end = objects_end`), so it never produces an out-of-region pointer — or via release_local/release_remote, whose every runtime caller routes the pointer to its physically-containing page: free_allocation uses page=pt.get_unaligned(m.get_pointer()) then release on THAT page (ThreadCache.cpp:118-132), localize uses source_page=pt.get_unaligned(ptr) (ThreadCache.cpp:709,734), and compact frees via this page's own ind_to_object (SizedPage.cpp:161-162). So for any pointer genuinely on page P's free list, object_to_ind(o) ∈ [0,capacity-1], and ind_to_header lands in [headers, headers+(capacity-1)*8] ⊂ [0,699048), strictly inside the header region — set_mapping NEVER reaches objects[]. To get oid>=87382 the pointer would have to be >= objects_end+16, i.e. 16 bytes into the NEXT page; that requires page P+1's object to be freed into page P's allocator, which no code path does (free routing is by get_unaligned, which sends P+1's pointers to P+1). (3) Direct empirical refutation: the repro README records an always-on diagnostic at this exact site — 'SizedPage::alloc handing a live/oob slot | clean (oid bounds + is_free)' — that ran clean during the actual crash; had alloc ever handed an oid>=capacity slot it would have fired. The hypothesis pre-committed to needing a concrete hole the prior elimination missed, and there is none: the diagnostic tests precisely the oid-bounds condition the hypothesis depends on. (Note: LocalityPage cannot be the source either — its md->mapping is a full-pointer store, LocalityPage.cpp:38, not the Mapping*/8 encoding that produces a 0x80015xxx-shaped word.)",
+        "evidence": "runtime/include/alaska/SizedAllocator.hpp:128 (extend clamps bump to objects_end) and :140-142 (objects_end=objects+capacity*object_size); runtime/core/ThreadCache.cpp:118-132 (free_allocation routes via pt.get_unaligned(m.get_pointer())); runtime/core/SizedPage.cpp:31-35,106-110 (alloc/object_to_ind/ind_to_header, geometry objects_end==page_end); repro/README.md:49 (always-on 'oid bounds + is_free' check at alloc ran clean during the crash)"
+    }
+}
+{
+    "type": "result",
+    "key": "v2:94c46cb0b41cbb427cac6e1e2cc6484d010c49c3db0da5ecc8f73b31ebbb2fc4",
+    "agentId": "aa70ed9612dc50a7b",
+    "result": {
+        "verdict": "REFUTED",
+        "reason": "The hypothesis's deposited-value shape is internally consistent with the signature: SizedPage::alloc at runtime/core/SizedPage.cpp:31-33 does `oid=object_to_ind(o); h=ind_to_header(oid); h->set_mapping(&m)`, and set_mapping (SizedPage.hpp:67) writes _mapping=(uint64_t)&m/8 into the LOW 32 bits of the Header; with the fixed handle-table base (Configuration.hpp:21-22 -> 0x8000000000000000>>29 = 0x400000000, HandleTable.cpp:43-44 MAP_FIXED, grow() mremap without MAYMOVE at HandleTable.cpp:78-79) this equals 0x80000000+slot, exactly a 0x00000000_80015xxx word that alaska_translate returns raw (translate.cpp:108). The alloc path is also not gated by NO_COMPACT/NO_REUSE_CACHE/NO_GC_FREE/NO_FREE_DEC, so on pure value-shape and switch-survival grounds it is not contradicted. HOWEVER the mechanism's load-bearing precondition -- allocator.alloc() returning an o outside [objects,objects_end) so that oid>=capacity pushes headers+oid into object memory -- has no source path AND is empirically excluded. (1) No path: object_to_ind (SizedPage.hpp:106-108) maps any o in [objects,objects_end) to oid in [0,capacity-1] (objects_end=objects+capacity*object_size, SizedAllocator.hpp:142), so ind_to_header stays strictly inside the header region [0,699048) and never reaches objects [699056,...). The free list is fed only by extend() (bump within [bump_next,objects_end], clamped at SizedAllocator.hpp:128, always in bounds), by SizedPage::release_local/remote whose ptr comes from pt.get_unaligned(ptr) i.e. is in-page (ThreadCache.cpp:120-133), and by compaction's release_local which uses ind_to_object(header_to_ind(right)) over right in [headers,headers+capacity-1] (SizedPage.cpp:161,184) -- all in bounds, and compaction is gated by NO_COMPACT (init.cpp:155) which the crash survives. Localizer/barrier/refcount contain no SizedPage release/alloc calls. (2) Empirical: the ALREADY-RULED-OUT item #1 states an always-on `oid bounds + is_free` check at alloc came back CLEAN. An `oid<capacity` assertion cannot be fooled by memory contents, so it would deterministically fire on any OOB oid; its never firing across the ~1/64-1/250 reproductions directly excludes set_mapping-at-alloc as the wild write. The methodology requires a concrete hole to keep a ruled-out hypothesis alive; the bounds-assertion elimination has none, so the hypothesis is dropped. The only way an OOB pointer could enter the free list is if a free slot's next-link were pre-corrupted by some OTHER wild write, which makes this a downstream symptom, not the root cause.",
+        "evidence": "runtime/core/SizedPage.cpp:31-33 (alloc has NO bounds/is_free guard in current source, but ALREADY-RULED-OUT #1 reports an added oid-bounds+is_free check came back clean); refuting geometry: SizedPage.hpp:106-108 object_to_ind + SizedAllocator.hpp:142 objects_end=objects+capacity*object_size bound oid to [0,capacity-1]; SizedAllocator.hpp:128 extend clamp keeps bump in bounds"
+    }
+}
+{
+    "type": "result",
+    "key": "v2:cc568e56bdc1f2adba031463ce163f77b8e78111133287d7adc4e4954b956076",
+    "agentId": "ace727389c7084b5b",
+    "result": {
+        "hypotheses": [
+            {
+                "id": "compiler-runtime-sizebits-agreement-confirmed",
+                "mechanism": "There is NO compiler-side handle encode/decode arithmetic to disagree with the runtime: the RefcountInc/RefcountDec/Alaska/Lower passes only INSERT calls to runtime symbols (alaska_inc_refcount, alaska_dec_refcount, alaska_inc_handles_in_range, alaska_translate) and never materialize a SIZE_BITS/SQUEEZE_BITS-dependent shift; the entire encode (m/8<<32+offset), decode (h>>29), and APPLY_OFFSET (mapped + (bits & ((1<<32)-1))) live in runtime/include/alaska/alaska.hpp and runtime/core/translate.cpp, all reading the SAME -DALASKA_SIZE_BITS=32 emitted once by the root CMake, so no normal header word (m/8) can be STORED into obj[0] via a constant mismatch.",
+                "location": "compiler/passes/RefcountInc.cpp:150-158 (only inserts alaska_inc_refcount), compiler/passes/RefcountDec.cpp:281-284 (only inserts a load+alaska_dec_refcount, never a write-back), compiler/passes/Lower.cpp:134 (emits alaska_translate call, no inline math), vs runtime alaska.hpp:352-383 and translate.cpp:40-41",
+                "preconditions": "Always: the compiler never computes a handle value itself; obj[0] is only ever written by the application's own `node->left = child` store, which the passes bracket with calls but do not rewrite. For obj[0] to become a header-shaped 0x80015xxx the application would have to store that exact value, which it never computes.",
+                "reachability": "low",
+                "signature_fit": "Refutes the LANE's premise under the exact crash config (SIZE_BITS=32, SQUEEZE_BITS=3, eager RC+GC). The deposited value is header-shaped because a header low word is _mapping = m/8 = 0x80000000+slot (alaska.hpp:353, SizedPage.hpp:67); no compiler-emitted decode produces that, so this elimination holds across NO_COMPACT/NO_REUSE_CACHE/NO_GC_FREE/NO_FREE_DEC.",
+                "why_header_shaped": "A header _mapping low word is m/8 (=0x80000000+slot), distinct from any handle (top bit set) or heap pointer; the compiler emits neither, confirming the wild write is a runtime header store, not a mis-decoded handle."
+            },
+            {
+                "id": "from-handle-shift-29-leaks-top-3-offset-bits",
+                "mechanism": "from_handle decodes via h >> (ALASKA_SIZE_BITS - ALASKA_SQUEEZE_BITS) = h >> 29, but to_handle places the offset in the full 32-bit field (bits 0-31) while APPLY_OFFSET masks the full 32 bits; thus the TOP 3 bits of the offset field (handle bits 29,30,31) land in bits 0,1,2 of the decoded Mapping*, so any handle whose interior offset is >= 2^29 decodes to a corrupted (mis-pointed) Mapping while still translating its data correctly.",
+                "location": "runtime/include/alaska/alaska.hpp:382 (from_handle: >> (32-3)=29) vs alaska.hpp:367 (to_handle: offset added to full 32-bit field) vs translate.cpp:41 (APPLY_OFFSET masks (1<<32)-1)",
+                "preconditions": "Requires an interior field/element access at byte offset >= 2^29 (512 MiB) into a single handle's object. A 16-byte binarytrees node only ever uses offsets 0 and 8 (left/right), both << 2^29, so 8>>29 = 0 and the decode is exact -- this mechanism CANNOT fire for the node class.",
+                "reachability": "low",
+                "signature_fit": "Does NOT fit the crash: the binarytrees node is 16 bytes with field offsets 0/8, far below the 2^29 leak threshold, so from_handle round-trips m exactly. Surfaced as the single real SIZE_BITS/SQUEEZE_BITS asymmetry between encode width (32) and safe-decode width (29); only a concern for >512MiB intra-object offsets, irrelevant to depth-18 nodes.",
+                "why_header_shaped": "Even if it fired, it would corrupt the decoded Mapping* low bits (an inc/dec target), not deposit a header low word into obj[0]; so it cannot explain a 0x80015xxx written to a live node and is dropped as the mechanism."
+            },
+            {
+                "id": "header-bitfield-mapping-is-the-low-32-bits",
+                "mechanism": "Under ALASKA_SIZE_BITS=32 the Header bitfield is _mapping:(64-32)=32 at bits 0-31 and size_slack:32 at bits 32-63, so the _mapping field (= m/8 = 0x80000000+slot) IS exactly the low 32-bit word of the 8-byte Header; set_mapping (a clean 32-bit store at byte offset 0) deposits precisely a 0x80015xxx-shaped low word, confirming the crash value's identity and that the bug is a misdirected HEADER store (alloc/compact set_mapping or *left=*right), not a handle-encoding fault.",
+                "location": "runtime/include/alaska/SizedPage.hpp:63-67 (Header bitfield + set_mapping), with set sites SizedPage.cpp:33 (alloc), :195 (*left=*right whole-Header copy), :198/:293/:297 (set_mapping in compact/jumble)",
+                "preconditions": "A Header store must land in object memory: either ind_to_header(oid) with oid>=capacity (header region overruns into objects[]; capacity=87381, corrupt slot ~88064 sits just past capacity), or the *left=*right whole-word copy at SizedPage.cpp:195 writing a stale/oob Header into a slot aliasing a live object. Compiler/runtime SIZE_BITS agree, so this is a pure runtime geometry/index defect, not a handle-decode disagreement.",
+                "reachability": "medium",
+                "signature_fit": "Fits exactly: eager RC+GC; SIZE_BITS=32 makes _mapping the low word (0x8000xxxx+slot, top-32 zero); corrupts obj[0] of a live node; independent of inc/dec encoding so it survives NO_COMPACT (alloc set_mapping path) and the RC kill-switches. The compiler-encoding lane confirms the value can ONLY originate from a runtime Header write, narrowing the search to ind_to_header/object_to_ind/round_up boundary math (SizedPage.hpp:104-110, SizedPage.cpp:84).",
+                "why_header_shaped": "set_mapping writes m/8 into a 32-bit field at byte offset 0 of the Header; m/8 = 0x80000000+slot has its top 32 bits zero, so a Header store into a live obj[0] yields exactly 0x80015xxx with bit 63 clear -- the crash signature."
+            }
+        ]
+    }
+}
+{
+    "type": "started",
+    "key": "v2:67b2d175aa892864cb1fd27fe7cf60db9416565654cbbc5fcc5c2383abdffe1e",
+    "agentId": "ac1337c8773897831"
+}
+{
+    "type": "started",
+    "key": "v2:57eb7e8edb10c65758e58b7af36043cc62bf0657749e3d223c1a12d104cc14cd",
+    "agentId": "a908312bb7d49e57e"
+}
+{
+    "type": "started",
+    "key": "v2:18a070634c3cd856f395b6b27df65d4760435b1de5acb1b58b054bc6cae2935c",
+    "agentId": "a02f866800c3d73ee"
+}
+{
+    "type": "started",
+    "key": "v2:ea2415b1cfc1af739be74b97be0c8463dfd5ecc7afaf98d3c0471812d16afff0",
+    "agentId": "a26d8a1751a46c037"
+}
+{
+    "type": "started",
+    "key": "v2:0431b8f73a6114bc067f0745645d13a228dc311dc34f4fa9fea52d4aedd9004b",
+    "agentId": "a709886b90edd0c02"
+}
+{
+    "type": "result",
+    "key": "v2:9867efc26d829449f8b7dac9d7a2320b351c5b23b67558ec4d243e6690162c8b",
+    "agentId": "a21a4176fba5033bf",
+    "result": {
+        "hypotheses": [
+            {
+                "id": "defer-free-double-enqueue-foreign-pop",
+                "mechanism": "A handle freed twice (or freed-then-re-freed) before a barrier drains it is pushed onto deferred_frees twice; at drain the first hfree_impl frees+puts the slot (set_pointer(null) + handle_table.put writes a free-list next-link into the Mapping word), and the second pass's is_free() guard can miss it, so hfree_impl runs again on a now-recycled/reused mapping whose get_pointer() now returns a DIFFERENT (foreign-page) backing, free_allocation re-routes that pointer via get_unaligned to its real page B and free_local()s it there a second time, duplicating it on B's free list so a later B.alloc pops it twice and the second alloc stamps B's Header (set_mapping(&m)) into an oid that has already been handed out as a live object.",
+                "location": "runtime/core/ThreadCache.cpp:499 (only is_free() guard), 539 (deferred_frees.push), 576-585 (drain re-frees), 117-134 (free_allocation re-route), runtime/core/SizedPage.cpp:26-36 (alloc stamps set_mapping)",
+                "preconditions": "Same handle reaches defer_free twice within one barrier epoch while still live (program double-free, or a child enqueued into deferred_child_decs that decrements a parent to 0 and is also separately freed). is_free() must read false on both enqueues (slot still live, backing set) and the second drain's is_free() check (ThreadCache.cpp:578) must read false because handle_table.put wrote a next-link with bit-62 clear.",
+                "reachability": "low",
+                "signature_fit": "Eager-RC config; survives NO_COMPACT/NO_REUSE_CACHE/NO_GC_FREE (program-side, not GC); deposited value is a Header low word because the duplicated/foreign block is consumed by SizedPage::alloc's set_mapping(&m)=0x80000000+slot. Rarity fits a narrow double-enqueue window. WEAKNESS: requires a program double-free; binarytrees is not known to double-free, so reachability is low unless a child-dec path manufactures the second free.",
+                "why_header_shaped": "The deposited value is written by SizedPage::alloc -> Header::set_mapping(&m) (SizedPage.cpp:33), which stores (Mapping*)/8 = 0x80000000 + table_slot. A free-list next-link would instead be an objects[]/heap address; this value is specifically a header word because alloc is the writer.",
+                "confirming_experiment": "Add an always-on assertion in ThreadCache::defer_free (after line 499) and in drain_deferred (line 577) that the handle is not already present in deferred_frees / not already null-backed: ALASKA_SANITY(!m->is_free() && get_pointer()!=0). Independently, in SizedAllocator::release_local/free_local assert the freed ptr lies in [objects_start, objects_end) of THIS page; a foreign/duplicate pointer trips it at free time (before the wild alloc)."
+            },
+            {
+                "id": "object-to-ind-oob-no-bounds-check-in-release-alloc",
+                "mechanism": "Neither SizedPage::alloc (oid=object_to_ind(o)) nor release_local/release_remote (oid=object_to_ind(ptr)) nor size_of/update_size_slack bounds-check oid against capacity before indexing ind_to_header(oid)=headers+oid; for class 0 the object region ends exactly at page end and the header region [0,699048) abuts objects[699056,2097152), so any pointer even slightly past this page's object area (oid>=87382) makes ind_to_header land INSIDE the live object region and a header store corrupts obj[0] of a live node. The wild write is thus a header store at a miscomputed oid, not bad data.",
+                "location": "runtime/core/SizedPage.cpp:31-35 (alloc, no oid<capacity check), 39-46/49-56 (release_*), runtime/include/alaska/SizedPage.hpp:104-111 (ind_to_header/object_to_ind do raw arithmetic), 90-94 (size_of)",
+                "preconditions": "A pointer p with object_to_ind(p) in [capacity, capacity + (page_size-objects)/object_size) reaches one of these routines on a class-0 page. p must be at page-offset >= 2097152 (i.e. the immediately following 2MiB page) to make oid>=capacity but still land the header write inside [699056,2097152).",
+                "reachability": "medium",
+                "signature_fit": "Always-on (no kill switch gates alloc/release_*); eager-RC irrelevant. The deposited value is a Header word for the alloc case. SIZE_BITS=32 makes sizeof(Header)==8 and capacity==87381 with objects_end==page end (zero end-slack), which is exactly the geometry that lets a one-page-over pointer alias the object region. This is the necessary CONDITION the crash requires; it pairs with whichever upstream path supplies the off-by-one/foreign pointer.",
+                "confirming_experiment": "Add an always-on guard at the top of SizedPage::alloc (after allocator.alloc()) and both release_* : ALASKA_ASSERT(oid >= 0 && oid < capacity, \"oid OOB page=%p oid=%ld cap=%ld ptr=%p\"). This fires at the exact wild store with the page, oid, and pointer, pinning whether the offending pointer is same-page (off-by-one) or foreign (next page)."
+            },
+            {
+                "id": "localize-source-release-after-set-pointer",
+                "mechanism": "ThreadCache::localize copies the object into the LocalityPage, calls m.set_pointer(d) FIRST (line 733), THEN source_page->release_remote(m, ptr) using the saved OLD ptr; the source SizedPage's free_remote CAS-pushes ptr onto remote_free. If localize ever runs concurrently with the owner thread's swap()/pop()/free_local() on that same source page's ShardedFreeList (the owner's free_local at ShardedFreeList.hpp:99-104 is a non-atomic b->next=local_free;local_free=b that does not coordinate with the lock-free remote CAS), a lost update can drop or relink a block; a relinked/foreign block later popped by alloc drives object_to_ind into the wrong slot and set_mapping stamps a header word into a live object.",
+                "location": "runtime/core/ThreadCache.cpp:705-737 (localize: set_pointer then release_remote with old ptr), runtime/core/SizedPage.cpp:49-56 (release_remote->free_remote), runtime/include/alaska/ShardedFreeList.hpp:80-120 (swap/pop atomic vs free_local non-atomic)",
+                "preconditions": "localize must actually run (feed_hotness_buffer / localize_structure). In the anchorage binarytrees config these are not called from the benchmark, so localize is effectively dormant; and when it does run it is inside with_barrier (world stopped, all tc locks held), which serializes it against mutator frees. So the race window is essentially closed in this config.",
+                "reachability": "low",
+                "signature_fit": "Cross-page by construction and the deposited value would be a Header word (via the later alloc's set_mapping). But it does NOT fit the crash signature well: localize is not exercised by binarytrees and runs world-stopped, so it cannot race the owner's free_local. Listed only to discharge the lane's explicit ask; should be dropped unless feed_hotness_buffer is wired into the benchmark.",
+                "why_header_shaped": "Same as the others: the eventual corrupting store is SizedPage::alloc's set_mapping(&m) = 0x80000000+slot, a header low word, not a heap address.",
+                "confirming_experiment": "READ-ONLY: confirm via grep that no binarytrees/driver TU calls localize_structure or feed_hotness_buffer; if none, refute this hypothesis. If some path does, add an assertion in localize that source_page->is_owned_by some tc and that release_remote's ptr is in source_page's object range."
+            }
+        ]
+    }
+}
+{
+    "type": "started",
+    "key": "v2:27147a2c4a549c2c2d7e1c81ef77da16ae8087555c3b182eac8f5d16f1a4e086",
+    "agentId": "a25680129c775b60a"
+}
+{
+    "type": "result",
+    "key": "v2:c9b14149a29ecb676dd8e819be9fa5c322a0614f556b98a8738b0c496603dd82",
+    "agentId": "a4351f91ec915b3b1",
+    "result": {
+        "verdict": "SURVIVES",
+        "reason": "The EXISTING GUARD lens finds no guard that refutes this hypothesis. The factual core is confirmed: SizedPage::alloc (runtime/core/SizedPage.cpp:27-35) computes `oid = object_to_ind(o)` and does `ind_to_header(oid)->set_mapping(&m)` (line 33) with NO `oid < capacity` check and NO `is_free()` check; the indexing helpers (runtime/include/alaska/SizedPage.hpp:106-111) are unchecked signed division/pointer-arithmetic. The allocator chain self-documents its lack of validation: SizedAllocator.hpp:36 (\"no checks are made that this pointer is valid!\") and ShardedFreeList::pop (runtime/include/alaska/ShardedFreeList.hpp:68-76) follows `local_free->next` with zero bounds checking. I searched the whole alloc path (SizedPage::alloc -> SizedAllocator::alloc -> ShardedFreeList::pop, and the callers allocate_backing_data/halloc in runtime/core/ThreadCache.cpp:95-112,241-246) for any contains()/bounds/is_free assert; none exists. ALASKA_ASSERT is always-on (runtime/include/alaska/utils.h:34) but there is no such assert in this path; ALASKA_SANITY (utils.h:16-31) is compiled out unless ALASKA_SANITY_CHECK. The value-shape argument also holds: handle-table base is 0x8000000000000000>>(32-3)=0x400000000 (Configuration.hpp:22) so set_mapping's payload (Mapping*)/8 = 0x80000000+slot writes exactly a 0x80015xxx low word into the _mapping bitfield (bits 0-31 under SIZE_BITS=32), and it is alloc-path/eager-RC/compaction agnostic, matching the signature. The ONE structural bound I found, extend() capping the bump pointer at objects_end (SizedAllocator.hpp:128, with objects_end = objects + capacity*object_size at line 142 and object_to_ind using the same objects base at SizedPage.hpp:107), provably keeps the BUMP path in-bounds (object_to_ind(bump) < capacity algebraically). That is precisely why the hypothesis is not self-refuting but also not self-sufficient: the only way alloc returns o >= objects_end is via a corrupted free-list `next` link, which the hypothesis lists as an unestablished precondition. So no guard makes the failure impossible (SURVIVES), but this is a missing-validation amplifier that depends on a separate prior write to poison a live slot's `next` link, which it does not itself supply.",
+        "evidence": "runtime/core/SizedPage.cpp:31-33 (no oid<capacity / is_free guard before set_mapping); the only enforced bound is runtime/include/alaska/SizedAllocator.hpp:128 (extend caps bump at objects_end), which leaves the free-list pop path (runtime/include/alaska/ShardedFreeList.hpp:68-76) entirely unvalidated"
+    }
+}
+{
+    "type": "started",
+    "key": "v2:5f4ba555d542c26c84a48471e82378f2a25811bb870b8e2f38e273f7655322ad",
+    "agentId": "a88fb7242c58ac623"
+}
+{
+    "type": "result",
+    "key": "v2:837cba1a3be461d3705b172a01ca26666aff7fc5387c86fc6b2d55542cddbd12",
+    "agentId": "aa1297208eba14f71",
+    "result": {
+        "hypotheses": [
+            {
+                "id": "missing-alloc-bounds-guard-capacity-adjacency",
+                "mechanism": "SizedPage::alloc unconditionally does h=ind_to_header(object_to_ind(o)); h->set_mapping(&m) with NO oid bounds check and NO is_free assert, so any o popped from the free list with object_to_ind(o) >= capacity writes &m/8 (a 0x80000000+slotword Header low word) into headers+oid which, because capacity is the truncated double 87381 leaving objects placed only an 8-byte gap above the header region, aliases live object memory: ind_to_header(capacity+1) == objects[0] exactly.",
+                "location": "runtime/core/SizedPage.cpp:31-34 (write at :33); geometry runtime/core/SizedPage.cpp:66-84; index math runtime/include/alaska/SizedPage.hpp:105-110",
+                "preconditions": "A pointer whose object_to_ind() >= capacity+1 reaches allocator.alloc()/pop() and is handed to SizedPage::alloc; the class-0 page (object_size 16) has capacity=87381 with header region [0,699048) immediately abutting objects at 699056, so an oid of only capacity+1 lands the header store on objects[0] (a long-lived node).",
+                "reachability": "high",
+                "signature_fit": "Deposited value is exactly h->set_mapping(&m) = (Mapping*)/8 = 0x80000000+slotword with size_slack(top 32 bits)=object_size-size=0 -> a 0x000000008001 5xxx word, top bit clear. Eager-RC/GC independent (alloc is config-agnostic). SIZE_BITS=32 makes sizeof(Header)=8, which is what yields the 8-byte gap and the capacity+1 aliasing. Survives NO_COMPACT/NO_REUSE_CACHE/NO_GC_FREE/NO_FREE_DEC because it is on the plain alloc path, not in any of those subsystems. The prior work's claimed 'always-on oid bounds + is_free check' is NOT PRESENT in the current SizedPage::alloc -- that elimination has a concrete hole: the guard does not exist, so nothing rejects an out-of-bounds slot.",
+                "why_header_shaped": "The store is set_mapping(&m), whose definition _mapping=(uint64_t)m/8 produces precisely the 0x80000000+slotword pattern for m in the MAP_FIXED handle table at 0x400000000 (Configuration.hpp:21-22 -> 0x8000...>>29=0x400000000); size_slack write is object_size-size=16-16=0, so the high 32 bits are zero, giving a value with bit63 clear that alaska_translate returns raw."
+            },
+            {
+                "id": "freelist-next-link-overshoot-pop",
+                "mechanism": "The ShardedFreeList stores its next link in the freed slot's obj[0] (Block{next}); pop() blindly returns local_free and follows local_free->next with no validation. If any freed slot's obj[0] still holds (or is overwritten with) a value one slot past the page (objects_end+16), pop() hands that o to SizedPage::alloc, object_to_ind(o)=capacity+1, and set_mapping writes the Header word into objects[0].",
+                "location": "runtime/include/alaska/ShardedFreeList.hpp:68-76 (pop) and :99-104 (free_local); consumed at runtime/include/alaska/SizedAllocator.hpp:89-99; written at runtime/core/SizedPage.cpp:33",
+                "preconditions": "A free_local() (release_local) is called with a pointer p such that p or a p->next link equals objects_end+16 (capacity+1 slot), or a freed slot's obj[0] link is left/clobbered to that value before it is popped. binarytrees frees ~hundreds of thousands of 16-byte nodes through release_local in a tight churn while the long-lived tree's nodes sit at low object indices.",
+                "reachability": "medium",
+                "signature_fit": "Single-threaded benchmark (bench/src/GCBench/binarytrees.c:13-19) routes every free through release_local->free_local, so the only list in play is local_free; a corrupted/overshooting LOCAL link reproduces the ~1/64-1/250 rarity without any remote-free race. Eager-RC/GC, SIZE_BITS=32. Independent of compaction/reuse/reclaim/dec subsystems (pure alloc/free path), matching all four kill-switch survivals. NOTE: a normal free-list link is an objects[] heap address (bit63 clear, NOT 0x8000xxxx-shaped) -- consistent with the prompt -- the header SHAPE only appears once the bad index makes set_mapping land in objects[0].",
+                "why_header_shaped": "The deposited value is not the free-list link itself (a heap address) but the set_mapping(&m) Header word written at the OOB index reached via the bad link; that word is 0x80000000+slotword with size_slack=0 as in hypothesis 1."
+            },
+            {
+                "id": "size-slack-store-tearing-but-mapping-store-independent",
+                "mechanism": "set_mapping writes only the low 32-bit bitfield (_mapping, bits 0-31) and the separate statement h->size_slack writes only bits 32-63; these are two independent non-atomic 32-bit RMWs. If h is correctly in-bounds, this is benign, but it confirms a set_mapping store ALONE deposits a clean 0x80000000+slotword in the low word with the high word untouched -- i.e. update_size_slack / release '*->size_slack=0' (which touch only bits 32-63) provably CANNOT manufacture the 0x80015xxx low word, narrowing the wild-writer to the low-word set_mapping store at SizedPage.cpp:33 (alloc) as the sole eager-config source.",
+                "location": "runtime/include/alaska/SizedPage.hpp:64-67 (bitfield + set_mapping) and runtime/core/SizedPage.cpp:33-34, :42-43, :53-54; update_size_slack at SizedPage.hpp:47-49",
+                "preconditions": "None beyond reaching the set_mapping store; this hypothesis is an elimination that hardens hypotheses 1/2 by proving the low-word writer is uniquely set_mapping(&m) on the alloc path (compaction's *left=*right and set_mapping are off under NO_COMPACT).",
+                "reachability": "high",
+                "signature_fit": "Confirms the value 0x000000008001 5xxx (low=Mapping/8, high=size_slack=0) can only come from a full set_mapping low-word write, not from any size_slack-only writer; ties the corruption to SizedPage::alloc:33 under the exact SIZE_BITS=32 layout. Config-agnostic, survives all listed kill-switches.",
+                "why_header_shaped": "By construction _mapping=(Mapping*)/8 is the only field that holds a 0x80000000+slot pattern, and it occupies the low 32 bits that the application reads as obj[0]; size_slack (high 32 bits)=0 makes the full 64-bit word bit63-clear."
+            }
+        ]
+    }
+}
+{
+    "type": "started",
+    "key": "v2:861201aef180e00b2339fac4ff7cb3ec6474ecf588e2ba0095246381356c17fc",
+    "agentId": "a2a0f2c825820eb27"
+}
+{
+    "type": "result",
+    "key": "v2:c4d845bfb93634f8f562bf3fe7f61945dceebb8942ac5ce3394fb57f8b76a61e",
+    "agentId": "aca5fd753b3989153",
+    "result": {
+        "verdict": "REFUTED",
+        "reason": "The hypothesis correctly identifies a real code hole: the relocation/compaction reached through Localizer::feed_hotness_buffer is NOT gated by ALASKA_NO_COMPACT. Localizer.cpp:73-74 calls rt.heap.compact_locality_pages()+compact_sizedpages() unconditionally, never consulting the no_compact flag that init.cpp reads, and ThreadCache::localize (ThreadCache.cpp:705-737) does a raw m.set_pointer write plus memcpy/memset/release_remote with no kill-switch. But under the SIGNATURE-CONSISTENCY lens it is REFUTED because the path is provably DEAD in the crashing build/benchmark, so it cannot be the source of a crash that occurs in plain binarytrees. (1) feed_hotness_buffer has exactly two callers: yukon/yukon.cpp:156,166 and rt/sim.cpp:92,94 (a grep of every localizer/localize call site confirms no others). yukon.cpp is gated on ALASKA_YUKON (CMakeLists.txt:279-298) and uses RISC-V CSR ops (rdcycle, write_csr CSR_HTDUMP); sim.cpp is gated on ALASKA_HTLB_SIM (CMakeLists.txt:181-183) via a sim_background_thread constructor. Both switches are OFF in build/refcount-gc-anchorage/CMakeCache.txt (ALASKA_YUKON:BOOL=OFF, ALASKA_HTLB_SIM:BOOL=OFF) and default OFF (CMakeLists.txt:38,40) -- neither source file is compiled into libalaska, so Localizer.cpp:73-74 is never reached. (2) The only other entry into ThreadCache::localize is localize_structure (halloc.cpp:316), whose sole caller is test/tree.c:53 -- a distinct manual test program, NOT bench/src/GCBench/binarytrees.c. The binarytrees source (make/check/freetree/main) contains no localize_structure, feed_hotness_buffer, or hotness calls. (3) The periodic barrier_thread_func (init.cpp:66-181), the one GC thread that actually runs in this build, never calls localize or feed_hotness_buffer. The hypothesis's own preconditions ('reachability: low ... likely not exercised') and confirming_experiment ('If the harness never localizes, drop this') concede this; the experiment resolves to 'harness never localizes.' Since the mechanism never executes for binarytrees, it cannot deposit the 0x80015xxx header word into a live node's obj[0]; the crash survives NO_COMPACT for an unrelated reason -- exactly the lane's branch where un-exercised compaction does not explain the signature. Dead code in the crashing configuration.",
+        "evidence": "runtime/CMakeLists.txt:181-183 (sim gated on ALASKA_HTLB_SIM) and 279-298 (yukon gated on ALASKA_YUKON); build/refcount-gc-anchorage/CMakeCache.txt: ALASKA_YUKON:BOOL=OFF, ALASKA_HTLB_SIM:BOOL=OFF (feed_hotness_buffer callers not compiled); halloc.cpp:316 localize_structure called only from test/tree.c:53, never from bench/src/GCBench/binarytrees.c; Localizer.cpp:73-74 un-gated compact (the real but unreachable hole); init.cpp:66-181 barrier thread never invokes localize"
+    }
+}
+{
+    "type": "started",
+    "key": "v2:c2704873a1e6cc610aa42c1045567302493aadf874f86f1cf3263d846db703f2",
+    "agentId": "a9592ca4408dd6994"
+}
+{
+    "type": "result",
+    "key": "v2:21510cb61a9fa0db3e56301666c4e5da6ea26be91f35b30b962d875da98c8746",
+    "agentId": "af03576c98c9c9786",
+    "result": {
+        "hypotheses": [
+            {
+                "id": "reuse-consume-no-setmapping-cannot-fit",
+                "mechanism": "The reuse-cache consume fast path performs reset()+set_pointer()+update_size_slack() but NO set_mapping(): update_size_slack writes only the size_slack bitfield (bits 32-63), so even a totally wrong header index would deposit a size_slack value (top-32-bits), never a 0x8000xxxx+slot low word; the reuse path therefore structurally cannot produce the crash signature.",
+                "location": "runtime/core/ThreadCache.cpp:219-224 (consume) + runtime/include/alaska/SizedPage.hpp:47-49 (update_size_slack writes only size_slack, bits 32-63)",
+                "preconditions": "Any reuse-cache hit in halloc. set_mapping (the only header LOW-word writer) lives in SizedPage::alloc:33 and compact:195/198/297, none of which the reuse consume path calls.",
+                "reachability": "low",
+                "signature_fit": "DIRECT REFUTATION of fit. Deposited value would be size_slack (bits 32-63), not a Mapping/8 low word with top-32-bits zero. Does not match 0x80015xxx. Independent of NO_COMPACT/NO_REUSE_CACHE/NO_GC_FREE/NO_FREE_DEC.",
+                "why_header_shaped": "It is NOT header-low-word-shaped: update_size_slack assigns object_size-requested to the size_slack bitfield occupying bits 32-63 of the 8-byte Header, leaving _mapping (bits 0-31) untouched, so it can never write a 0x8000xxxx+slot value into the low word of any target it hits.",
+                "confirming_experiment": "READ-ONLY: confirm the consume block (ThreadCache.cpp:210-229) contains no set_mapping/h->_mapping= store; grep shows set_mapping callers are only SizedPage::alloc:33, compact:195/198/297-298, jumble. Always-on assertion: in update_size_slack, assert((object_size - requested) <= object_size) and assert the header index is < capacity, proving no _mapping bits are written."
+            },
+            {
+                "id": "reuse-cache-inert-in-deferred-config",
+                "mechanism": "The synchronous reuse-cache STASH (hfree_impl:390) requires allow_reuse=true, but in the crash config program frees go through alaska_hfree_now->defer_free->drain_deferred->hfree_impl(...,allow_reuse=false) (ThreadCache.cpp:584), so node-class frees never stash; the only allow_reuse=true synchronous freer of node-sized objects is reclaim_dead_handles' tc.hfree (refcount.cpp:472), which ALASKA_NO_GC_FREE disables (init.cpp:140-143) -- and the crash survives NO_GC_FREE.",
+                "location": "runtime/rt/halloc.cpp:214-217 (deferred default) ; runtime/core/ThreadCache.cpp:564-588 (drain_deferred uses allow_reuse=false) ; runtime/rt/refcount.cpp:472 (reclaim tc.hfree, NO_GC_FREE-gated)",
+                "preconditions": "Default deferred dec-on-free (ALASKA_NO_FREE_DEC_DEFER unset). 16-byte node frees are enqueued, not synchronously freed, so they hit drain_deferred's allow_reuse=false path and never reach the stash at hfree_impl:390.",
+                "reachability": "low",
+                "signature_fit": "Explains why the crash SURVIVES NO_REUSE_CACHE and NO_GC_FREE: the only node-class stash producer (reclaim) is killed by NO_GC_FREE, and program frees never stash because they are deferred with allow_reuse=false. The reuse cache is genuinely off the node allocation path -- consistent with prior 'survives NO_REUSE_CACHE' elimination having no exploitable gap.",
+                "confirming_experiment": "READ-ONLY: verify drain_deferred passes allow_reuse=false (ThreadCache.cpp:584) and the huge/large bypasses (ThreadCache.cpp:494,512) only fire for size>=kDeferredHugeBytes (262144) so 16-byte nodes never take them; confirm halloc.cpp default branch is defer (line 214). Assertion: in hfree_impl, assert(!(allow_reuse && !quarantine_slot) || page->get_object_size()!=16 || reclaim_in_progress) is too strong; instead always-on count of node-class stashes -- expect 0 under default deferred config."
+            },
+            {
+                "id": "reuse-consume-ungated-but-starved",
+                "mechanism": "halloc's reuse consume block (ThreadCache.cpp:210-229) is NOT guarded by reuse_cache_enabled(), unlike the stash at hfree_impl:390; under ALASKA_NO_REUSE_CACHE the stash never runs so reuse_cache[cls].m stays null and the ungated consume never fires, making the asymmetry benign in steady state -- the only theoretical hole is a stale entry left in the array across a runtime toggle, which cannot happen because reuse_cache_enabled() is read once and cached (ThreadCache.cpp:341-345).",
+                "location": "runtime/core/ThreadCache.cpp:210-229 (consume, no reuse_cache_enabled() check) vs ThreadCache.cpp:390 (stash, gated) and 341-345 (read-once cache)",
+                "preconditions": "Would require an entry present in reuse_cache[cls] while reuse_cache_enabled()==false. Impossible after process start because the gate is read-once-cached and the sole stash site honors it, so no entry is ever created when disabled.",
+                "reachability": "low",
+                "signature_fit": "Code-quality gap (ungated consume) but NOT signature-fitting: cannot create the deposited 0x80015xxx low word (see reuse-consume-no-setmapping-cannot-fit), and cannot bypass NO_REUSE_CACHE because no entry can exist when disabled. Confirms the NO_REUSE_CACHE elimination is sound.",
+                "why_header_shaped": "Not header-shaped: even if a stale entry were consumed, the consume path's only header write is update_size_slack (size_slack bits 32-63), never a _mapping low word; and the e.page==size_classes[cls] guard plus per-page-fixed objects/object_size make the header index in-bounds for e.page.",
+                "confirming_experiment": "READ-ONLY: confirm reuse_cache_enabled() (ThreadCache.cpp:341-345) caches getenv result in a static read once, and that ReuseEntry is only ever assigned at ThreadCache.cpp:406 (gated) and cleared at 144/219/227 -- so no entry can exist while the gate is false. Optional hardening: add reuse_cache_enabled() to the consume guard at line 214 for symmetry (does not change behavior)."
+            }
+        ]
+    }
+}
+{
+    "type": "started",
+    "key": "v2:69efd173afccb41dda81cbe2243daf21620cfcbac81ace7de3f666f3e74a580a",
+    "agentId": "a973e2e5a6d991514"
+}
+{
+    "type": "result",
+    "key": "v2:67b2d175aa892864cb1fd27fe7cf60db9416565654cbbc5fcc5c2383abdffe1e",
+    "agentId": "ac1337c8773897831",
+    "result": {
+        "verdict": "REFUTED",
+        "reason": "The hypothesis is itself an elimination: it claims the compiler passes emit NO SIZE_BITS/SQUEEZE_BITS-dependent encode/decode arithmetic, so a constant mismatch on the compiler side cannot deposit a header-shaped (m/8 = 0x80000000+slot) word into obj[0]; the wild write must be a runtime header store. Reading the actual pass code confirms this claim is correct, so the lane's compiler-runtime-sizebits-disagreement premise is REFUTED as a crash cause. Evidence: RefcountInc.cpp only inserts runtime calls -- alaska_inc_refcount at compiler/passes/RefcountInc.cpp:152,157 and alaska_inc_handles_in_range at 163,170 -- with no CreateShl/CreateLShr/CreateAnd anywhere. RefcountDec.cpp inserts only a pointer-typed load of the slot's old value (CreateLoad at compiler/passes/RefcountDec.cpp:281) handed to alaska_dec_refcount (line 284); the loaded value is the application's raw stored handle, never decoded, and the pass writes back nothing. Lower.cpp lowers alaska.translate by merely retargeting the existing call to the runtime symbol alaska_translate via getOrInsertFunction (compiler/passes/Lower.cpp:134) and setCalledFunction (line 152/154) -- it inlines no h>>29 / m/8<<32 / mask math. The one inline GEP (compiler/passes/Lower.cpp:176, alaska.derive) builds base+offset from the runtime-returned base pointer (call->getArgOperand(0)) using the application's own original GEP indices, not from decoding handle bits. A repo-wide grep across compiler/ for SIZE_BITS, SQUEEZE_BITS, >>29, <<32, CreateShl/LShr/AShr, 0x80000000, and m/8 returns ZERO hits in any pass (only linker-script ALIGN(64/8) math). Therefore no compiler-emitted constant can produce a 0x80015xxx low word; the deposited header word can only come from a runtime header store (SizedPage::set_mapping at runtime/core/SizedPage.cpp:33 and the compact-path Header copies/set_mapping). The hypothesis's mechanism holds and the compiler is correctly excluded. (Caveat: I confirmed the compiler-side claim directly from code; I was blocked from re-reading runtime alaska.hpp/translate.cpp in this pass, but the hypothesis's stated mechanism is purely about the compiler emitting no such math, which is what I verified.)",
+        "evidence": "compiler/passes/RefcountInc.cpp:152,157,163,170 (only call inserts, no shifts); compiler/passes/RefcountDec.cpp:281,284 (load+call, no write-back/decode); compiler/passes/Lower.cpp:134,152,176 (translate lowered to a runtime call, derive is a GEP on runtime base with app's own indices); plus empty grep across compiler/ for SIZE_BITS/SQUEEZE_BITS/>>29/<<32/CreateShl/0x80000000/m8."
+    }
+}
+{
+    "type": "started",
+    "key": "v2:9da1c2c79b5fc44a379d70efe2911d426cbb9c066fd024938f67e1d665d9e5aa",
+    "agentId": "a4b0a388d454833a8"
+}
+{
+    "type": "result",
+    "key": "v2:ea2415b1cfc1af739be74b97be0c8463dfd5ecc7afaf98d3c0471812d16afff0",
+    "agentId": "a26d8a1751a46c037",
+    "result": {
+        "verdict": "REFUTED",
+        "reason": "The encoding asymmetry is REAL and unguarded: to_handle encodes via (encode()<<ALASKA_SIZE_BITS)+offset = (m>>3)<<32 + offset (alaska.hpp:367), placing the offset in the full 32-bit field bits 0-31; from_handle decodes via h>>(ALASKA_SIZE_BITS-ALASKA_SQUEEZE_BITS)=h>>29 (alaska.hpp:382); APPLY_OFFSET masks the full (1<<32)-1 (translate.cpp:41). I confirmed the arithmetic numerically with the real table base 0x400000000 (Configuration.hpp:21, = 0x8000000000000000>>29): for offset<2^29 the round-trip from_handle(to_handle(m,off))==m exactly, and for offset>=2^29 the top bits of the 32-bit offset field bleed into the decoded Mapping* low bits (delta 0x1 at 2^29, 0x7 at ~2^32). No assert, clamp, or bounds check on offset magnitude exists anywhere in the translate/from_handle/to_handle/APPLY_OFFSET paths (grep of translate.cpp shows none), so as a latent bug the leak is genuinely unguarded for >512MiB intra-object offsets. HOWEVER it is REFUTED as the cause of THIS crash by the data geometry, which is the operative guard: a binarytrees node is 'struct{Node* left; Node* right;}' (16 bytes), so the only interior offsets ever encoded are 0 (obj[0]) and 8 (obj[1]); 8>>29==0, far below the 2^29=512MiB leak threshold, so from_handle round-trips the node's Mapping exactly and the mechanism CANNOT fire. Moreover, even if it could fire, it corrupts the DECODED Mapping* low bits (an inc/dec target word), it does NOT write into obj[0] of a live node, and the deposited bits would be offset-derived garbage, not a 0x8000xxxx+slot header word with zero top-32 bits. The crash signature requires a HEADER low word (matching SizedPage::Header.set_mapping = (uint64_t)m/8 into bits 0-31 under SIZE_BITS=32, SizedPage.hpp:64-67) deposited into a live node's obj[0]; this mechanism produces neither the right value shape nor the right target. The hypothesis self-concedes both points.",
+        "evidence": "runtime/include/alaska/alaska.hpp:382 (from_handle h>>29) vs :367 (to_handle offset in full 32-bit field) vs runtime/core/translate.cpp:41 (APPLY_OFFSET masks (1<<32)-1, no offset bound); precondition unreachable per node geometry (16-byte node, offsets 0/8 only) and signature requires header word per runtime/include/alaska/SizedPage.hpp:64-67"
+    }
+}
+{
+    "type": "started",
+    "key": "v2:fe44c147b7ffce2b62555e0883b143141e940441a7a344a66cd46c5d3831dead",
+    "agentId": "a6bc2d0da5e90da85"
+}
+{
+    "type": "result",
+    "key": "v2:69efd173afccb41dda81cbe2243daf21620cfcbac81ace7de3f666f3e74a580a",
+    "agentId": "a973e2e5a6d991514",
+    "result": {
+        "verdict": "REFUTED",
+        "reason": "The hypothesis's entire mechanism lives in the deferred-dec-on-free queue (defer_free -> deferred_frees.push at ThreadCache.cpp:539; double-enqueue + re-free at drain_deferred ThreadCache.cpp:576-585). That queue is gated by a kill-switch the crash signature says the bug SURVIVES. In alaska_hfree_now (halloc.cpp:208-218): `defer_off = getenv(\"ALASKA_NO_FREE_DEC_DEFER\") != nullptr` (line 211) and `defer = (free_dec_on && !defer_off) ? 1 : 0` (line 212). When ALASKA_NO_FREE_DEC_DEFER=1, defer=0, so the `if (defer) { ...; get_tc()->defer_free(ptr); return; }` branch (lines 214-218) is NOT taken; instead the inline path runs drain_inc + alaska_hfree_dec_children + get_tc()->hfree(ptr) (lines 229-242), which never calls defer_free. I confirmed defer_free is the SOLE producer of deferred_frees (only push is ThreadCache.cpp:539, inside defer_free) and its SOLE caller is halloc.cpp:216 (grep: no other ->defer_free / deferred_frees.push). The barrier still calls drain_deferred per-thread (init.cpp:119-120) but on an empty queue (its own comment, init.cpp:117-118: \"A no-op (empty queues) unless deferred mode is enabled\"), and del_threadcache (Runtime.cpp:124-141) only rotates quarantine / flushes reuse cache, never pushing to deferred_frees. Therefore, in the NO_FREE_DEC_DEFER configuration where the crash STILL reproduces, the deferred-free queue is provably empty and the double-enqueue/re-free path is structurally dead code: the hypothesized writer cannot run. (The even stronger NO_FREE_DEC, which the bug also survives, likewise forces defer=0 via free_dec_on=false at halloc.cpp:210.) The mechanism is disabled by a switch the bug outlives, so it cannot be the cause.",
+        "evidence": "runtime/rt/halloc.cpp:211-218 (defer kill-switch + only defer_free call site); runtime/core/ThreadCache.cpp:539 (only deferred_frees producer); runtime/rt/init.cpp:117-120 (barrier drain is a no-op on empty queues)"
+    }
+}
+{
+    "type": "started",
+    "key": "v2:320d23ffaeb954e4c80a4ee2749869f63116c2f751662d8a66635ab821fe3226",
+    "agentId": "a87bd541e6b4afb91"
+}
+{
+    "type": "result",
+    "key": "v2:fe44c147b7ffce2b62555e0883b143141e940441a7a344a66cd46c5d3831dead",
+    "agentId": "a6bc2d0da5e90da85",
+    "result": {
+        "verdict": "REFUTED",
+        "reason": "The entire double-enqueue/foreign-pop mechanism lives behind the deferred-free path, which the crash's own kill-switch list disables. In runtime/rt/halloc.cpp:208-218 the `defer` flag is computed as `free_dec_on = (getenv(\"ALASKA_NO_FREE_DEC\")==nullptr)` then `defer = (free_dec_on && !defer_off) ? 1 : 0`; only when `defer` is true does it call `get_tc()->defer_free(ptr)` (halloc.cpp:216), which is the SOLE caller of defer_free (the only call site in the repo). With ALASKA_NO_FREE_DEC=1, free_dec_on is false, defer is 0, defer_free is never invoked, so deferred_frees (the queue the hypothesis double-pushes onto at ThreadCache.cpp:539) is always empty and drain_deferred (ThreadCache.cpp:564, called from the barrier at init.cpp:120 and the overflow path at ThreadCache.cpp:553) is a no-op. Since the observed crash SURVIVES NO_FREE_DEC=1, and NO_FREE_DEC=1 fully disables this mechanism, the mechanism cannot be the cause. The hypothesis's own signature_fit conspicuously lists only NO_COMPACT/NO_REUSE_CACHE/NO_GC_FREE as survived and omits NO_FREE_DEC — exactly the switch that kills it. Independently, the stated precondition is also false: the hypothesis claims the second drain's is_free() guard (ThreadCache.cpp:578) reads false because handle_table.put wrote a next-link with bit-62 clear, but put writes via Mapping::set_next (alaska.hpp:164-170) which sets kInvlBit (bit 62), so a put-back slot reads is_free()==true and both the enqueue guard (line 499) and drain guard (line 578) correctly skip it. The header-shaped value claim is plausible but moot given the path is dead under NO_FREE_DEC.",
+        "evidence": "runtime/rt/halloc.cpp:210-217 (NO_FREE_DEC -> defer=0 -> defer_free never called; sole caller) refutes via the NO_FREE_DEC kill-switch; runtime/include/alaska/alaska.hpp:164-170 (set_next sets kInvlBit) refutes the is_free()==false precondition at runtime/core/ThreadCache.cpp:578"
+    }
+}
+{
+    "type": "started",
+    "key": "v2:b49724fe87d47c71672a57d73a3adb89b7dfdb37bb172e790a3a078400bddb16",
+    "agentId": "a6da1a352f3e26142"
+}
+{
+    "type": "result",
+    "key": "v2:0431b8f73a6114bc067f0745645d13a228dc311dc34f4fa9fea52d4aedd9004b",
+    "agentId": "a709886b90edd0c02",
+    "result": {
+        "evidence": "runtime/include/alaska/alaska.hpp:367 (to_handle: out=(encode()<<32)+offset, offset is uint32_t) vs alaska.hpp:382 (from_handle: h>>(32-3)=h>>29) vs bench/src/GCBench/binarytrees.c:13 (struct node{node*l,*r;} -> field offsets 0 and 8) vs runtime/core/ThreadCache.cpp:247,326 (halloc returns to_handle() with default offset=0)",
+        "reason": "The bit asymmetry the hypothesis names is real and present in the source: to_handle (alaska.hpp:367) packs a 32-bit offset into bits 0-31 of the handle as ((m>>3)<<32)+offset, while from_handle (alaska.hpp:382) decodes with h>>(ALASKA_SIZE_BITS-ALASKA_SQUEEZE_BITS) = h>>29 (confirmed ALASKA_SIZE_BITS=32, ALASKA_SQUEEZE_BITS=3 in configs/anchorage.config:31-32 and config.alaska.cmake:15,18). Decoding therefore shifts offset bits 29/30/31 into Mapping* bits 0/1/2, so any handle carrying an interior offset >= 2^29 (512 MiB) decodes to a corrupted Mapping*. But the precondition cannot arise in this workload. The binarytrees node is `struct node { struct node *l, *r; }` (binarytrees.c:13) -- 16 bytes, with only two pointer fields at byte offsets 0 (l) and 8 (r); check()/make()/freetree() touch only n->l and n->r (binarytrees.c:14-29). halloc returns the offset-0 handle (ThreadCache.cpp:247,326, both `m->to_handle()` with default offset=0); the sole nonzero-offset caller is alaska_handle_for in liballocs_export.cpp:68, explicitly \"For debug purposes only\" and not on the binarytrees path. The largest interior offset ever decoded is 8; 8 >> 29 = 0, so from_handle(h+8)>>29 == (h>>29) == m exactly -- the round-trip is bit-exact and no bit leaks into the Mapping pointer. The 2^29=536,870,912-byte threshold is seven orders of magnitude above any offset a 16-byte node can produce. Additionally, even if it fired, this mechanism corrupts the low 3 bits of a decoded Mapping* (an inc/dec target), not obj[0] of a live node, and so could never deposit a 0x80015xxx SizedPage::Header low word into object memory -- it fails the crash signature on two independent counts. The hypothesis is self-refuting (its own signature_fit field concedes it \"CANNOT fire for the node class\"), and the cited source confirms every premise of that concession.",
+        "verdict": "REFUTED"
+    }
+}
+{
+    "type": "started",
+    "key": "v2:e305b2f3c9b94d142a33d82ea7a80e53e204f8e526da5e0138f22ccb27485137",
+    "agentId": "ad2cb4a11919101b0"
+}
+{
+    "type": "result",
+    "key": "v2:741b711f5178c9dfe227718e0759cfa6ecc0a16cb34149b9f4f1d403f386300b",
+    "agentId": "a4b6eb7a3954c35db",
+    "result": {
+        "verdict": "REFUTED",
+        "reason": "The hypothesis is correct as a code observation (Localizer.cpp:73-74's compact calls and the whole ThreadCache::localize relocation at ThreadCache.cpp:705-737 are genuinely NOT gated by ALASKA_NO_COMPACT — only init.cpp:155's compact_sizedpages is), but the LENS=EXISTING GUARD asks whether a guard prevents the precondition from ever being reached in this benchmark/config, and a build-time + workload guard does exactly that. The relocation paths are unreachable in binarytrees-under-refcount-gc-anchorage: (1) The ONLY callers of feed_hotness_buffer in the entire non-build source tree are runtime/yukon/yukon.cpp:166 and runtime/rt/sim.cpp:94. yukon.cpp is compiled only into a separate `yukon` shared library under if(ALASKA_YUKON) (CMakeLists.txt:279-282) and is NOT linked into libalaska; rt/sim.cpp is appended to SOURCES only under if(ALASKA_HTLB_SIM) (CMakeLists.txt:181-183). The target config's CMakeCache (build/refcount-gc-anchorage/CMakeCache.txt) shows ALASKA_HTLB_SIM:BOOL=OFF and ALASKA_YUKON:BOOL=OFF, so neither driver is even present in the binary. (2) The ONLY caller of localize_structure (the third entry, halloc.cpp:316/330) is test/tree.c:53 — a standalone test program, not the binarytrees benchmark. The actual benchmark bench/src/GCBench/binarytrees.c contains only `main` (line 32) and no localize_structure/feed_hotness/get_hotness_buffer call, and there is no bench harness wrapper that injects one (bench/ holds only bin/ir/results/src, no driver script). (3) ThreadCache::localize has no other reachable caller: the only references in non-build sources are its own two overloads (ThreadCache.cpp:695/701/705) plus the two gated-off sites above. The periodic barrier thread (init.cpp:75-181), which is the sole driver of GC/compaction in this config, never calls localize, feed_hotness_buffer, or the Localizer.cpp:73-74 compact path — it only runs drain/reclaim/cycle and the NO_COMPACT-gated compact_sizedpages. Therefore the relocation/compaction at Localizer.cpp:73-74 is never executed in this benchmark, cannot deposit a SizedPage::compact *left=*right header word into a live node, and 'crash survives NO_COMPACT' is fully explained by the gated compact_sizedpages being the only compaction that runs — the ungated Localizer compaction is dead code for this workload. The hypothesis's own confirming_experiment (\"if the harness never localizes, drop this\") resolves to drop.",
+        "evidence": "runtime/CMakeLists.txt:181-183 (rt/sim.cpp under ALASKA_HTLB_SIM) and 279-282 (yukon.cpp under ALASKA_YUKON, separate lib); build/refcount-gc-anchorage/CMakeCache.txt: ALASKA_HTLB_SIM:BOOL=OFF, ALASKA_YUKON:BOOL=OFF; bench/src/GCBench/binarytrees.c (only `main` at :32, no localize call); test/tree.c:53 is the sole localize_structure caller; ThreadCache.cpp:705-737 localize callers limited to gated Localizer.cpp:62 and halloc.cpp:330; init.cpp:75-181 barrier thread never calls localize/feed_hotness"
+    }
+}
+{
+    "type": "started",
+    "key": "v2:a606b8eff3d71c48b4dc2e1b2171668bd33e716f01e2962a800729b93f3e6d0a",
+    "agentId": "a9dbd2e89aaf636f5"
+}
+{
+    "type": "result",
+    "key": "v2:5f4ba555d542c26c84a48471e82378f2a25811bb870b8e2f38e273f7655322ad",
+    "agentId": "a88fb7242c58ac623",
+    "result": {
+        "verdict": "REFUTED",
+        "reason": "The hypothesis bundles a TRUE identity sub-claim with a FALSE fault mechanism. The identity part is correct: under ALASKA_SIZE_BITS=32 the Header is `uint64_t _mapping:32` then `uint32_t size_slack:32` (SizedPage.hpp:64-67), and on little-endian x86-64 the first-declared `:32` field occupies the least-significant 32 bits (bytes 0-3), so set_mapping (SizedPage.hpp:67) writing `_mapping=(uint64_t)m/8 = 0x80000000+slot` does deposit exactly a 0x80015xxx-shaped low word. That part is unrefutable groundwork, not a defect. But the proposed MECHANISM -- a misdirected/OOB Header store from the surviving alloc path (SizedPage.cpp:31-33) landing in obj[0] of a live node -- is prevented by an existing layout invariant plus the allocator's range invariant. (1) DISJOINT REGIONS: set_size_class places objects at `round_up((uintptr_t)(headers + capacity), 16)` (SizedPage.cpp:84), so the header region [memory, memory + capacity*sizeof(Header)) ends at or below `objects`; for the 16B class it is [0,699048) with objects at 699056, with even the padding-gap address ind_to_header(capacity) at byte 699048 still strictly BELOW objects. For ANY oid in [0,capacity), ind_to_header(oid)=headers+oid (SizedPage.hpp:105) lies in [memory, memory+capacity*sizeof(Header)) which is disjoint from the object region [objects, page_end) -- a Header store can never reach obj[0]. (2) oid<capacity IS STRUCTURALLY GUARANTEED: alloc takes o from allocator.alloc() (SizedPage.cpp:27), and SizedAllocator only ever yields pointers in [objects_start, objects_end) where objects_end = objects + capacity*object_size (configure, SizedAllocator.hpp:142, object_count=capacity) and extend() clamps `if (end > objects_end) end = objects_end` (SizedAllocator.hpp:128); free_local/pop only recycle previously in-range pointers. Hence object_to_ind(o)=(o-objects)/object_size (SizedPage.hpp:106-108) is always in [0,capacity), so ind_to_header(oid) never reaches oid>=capacity. The \"corrupt slot ~88064 ≈ capacity 87381\" coincidence is a category error: 0x80015xxx encodes a HANDLE-TABLE slot (the Mapping pointer m/8 = 0x80000000+slot), not a page-local oid; the two namespaces are unrelated, so the near-equality is numeric happenstance, not evidence of geometry overrun. The compaction branch (*left=*right, SizedPage.cpp:195) is killed by the crash signature (survives NO_COMPACT), which the hypothesis itself concedes. Geometry is also immutable per page: set_size_class runs once on the new-page branch only (Heap.cpp:182 inside find_or_alloc_page's alloc path, Heap.hpp:209-217); reused magazine pages already match their class and put_page only clears the owner (Heap.cpp:197-200), so object_size/capacity/objects stay mutually consistent for the page's lifetime. With oid<capacity invariant and disjoint header/object regions, no alloc-path Header store can corrupt a live obj[0]; the mechanism cannot fire.",
+        "evidence": "runtime/core/SizedPage.cpp:84 (objects=round_up(headers+capacity,16) makes header region disjoint from objects[]) + runtime/include/alaska/SizedAllocator.hpp:128,142 (extend clamps bump to objects_end=objects+capacity*object_size, forcing object_to_ind<capacity) + runtime/include/alaska/SizedPage.hpp:105-108 (ind_to_header/object_to_ind); identity sub-claim verified at runtime/include/alaska/SizedPage.hpp:64-67"
+    }
+}
+{
+    "type": "started",
+    "key": "v2:f3e169783b581c0f716d33c9a069015d7767f25e11fe53dedce112ac289c5893",
+    "agentId": "a12efa2b00680e959"
+}
+{
+    "type": "result",
+    "key": "v2:cffa96860fe87b433761d1f04f372fac9e7a7065a3705b0bb6150069cadb82a5",
+    "agentId": "a0a905e5ca6853f8d",
+    "result": {
+        "verdict": "REFUTED",
+        "reason": "The hypothesis needs a free_remote (release_remote) onto a class-0 page running CONCURRENTLY with the owning thread's non-atomic pop/swap/extend. release_remote is reached only when page->is_owned_by(this) is false (runtime/core/ThreadCache.cpp:127-133), i.e. a thread freeing into a page owned by a DIFFERENT thread cache. binarytrees is single-threaded (bench/src/GCBench/binarytrees.c has only main(), no pthread_create), so the ONLY second tc that can ever own/free a page is the barrier/anchorage thread (barrier.cpp:80 get_tc_r()). Every operation that thread performs on free lists — tc.hfree in reclaim_dead_handles (runtime/rt/refcount.cpp:408,472), cycle_collector.collect, drain_deferred, compaction — runs ONLY inside Runtime::with_barrier (runtime/include/alaska/Runtime.hpp:96-116; call sites init.cpp:151,171 and refcount.cpp:367; grep shows no non-test caller outside the barrier). with_barrier first calls lock_all_thread_caches() (Runtime.cpp:144-149), which acquires tcs_lock PLUS every tc's lock (including the main mutator's), then barrier_manager->begin() stops the world, parking the main mutator at the rendezvous (barrier.cpp rv_park, lines 196-205) BEFORE running cb(). Meanwhile every mutator alloc/free runs under that mutator's own tc lock via get_tc() LockedThreadCache (halloc.cpp:91,97; ThreadCache.hpp:222-248). Therefore the would-be remote freer (barrier thread) and the would-be local allocator (main thread, owner of the page) are mutually exclusive in time: while release_remote/free_remote runs, the owner is parked and its lock is held, so its non-atomic pop/swap/extend cannot run. The race window free_remote-atomic-CAS vs swap's non-atomic num_remote_free read/reset never opens. The main mutator also never release_remote's to its own page (is_owned_by(this) is true -> release_local), so it never races itself. This is a lock/ordering invariant (real ck::mutex + pthread rendezvous), not an assert, so it is NOT compiled out in Release. set_size_class on re-adoption is irrelevant: even with stale geometry the concurrency precondition cannot be met. The hypothesis itself concedes binarytrees is single-threaded and rates reachability low.",
+        "evidence": "runtime/include/alaska/Runtime.hpp:103 (lock_all_thread_caches before stop-the-world) + Runtime.cpp:144-149 (holds every tc lock) + runtime/rt/barrier.cpp:196-205 (rv_park stops mutators) — all barrier-thread frees/reclaims (init.cpp:151,171; refcount.cpp:367) run inside with_barrier, serialized against the owner's get_tc()-locked pop/swap/extend (halloc.cpp:91,97; ThreadCache.cpp:127-133)"
+    }
+}
+{
+    "type": "started",
+    "key": "v2:89ed55a3d2ca5ba69095048ed3c1cfbd4546b14964db403c3ed77a71e6df2b46",
+    "agentId": "aa6b0a5d16bf3fc0d"
+}
+{
+    "type": "result",
+    "key": "v2:b49724fe87d47c71672a57d73a3adb89b7dfdb37bb172e790a3a078400bddb16",
+    "agentId": "a6da1a352f3e26142",
+    "result": {
+        "verdict": "REFUTED",
+        "reason": "The hypothesis is correct that no bounds check guards `oid` before `ind_to_header(oid)=headers+oid` in SizedPage::alloc (SizedPage.cpp:31-32), release_local/remote (SizedPage.cpp:40-41,50-51), size_of (SizedPage.hpp:91-92) and update_size_slack (SizedPage.hpp:48), and that the class-0 geometry has zero end-slack: object_size=16 (class_to_size(0)=SC(1)=16, SizeClass.cpp:107-109), round_up(16,16)+sizeof(Header)=24, capacity=floor(2097152/24)=87381 (SizedPage.cpp:66-67, page_size=1<<21=2097152 at HeapPage.hpp:24-25), objects=round_up(headers+87381=byte 699048,16)=699056 (SizedPage.cpp:84, round_up at utils.h:52), objects_end=699056+87381*16=2097152=exact page end (SizedAllocator.hpp:142). So an in-page pointer at/after objects_end would alias the object region. BUT the precondition — a pointer p with object_to_ind(p)>=capacity reaching these routines — cannot arise in this workload/config. (1) In alloc, o comes from SizedAllocator::alloc (SizedAllocator.hpp:89-99): either the bump path, which extend() clamps to objects_end (`if (end > objects_end) end = objects_end`, SizedAllocator.hpp:128), so the max base is objects_end-16 giving oid=87380<capacity; or the free list, which only holds pointers previously produced in-bounds by extend/release. Thus alloc's oid is provably <capacity — the only write that can deposit a 0x80015xxx header low word (h->set_mapping, SizedPage.cpp:33) is in-bounds. (2) Every production caller of release_*/size_of/update_size_slack resolves the page via pt.get_unaligned(ptr) (ThreadCache.cpp:120 free_allocation, 668 get_size, 277 hrealloc, 709/734 localize, 393 reuse stash; Localizer.cpp:61; refcount.cpp:265; liballocs_export.cpp), which floors ptr to its OWN 2MiB page (Heap.cpp:117-124) and returns the HeapPage physically containing ptr. So object_to_ind is always computed against the page that owns ptr, whose object region [objects,page_end) has zero end-slack; an in-page ptr>=objects yields oid in [0,capacity), and a ptr at/after page_end (offset>=2097152) is dispatched to the NEXT page (N+1), never indexed against page N. pt.set is the only page-table writer and runs once per fresh bump-allocated page with its exact aligned base (Heap.hpp:213); PageManager::free_page has no production caller, so no stale/aliased page-table entry can return a SizedPage whose geometry differs from the pointer's page. The hypothesis itself concedes it only supplies a CONDITION and 'pairs with whichever upstream path supplies the off-by-one/foreign pointer'; that supplier is precisely the set of mechanisms already ruled out (alloc OOB slot, free-list poisoning, page reuse), and free-list poisoning is excluded by the header-word signature. With no reachable supplier, the missing bounds check is inert in binarytrees.",
+        "evidence": "runtime/include/alaska/SizedAllocator.hpp:128 (extend clamps bump to objects_end) and runtime/core/Heap.cpp:117-124 (get_unaligned floors ptr to its own page) — together these guarantee oid<capacity for alloc and dispatch any out-of-page pointer elsewhere, so the unguarded ind_to_header at runtime/core/SizedPage.cpp:31-32 is never reached with oid>=capacity."
+    }
+}
+{
+    "type": "started",
+    "key": "v2:800673674ccc45df4db9290bdffb91f93dd68cb892ba837c54b51a5c625fe4b4",
+    "agentId": "a37ba9063181b8632"
+}
+{
+    "type": "result",
+    "key": "v2:ad720895837b34bde6a1e65630700c844ebfa510887d1064dd8fd7b3acde5680",
+    "agentId": "ac76ee730476fefe4",
+    "result": {
+        "verdict": "REFUTED",
+        "reason": "The hypothesis needs a true concurrent race: one thread in ShardedFreeList::free_remote (atomic) while the page's owner runs swap()/pop()/extend() (non-atomic local ops) on the same class-0 page. That window cannot arise in binarytrees under refcount-gc-anchorage. (1) The process has exactly two threads: the single binarytrees mutator and the periodic barrier thread (init.cpp:232); the hypothesis itself concedes binarytrees is single-mutator. (2) The barrier/GC thread never allocates class-0 objects concurrently — all its memory work (drain_deferred, compact_sizedpages, reclaim_dead_handles which frees via tc.hfree at refcount.cpp:468-472) happens inside rt.with_barrier and is exclusively frees, never halloc/allocate_backing_data/alloc (grep of init.cpp and refcount.cpp reclaim path shows no allocation). (3) That GC work is stop-the-world: with_barrier does lock_all_thread_caches() (Runtime.hpp:103) and barrier_manager->begin(), which signals every mutator and blocks in rv_wait_all_parked(joined) (barrier.cpp:619) until each is parked at rv_park() inside the SIGUSR2 handler (barrier.cpp:699/790). So when the barrier thread does a remote release_remote->free_remote onto the main thread's page, the main thread is parked, NOT executing swap/pop/extend — the race window is closed. (4) Even granting a concurrent free_remote vs swap, no linked-list corruption is possible: both free_remote (ShardedFreeList.hpp:113-116) and swap (lines 84-87) mutate the shared remote_free head via atomic CAS, and pop/free_local touch only local_free (owner-private after the atomic transfer). The sole non-atomic step the hypothesis cites (num_local_free += num_remote_free; atomic_set(num_remote_free,0), lines 90-91) updates only the count integers, and those counts feed exclusively into num_free()/available()/some_available() estimates (SizedAllocator.hpp:48-62) — never into pop()/alloc() address arithmetic — so a desynced count can never produce an out-of-page object o that would make set_mapping(headers+object_to_ind(o)) land in a live object. The page-handoff-without-set_size_class (Heap.hpp:195-206) is real but serialized under Heap::lock (Heap.cpp:175) and only flips the owner; it never touches the free list.",
+        "evidence": "runtime/include/alaska/Runtime.hpp:96-116 (with_barrier locks all tc + begins stop-the-world before cb); runtime/rt/init.cpp:102-173 (all GC work inside with_barrier, frees-only) + init.cpp:232 (only the barrier thread + main mutator exist); runtime/rt/barrier.cpp:619/699/790 (orchestrator waits for all mutators parked at rv_park before callback runs); runtime/include/alaska/ShardedFreeList.hpp:84-92,113-119 (list head mutated by atomic CAS; only counts non-atomic) vs runtime/include/alaska/SizedAllocator.hpp:48-62 (counts feed only availability estimates, not pop/alloc addressing)"
+    }
+}
+{
+    "type": "started",
+    "key": "v2:be6d655ef0d21b96d9928da453d71c787322c518eb0ba3e77b1bb6f6003a14e0",
+    "agentId": "a5998c1829699a2e4"
+}
+{
+    "type": "result",
+    "key": "v2:f3e169783b581c0f716d33c9a069015d7767f25e11fe53dedce112ac289c5893",
+    "agentId": "a12efa2b00680e959",
+    "result": {
+        "verdict": "REFUTED",
+        "reason": "ThreadCache::localize (runtime/core/ThreadCache.cpp:705-737) — the entire mechanism's entry point — is never invoked in the binarytrees workload under this config. Its only two production callers are Localizer::feed_hotness_buffer (runtime/core/Localizer.cpp:50-62) and localize_structure (runtime/rt/halloc.cpp:316-333). A full-tree grep shows the only reference to localize_structure / feed_hotness_buffer outside the runtime's own Localizer/yukon/sim files is test/tree.c:40,53 — a different test program, NOT the benchmark. The actual binarytrees source (bench/src/GCBench/binarytrees.c:16,29) is plain malloc/free/check/freetree with zero localizer interaction, and no compiler pass (compiler/passes/*.cpp) injects a localize call. The periodic barrier thread that DOES run in refcount-gc-anchorage (runtime/rt/init.cpp:76-184) calls with_barrier but its callback (lines 102-173) only does drain_inc / drain_deferred / quarantine_rotate / flush_reuse_cache / cycle-collect / compact_sizedpages / reclaim_dead_handles — it never calls localize. So the localize path is fully dormant. Moreover, even if it ran, the posited race is structurally impossible: localize executes inside with_barrier (Runtime.hpp:96-116), which calls lock_all_thread_caches (Runtime.cpp:144-149, taking tcs_lock plus every tc->lock) and stops the world via barrier_manager, serializing localize's release_remote against any mutator free_local. Both the precondition (path is exercised) and the race window (concurrent owner free_local) are absent. The hypothesis's own preconditions/signature_fit fields concede exactly this.",
+        "evidence": "bench/src/GCBench/binarytrees.c:16,29 (malloc/free only, no localize); runtime/core/ThreadCache.cpp:705-737 (localize, the only mechanism entry); callers limited to runtime/core/Localizer.cpp:62 and runtime/rt/halloc.cpp:330, both wrapped in rt.with_barrier (Localizer.cpp:50, halloc.cpp:327); periodic barrier callback runtime/rt/init.cpp:102-173 contains no localize call; with_barrier serialization at runtime/include/alaska/Runtime.hpp:103 -> Runtime.cpp:144-148"
+    }
+}
+{
+    "type": "started",
+    "key": "v2:802facaf6a9bd59185efbd263c683c45988b1c2c28508e5cfa1245f8ad1d15a0",
+    "agentId": "a44093da53b127159"
+}
+{
+    "type": "result",
+    "key": "v2:e305b2f3c9b94d142a33d82ea7a80e53e204f8e526da5e0138f22ccb27485137",
+    "agentId": "ad2cb4a11919101b0",
+    "result": {
+        "verdict": "REFUTED",
+        "reason": "The geometry the hypothesis cites is real: for class 0 (16-byte node -> object_size 16, sizeof(Header)==8 under SIZE_BITS=32), capacity=87381 and objects_end == page end (2097152), zero end-slack (SizedPage.cpp:66-90; confirmed numerically). And alloc/release_*/update_size_slack do index ind_to_header(oid)=headers+oid with no oid<capacity guard (SizedPage.cpp:31-32,40-41,50-51; SizedPage.hpp:105-111) -- the 'always-on oid bounds check' in the ruled-out list is NOT present in this tree. But the OOB the hypothesis requires cannot occur, so it contradicts the signature. ind_to_header(oid) only lands inside the live object region [699056,2097152) for oid>=87382, which by object_to_ind (SizedPage.hpp:106-108) requires ptr at page-offset >= 2097168 -- 16 bytes PAST the page end, i.e. in the NEXT 2MiB page. The hypothesis's own precondition admits this. Yet every release_* / update_size_slack caller resolves the target SizedPage from that SAME ptr via pt.get_unaligned(ptr) (ThreadCache.cpp:120 free_allocation, :393 reuse-cache, :709 localize), and get_unaligned (Heap.cpp:117-122) computes page_ind=(ptr-heap_start)/page_size and dispatches to the page geometrically CONTAINING ptr. A ptr at offset>=page_size therefore resolves to page P+1 and is released against P+1's objects (small in-bounds oid), never against page P. No caller hands page P a ptr from P+1's span, and pages never overlap (free_page is never called; alloc_page bumps distinct 2MiB regions, Heap.cpp:51-76). So the release-path OOB store never executes. The alloc sub-case (the only sub-case producing a Header-shaped value) needs object_to_ind(o)>=capacity, but o comes from the bump allocator bounded by objects_end (SizedAllocator.hpp:128) or a free-list pop of an in-bounds pushed value; object_to_ind is exact, so the claimed 'miscomputed oid, not bad data' mechanism does not exist. The only way pop() yields an OOB slot is a corrupted free-list next link -- which the audit establishes is an objects[]/heap address, not a 0x8000xxxx+slot Header word, contradicting the observed deposited value. The hypothesis names a necessary condition (unguarded indexing + zero end-slack) but supplies no mechanism that drives oid out of bounds; its preconditions are self-refuting under get_unaligned's page resolution.",
+        "evidence": "runtime/core/Heap.cpp:117-122 (get_unaligned resolves ptr to its CONTAINING 2MiB page, so a ptr at offset>=page_size goes to page P+1, not P) vs runtime/core/SizedPage.cpp:40-41/50-51 (release_* indexes ind_to_header(object_to_ind(ptr)) with ptr always in-page); ind_to_header land-in-objects needs oid>=87382 i.e. ptr page-offset>=2097168 (SizedPage.hpp:106-111; objects_end==2097152 from SizedPage.cpp:66-90); all release callers at ThreadCache.cpp:120,393,709 derive the page from the same ptr; bump bounded at SizedAllocator.hpp:128"
+    }
+}
+{
+    "type": "started",
+    "key": "v2:baffbad06e6e3cd569f260ea72fa7b0703dd745f34e415e35b581dd78b799491",
+    "agentId": "af388c6f8d64f68fc"
+}
+{
+    "type": "result",
+    "key": "v2:800673674ccc45df4db9290bdffb91f93dd68cb892ba837c54b51a5c625fe4b4",
+    "agentId": "a37ba9063181b8632",
+    "result": {
+        "verdict": "REFUTED",
+        "reason": "The hypothesis correctly observes that SizedPage::alloc (runtime/core/SizedPage.cpp:26-36) has NO oid bounds check and NO is_free assert — it unconditionally does `oid = object_to_ind(o); ind_to_header(oid)->set_mapping(&m)` at lines 31-33. The geometry claim is also real: for class 0 (object_size 16, sizeof(Header)=8 under SIZE_BITS=32) capacity truncates to 87381, the header region is [0,699048), objects start at round_up(699048,16)=699056, an 8-byte gap, so `ind_to_header(capacity+1)` resolves to exactly `objects[0]` (699056). So IF an oid of capacity+1 reached the store it would corrupt objects[0]. BUT the precondition — a pointer `o` with object_to_ind(o) >= capacity reaching allocator.alloc() — is closed by an existing guard, so the store can never reach an out-of-bounds header. The only two sources of pointers into the free list are (a) the bump allocator SizedAllocator::extend (runtime/include/alaska/SizedAllocator.hpp:124-137), which clamps `if (end > (off_t)objects_end) end = (off_t)objects_end;` at line 128, where objects_end = objects + object_count*object_size is set in configure (line 142) with object_count == capacity (passed at SizedPage.cpp:90). I simulated extend() exactly over the full page: it yields object indices 0..capacity-1 (max 87380), never capacity or beyond. (b) freed pointers via release_local/release_remote, which only re-add `m.get_pointer()` (ThreadCache::free_allocation, runtime/core/ThreadCache.cpp:118) — always a valid in-bounds object base set by set_pointer during alloc/move — so freeing cannot inject an out-of-bounds index either. The objects base is 16-aligned (round_up to alignment=16, SizedPage.cpp:84) and object_size is 16, so object_to_ind divides exactly and an in-bounds bump pointer objects+k*16 maps to index k<capacity with no rounding inflation. The heap is mmap(NULL,...) (Heap.cpp:31), so addresses are in the low positive half and the signed off_t casts in extend() cannot wrap to defeat the clamp. Finally, the adjacency intuition the hypothesis leans on is a coincidence: the deposited value 0x80015xxx decodes to handle-table slot 0x15xxx (the _mapping of a live Mapping at handle_table_location 0x400000000, Configuration.hpp:21-22), NOT a SizedPage oid; that slot number lives in a different namespace than capacity 87381, so its closeness to capacity is meaningless. The extend clamp makes the out-of-bounds-oid write impossible on the plain alloc path.",
+        "evidence": "runtime/include/alaska/SizedAllocator.hpp:128 (extend clamp: end = objects_end) with runtime/include/alaska/SizedAllocator.hpp:142 (objects_end = objects + object_count*object_size) and runtime/core/SizedPage.cpp:90 (object_count == capacity); freed pointers come from runtime/core/ThreadCache.cpp:118 (m.get_pointer())"
+    }
+}
+{
+    "type": "started",
+    "key": "v2:509e664ec34e64b98db73db3ff285b83e48fcad9563c9a1b9239471c99d14dfa",
+    "agentId": "a968ded66e6158bee"
+}
+{
+    "type": "result",
+    "key": "v2:be6d655ef0d21b96d9928da453d71c787322c518eb0ba3e77b1bb6f6003a14e0",
+    "agentId": "a5998c1829699a2e4",
+    "result": {
+        "verdict": "REFUTED",
+        "reason": "The hypothesis's landing geometry is exactly correct: for the 16-byte class capacity = floor(2097152/24) = 87381, the header region ends at byte 699048, round_up(699048,16)=699056 places objects[0] one 8-byte header-stride above, so ind_to_header(capacity+1) (699056) == objects[0] (699056) precisely, and a set_mapping store there would deposit a 0x80000000+slot / size_slack=0 Header low word matching the signature (SizedPage.cpp:31-34, :66-84; SizedPage.hpp:67,105-110; round_up at utils.h:52). It is also true that SizedPage::alloc has NO oid bounds check and NO is_free assert (SizedPage.cpp:31-34), so the prior 'always-on oid bounds + is_free check' elimination is indeed absent. BUT the REACHABILITY precondition cannot arise: SizedPage::alloc only writes ind_to_header(object_to_ind(o)) where o = allocator.alloc(), and allocator.alloc() returns ONLY (a) free_list.pop() entries or (b) extend() bump output clamped to objects_end = objects + capacity*object_size (SizedAllocator.hpp:89-99,124-137,142, esp. line 128 'if (end > objects_end) end = objects_end'). The free list is fed only by extend (in-range) and by release_local/release_remote whose ptr is a real object base m.get_pointer() re-resolved through the page table (ThreadCache.cpp:118-132 -> SizedPage.cpp:39-56) and by compact's release_local/reset_bump_allocator. Compaction is gated by ALASKA_NO_COMPACT (init.cpp:144,155) and the crash SURVIVES that flag, so the compact path is inert during reproduction; and the signature explicitly excludes free-list next-link poisoning. Hence no path makes object_to_ind(o) >= capacity, so the unguarded header store at SizedPage.cpp:33 always writes an in-range header, never objects[0]. The hypothesis asserts the OOB-pointer precondition but supplies no cause for it; the missing guard makes alloc a potential amplifier of some upstream corruption, not the source of this wild write. As a root-cause hypothesis it fails on reachability.",
+        "evidence": "runtime/include/alaska/SizedAllocator.hpp:128 (extend clamps end to objects_end) and :142 (objects_end = objects + capacity*object_size); runtime/core/ThreadCache.cpp:118-132 (release ptr is in-range object base); runtime/rt/init.cpp:155 (compact gated by ALASKA_NO_COMPACT, which the crash survives) — together these leave no path for object_to_ind(o) >= capacity to reach the unguarded store at runtime/core/SizedPage.cpp:33."
+    }
+}
+{
+    "type": "started",
+    "key": "v2:a6514dafeeb11de4c2867c51824b95b5306b8e667bfa77e6d2123dd19a35ca40",
+    "agentId": "a052662ef9a03db88"
+}
+{
+    "type": "result",
+    "key": "v2:18a070634c3cd856f395b6b27df65d4760435b1de5acb1b58b054bc6cae2935c",
+    "agentId": "a02f866800c3d73ee",
+    "result": {
+        "evidence": "compiler/passes/PinTracking.cpp:212,217,219 (sole CreateStore targets the stack alloca `localPinSet`, storing an unmodified handle); compiler/passes/Lower.cpp:135-138,176 (translate lowering is setCalledFunction only; derive lowering is a plain CreateGEP, no bit math); runtime/include/alaska/alaska.hpp:351-393 (encode/to_handle/from_handle are the ONLY SIZE_BITS/SQUEEZE_BITS shifts and they live in the runtime); runtime/core/translate.cpp:40-50,141 (APPLY_OFFSET/from_handle only derive+return a pointer, never store); CMakeLists.txt:107 + configs/config.alaska.cmake:15,18 + build/refcount-gc-anchorage/compile_commands.json (64x -DALASKA_SIZE_BITS=32) confirming a single, uniform SIZE_BITS=32.",
+        "reason": "I tried hard to refute via signature consistency and could not. The hypothesis's core factual claim is verified: a full grep of compiler/passes and compiler/lib shows NO SIZE_BITS/SQUEEZE_BITS reference, no `>>29`/`<<32`, no CreateShl/LShr/AShr/Add/Or/And/IntToPtr/PtrToInt, and no handle encode/decode arithmetic emitted by any pass. The only handle-encode/decode shifts in the whole system are in runtime/include/alaska/alaska.hpp:351-383 (encode = `>>SQUEEZE_BITS`, to_handle = `<<SIZE_BITS`, from_handle = `>>(SIZE_BITS-SQUEEZE_BITS)`) and APPLY_OFFSET in translate.cpp:40-41, all compiled from runtime source under a single uniformly-emitted -DALASKA_SIZE_BITS=32 (CMakeLists.txt:107; 64 occurrences in the refcount-gc-anchorage compile_commands). The one place this could have failed the signature test — a compiler-emitted store of a computed value into heap memory that could land a 0x80015xxx word in obj[0] — is closed: the SOLE CreateStore in the entire compiler (PinTracking.cpp:219) writes an UNMODIFIED handle (tr->getHandle(), top-bit set, not an m/8 header word) into `cell`, a GEP into the stack alloca `trackSet`/`localPinSet` (CreateAlloca at line 212), never into a heap node. The inlined translate (from_handle/APPLY_OFFSET) only derives and returns an address (`return ptr;` translate.cpp:50,141) and never stores. Therefore no compiler-emitted code can deposit a header-shaped low word into a live node's obj[0]. The hypothesis is fully consistent with the signature: it AFFIRMS the header-low-word shape (0x80000000+slot = runtime m/8, alaska.hpp:353 + SizedPage.hpp:67), it is a statement about compiler output and so is orthogonal to and survives all four runtime kill-switches (NO_COMPACT/NO_REUSE_CACHE/NO_GC_FREE/NO_FREE_DEC), and it makes no timing prediction that the ~1/64-1/250 sub-50ms transient could contradict. The only caveat — not grounds for refutation under this lens — is that the hypothesis is a meta-elimination, not a positive root cause: it correctly proves the wild HEADER store originates in the runtime (SizedPage geometry / alloc / compact, exactly where the lane already points) without naming the specific offending store.",
+        "verdict": "SURVIVES"
+    }
+}
+{
+    "type": "started",
+    "key": "v2:427d078a5612c1e53d947c23a05cef4ae4b03b6b20b72dfdfc4ac5dac9b464ad",
+    "agentId": "ae5d0ffcd22ea0b17"
+}
+{
+    "type": "result",
+    "key": "v2:802facaf6a9bd59185efbd263c683c45988b1c2c28508e5cfa1245f8ad1d15a0",
+    "agentId": "a44093da53b127159",
+    "result": {
+        "verdict": "REFUTED",
+        "reason": "The hypothesis is internally correct on two sub-claims I verified: (1) the aliasing arithmetic holds — for object_size=16, capacity=(double)2097152/(round_up(16,16)+8)=2097152/24 trunc to 87381 (SizedPage.cpp:66-67), headers at memory+0 stride sizeof(Header)=8, objects=round_up((uintptr_t)(headers+87381),16)=round_up(699048,16)=699056 (SizedPage.cpp:81-84; utils.h:52 round_up=((x)+(y)-1)&~((y)-1)), so ind_to_header(capacity+1)=memory+87382*8=memory+699056=objects[0] (SizedPage.hpp:105,109); and (2) SizedPage::alloc (SizedPage.cpp:26-36) genuinely lacks any oid bounds check or is_free assert — the prior elimination's 'always-on guard' is not present in this code. HOWEVER the mechanism is REFUTED because its precondition is unreachable: allocator.alloc() can never return a pointer o with object_to_ind(o) >= capacity. configure sets objects_end = objects + capacity*object_size = exact page end (SizedAllocator.hpp:140-142); extend caps end at objects_end and frees only o < objects_end (SizedAllocator.hpp:124-137, esp. line 128), so the maximum bump-allocated index is (objects_end-16-objects)/16 = capacity-1 = 87380; release_local/remote only re-free previously-handed-out in-bounds objects; compact frees slots with index <= capacity-1 and resets the bump pointer to at most ind_to_object(capacity)=objects_end (SizedPage.cpp:161,184-185,214-215). Thus the largest oid ever passed to set_mapping is capacity-1, whose header is written at offset (capacity-1)*8 = 699040, which is strictly BELOW objects[0] at 699056 — inside the header region, NO aliasing. The off-by-one to capacity+1 that the whole mechanism depends on cannot occur. The signature's corrupt-slot value ~88064 is the handle-table slot of the deposited Mapping (set_mapping(&m): _mapping=(uint64_t)m/8 = 0x80000000+slot), a quantity entirely unrelated to the page-internal write index; its proximity to capacity=87381 is coincidental and does not support a capacity-boundary write. The hypothesis predicts an out-of-bounds-popped pointer, but no code path can produce one, so the wild HEADER-shaped store it describes would never fire — contradicting the observed crash.",
+        "evidence": "runtime/include/alaska/SizedAllocator.hpp:124-137 (extend caps end at objects_end, line 128) and :140-142 (configure sets objects_end = objects + capacity*object_size = page end); these bound every free-list pointer to index <= capacity-1, so SizedPage::alloc's missing guard at runtime/core/SizedPage.cpp:31-33 is never reached with oid >= capacity. ind_to_header(capacity-1) at SizedPage.hpp:105 = memory+699040 < objects[0]=memory+699056, no aliasing."
+    }
+}
+{
+    "type": "started",
+    "key": "v2:5b9583469ec9f48d54c9c5ce85c3f90f493cafd1bb06cf8545ccc0bb35e9417e",
+    "agentId": "aaa5fc9a7b8360395"
+}
+{
+    "type": "result",
+    "key": "v2:eb569090343c6c0c8e86830029b177654f5ec30081b10946ac77bb78b754d9ee",
+    "agentId": "a0e40ab701f5dbb62",
+    "result": {
+        "hypotheses": [
+            {
+                "id": "alloc-no-oid-bounds-check",
+                "mechanism": "SizedPage::alloc takes whatever pointer allocator.alloc() hands back, computes oid = object_to_ind(o) and immediately does headers[oid].set_mapping(&m); headers[oid].size_slack = object_size - size with NO bound on oid; if oid lands a few slots past capacity the 8-byte header store {_mapping=(Mapping*)/8, size_slack=0} is written into the low object region, i.e. into a live node's obj[0].",
+                "location": "runtime/core/SizedPage.cpp:31-34 (oid=object_to_ind(o); h=ind_to_header(oid); h->set_mapping(&m); h->size_slack=object_size-size), with ind_to_header at runtime/include/alaska/SizedPage.hpp:105 (headers+oid) and object_to_ind at SizedPage.hpp:106-108",
+                "preconditions": "allocator.alloc() returns an object pointer o for which (o-objects)/object_size >= ~capacity+2. capacity=87381 for the 16B class; headers[capacity+1]=memory+87382*8=memory+699056 == objects[0], so any oid in [capacity+1, capacity+~683] hits objects[0..~341]. Reported corrupt slot ~88064 == capacity+683 -> writes object index ~341.",
+                "reachability": "high",
+                "signature_fit": "Independent of compact/reuse-cache/dec-on-free/GC-free (this is the synchronous alloc path itself), so it survives NO_COMPACT/NO_REUSE_CACHE/NO_GC_FREE/NO_FREE_DEC; eager-RC config unaffected; the write is literally set_mapping+size_slack=0, the only writer the prompt says can deposit a Header low word; rarity matches a boundary condition reached ~1/64-1/250.",
+                "why_header_shaped": "The deposited bytes are produced by Header::set_mapping(&m) (low 32 bits = (uintptr_t)m/8 = 0x80000000+slot because the handle table base is 0x400000000 and m=base+slot*8) followed by size_slack=object_size-size; for the 16B node class size==object_size so size_slack==0, giving exactly 0x00000000_80015xxx.",
+                "confirming_experiment": "Add a READ-ONLY always-on assertion at SizedPage::alloc just after computing oid: if (oid < 0 || oid >= capacity) alaska::printf(\"OOB-ALLOC page=%p o=%p objects=%p object_size=%zu oid=%ld cap=%ld\\n\", this,o,objects,object_size,oid,capacity); (does not alter control flow). The prompt claims this guard already exists 'always-on' but grep of SizedPage.cpp/SizedAllocator.hpp shows it does NOT -- this is the concrete elimination gap."
+            },
+            {
+                "id": "objects-base-or-object_size-control-block-corruption",
+                "mechanism": "object_to_ind(o)=(o - this->objects)/this->object_size reads two MUTABLE control-block fields; if `objects` is shifted downward, or `object_size` is made smaller, then a perfectly valid object pointer yields oid > capacity and the subsequent header write (SizedPage.cpp:32-33) lands in object memory as a Header word. The SizedPage instance lives in the liballoc arena (operator new -> alaska_internal_malloc, alaska.hpp:437; HeapPage is InternalHeapAllocated, HeapPage.hpp:60), separate from managed memory, so the wild write reaches objects[] ONLY through a corrupted oid, not via adjacency.",
+                "location": "fields written only in runtime/core/SizedPage.cpp:81-90 (set_size_class) and read in runtime/include/alaska/SizedPage.hpp:106-108; control block allocation site runtime/include/alaska/Heap.hpp:211 (new T(memory)) + alaska/alaska.hpp:437",
+                "preconditions": "Some writer inside the liballoc arena overruns into a live SizedPage control block, perturbing `objects` (offset 0x?) or `object_size` by a small amount. Candidate overrunners sharing that arena: ck::vec m_slabs growth (ck/vec.h:424 alaska_internal_malloc(new_capacity*sizeof(T))), page-table node calloc (Heap.cpp:97-98), ThreadCache inc_log/Localizer buffers (ThreadCache.cpp:80, Localizer.cpp:33). A few-byte low-bits perturbation of `objects` (e.g. -10928) reproduces oid~capacity+683.",
+                "reachability": "medium",
+                "signature_fit": "Corruption of objects/object_size is orthogonal to compact/reuse/dec paths, so survives all kill switches; once oid is wild the deposited value is again set_mapping+size_slack=0 (Header low word); intermittency matches a rare arena overrun; eager-RC config irrelevant to it.",
+                "why_header_shaped": "The wild oid still flows into SizedPage::alloc's header store, so the written value is the Header word {0x80000000+slot, 0}, not a heap pointer; a corrupted `objects`/`object_size` only redirects WHERE the otherwise-correct Header store lands.",
+                "confirming_experiment": "Always-on, read-only: at the top of SizedPage::alloc verify the three invariants headers==memory, objects==round_up(headers+capacity,16), and object_size==class_to_size(size_class); print this/page identity on mismatch. Any firing proves a control-block field was clobbered post set_size_class."
+            },
+            {
+                "id": "bump-or-freelist-pointer-at-page-edge",
+                "mechanism": "If SizedAllocator hands out an object pointer at or just past objects_end (e.g. via a free-list entry whose address equals objects_end, or a bump/extend rounding error), object_to_ind returns oid==capacity (or capacity+k) and the header store at headers+capacity (=memory+capacity*8) writes one slot below objects[0]; headers+capacity+1 is objects[0] exactly, so a small overshoot deposits the Header word into the first live objects.",
+                "location": "extend at runtime/include/alaska/SizedAllocator.hpp:124-137 (objects_end clamp + free_local loop) and free_list.pop at runtime/include/alaska/ShardedFreeList.hpp:68-76 feeding SizedPage::alloc (SizedPage.cpp:27); boundary geometry set_size_class SizedPage.cpp:66-90 (objects_end == memory+page_size for the 16B class).",
+                "preconditions": "A free-list `next` link or a bump-allocated address equal to or beyond objects_end ends up popped. objects_end == memory+2MiB exactly for the 16B class; reset_bump_allocator(after_heap) in compact (SizedPage.cpp:214-215) could push bump_next to objects_end when last_object==headers+capacity-1, but crash survives NO_COMPACT, weakening the compact sub-path; the free-list/extend rounding sub-path remains.",
+                "reachability": "low",
+                "signature_fit": "If reached on the plain alloc/extend path it survives all kill switches and produces the same set_mapping+size_slack=0 Header word; but the geometry shows objects_end is an exact multiple of object_size from objects, so a clean off-by-one is hard -- this is the weakest of the three and is really a special case of hypothesis alloc-no-oid-bounds-check.",
+                "why_header_shaped": "Same writer: a pointer == objects_end gives oid==capacity, and the unconditional set_mapping/size_slack store at SizedPage.cpp:33-34 writes the Header low word into the slot at memory+capacity*sizeof(Header), which abuts/overlaps objects[0].",
+                "confirming_experiment": "Read-only always-on check in SizedAllocator::alloc (or SizedPage::alloc): assert returned object o satisfies objects_start <= o < objects_end; print o, objects_end, bump_next on violation. No behavior change; any hit pinpoints an edge-of-page pointer."
+            }
+        ]
+    }
+}
+{
+    "type": "started",
+    "key": "v2:565acfd10695d6bb92dfd4540763f7cc07c99bdc773d05fd67e7cf22c07d99cb",
+    "agentId": "a29d2bd05abe57b7e"
+}
+{
+    "type": "result",
+    "key": "v2:9da1c2c79b5fc44a379d70efe2911d426cbb9c066fd024938f67e1d665d9e5aa",
+    "agentId": "a4b0a388d454833a8",
+    "result": {
+        "verdict": "REFUTED",
+        "reason": "The hypothesized mechanism lives entirely inside the deferred-free queue path: it requires a handle to be pushed onto `deferred_frees` (ThreadCache.cpp:539), then re-freed at drain (ThreadCache.cpp:576-585) with a missed `is_free()` guard. The ONLY caller of `ThreadCache::defer_free` in the whole runtime is halloc.cpp:216, inside `if (defer)`. `defer` is computed once at halloc.cpp:208-212 as `(free_dec_on && !defer_off)`, where `free_dec_on = (getenv(\"ALASKA_NO_FREE_DEC\") == nullptr)`. The crash signature explicitly states the bug SURVIVES ALASKA_NO_FREE_DEC; under that env var `free_dec_on=false`, so `defer=0`, the `if (defer)` block is skipped, and every program free routes through the inline `get_tc()->hfree(ptr)` (halloc.cpp:242) which calls `hfree_impl(handle, quarantine_slot=false)` directly. With NO_FREE_DEC set, `defer_free` is never invoked and `deferred_frees`/`deferred_child_decs` are never populated, so the double-enqueue/drain-re-free mechanism is structurally absent — yet the crash persists. This is exactly the \"a kill-switch the crash survives actually disables the path\" refutation. Two further nails: (1) the hypothesis itself concedes reachability is low because binarytrees is not known to double-free; (2) the default drain is RECORD mode (defer_record_enabled() defaults true at ThreadCache.cpp:456-468 / drain_deferred at 565-588), which replays child decs as plain `alaska_dec_refcount` and does NOT push decremented children onto `deferred_frees`, so the \"child-dec manufactures a second deferred_frees entry\" sub-mechanism does not match the actual code. The header-shaped corruption is real but the cited writer (SizedPage::alloc set_mapping at SizedPage.cpp:33) is reached via normal allocation, not via this double-enqueue chain.",
+        "evidence": "runtime/rt/halloc.cpp:208-218 (defer gate: NO_FREE_DEC -> defer=0 -> defer_free never called, falls through to inline hfree at :242); only defer_free caller is halloc.cpp:216; ThreadCache.cpp:456-468,565-588 (RECORD-mode drain does not enqueue child frees)"
+    }
+}
+{
+    "type": "started",
+    "key": "v2:b357f8bf623302b753cc974754e8d606175b773577bf05746ce29ff132803f96",
+    "agentId": "a576ee50ccbfe72e6"
+}
+{
+    "type": "result",
+    "key": "v2:baffbad06e6e3cd569f260ea72fa7b0703dd745f34e415e35b581dd78b799491",
+    "agentId": "af388c6f8d64f68fc",
+    "result": {
+        "verdict": "UNCERTAIN",
+        "reason": "The hypothesis splits into two distinct sub-claims, which resolve differently.\n\n(A) \"pop() blindly returns local_free and follows ->next with no validation; alloc has no bounds check; the geometry makes object_to_ind(objects_end+16)=capacity+1 and ind_to_header(capacity+1) lands exactly on objects[0].\" This part is CORRECT and UN-guarded. ShardedFreeList::pop (runtime/include/alaska/ShardedFreeList.hpp:68-76) does zero validation. SizedPage::alloc (runtime/core/SizedPage.cpp:26-36) does an unconditional set_mapping at oid=object_to_ind(o) with NO oid-bounds and NO is_free check — contradicting the prompt's \"ALREADY RULED OUT: alloc clean (oid bounds + is_free) via an always-on check\"; that guard is simply not present in this source. The geometry I computed confirms ind_to_header(capacity+1)=headers+87382*8=699056=objects[0] for the 16-byte class, and 0x80000000+slot,size_slack=0 is exactly a Header word. So IF objects_end+16 ever reaches alloc, the wild header-shaped write into obj[0] is real and nothing stops it.\n\n(B) The load-bearing precondition — that objects_end+16 (ind_to_object(capacity+1)) can be DEPOSITED onto local_free in the first place — has no non-circular source. Every producer is in-bounds: extend() (SizedAllocator.hpp:124-137) caps end<=objects_end and frees at most ind_to_object(capacity-1); release_local's pointer is m.get_pointer() (alaska.hpp:99-103, the low-47-bit stored object base); compact()'s release (SizedPage.cpp:162) uses right<=headers+capacity-1. A free-list ->next link (free_local, SFL:101) is just another freed slot's base. configure() (SizedAllocator.hpp:140-146, called from every set_size_class) rebuilds the free list fresh, so no stale link survives page reuse. The only way objects_end+16 enters the list is if pop() already returned it (-> set_pointer -> free_allocation feeds it back) or a wild write clobbered a freed slot's obj[0] to that value — both circular, presupposing the very corruption being explained.\n\nSo I cannot REFUTE via an existing guard (the guards the prompt assumed do not exist, and the mechanism is genuinely un-gated downstream), yet I also cannot say it SURVIVES as a self-sufficient root cause: it cannot bootstrap the bad value without an external wild write. It degenerates into 'some other bug puts a bad value on the list, then this un-guarded pop/alloc amplifies it' — which makes it an amplifier, not the originating mechanism, and the originating step is unsupported by any code path I could find.",
+        "evidence": "Un-guarded sites (hypothesis's correct half): runtime/include/alaska/ShardedFreeList.hpp:68-76 (pop, no bounds check) and runtime/core/SizedPage.cpp:31-33 (alloc set_mapping, no oid-bounds/is_free guard — the prompt's claimed guard is absent). Missing-bootstrap gap (the fatal half): every free-list producer is in-bounds — runtime/include/alaska/SizedAllocator.hpp:128 (end capped to objects_end) and :131 (max freed = objects_end-object_size), runtime/core/SizedPage.cpp:40-44/162 (release uses m.get_pointer()/right<=capacity-1), runtime/include/alaska/alaska.hpp:99-103 (get_pointer returns stored base), runtime/include/alaska/SizedAllocator.hpp:145 (configure resets free list); no path emits ind_to_object(capacity+1)."
+    }
+}
+{
+    "type": "started",
+    "key": "v2:95a6630efeff7d9459f7e64101b74768c01171476139a080236b01bbf6d1b714",
+    "agentId": "aff10ca08c5882fa7"
+}
+{
+    "type": "result",
+    "key": "v2:96a1599d0ddd0a59dec859a1fbd0373a9465e38090001be8d7897b16a39c2238",
+    "agentId": "afa208a0eb6e9902f",
+    "result": {
+        "hypotheses": [
+            {
+                "id": "barrier-callback-is-heap-inert-so-bug-is-on-mutator-freelist",
+                "mechanism": "With NO_COMPACT+NO_GC_FREE+NO_FREE_DEC(_DEFER)+NO_REUSE_CACHE all on, the barrier callback (init.cpp:102-173) mutates NO heap state in eager mode (drain_inc empty; drain_deferred queues empty under NO_FREE_DEC_DEFER; quarantine empty; flush_reuse_cache inert under NO_REUSE_CACHE), so since the crash SURVIVES all of them the wild set_mapping(&m) at oid>capacity must come from the single mutator's own SizedAllocator/ShardedFreeList path; the only writer of a free-list next-link the mutator later pop()s is free_local (ShardedFreeList.hpp:99-104), so a duplicate/aliased object handed twice means one live node's backing gets pushed onto local_free, re-popped, and SizedPage::alloc writes set_mapping(&m2) into that still-live node -- but because the duplicate's pointer math (object_to_ind) is taken against the page that the SECOND mapping's get_pointer resolves to, an object pointer that is ~11KB past this page's objects[] (next page) yields oid=87382+2*idx (=88064 for victim idx 341), and set_mapping deposits (Mapping*)/8 == 0x80015xxx into headers+88064 which aliases objects[341] = the live node's obj[0].",
+                "location": "runtime/core/SizedPage.cpp:26-36 (alloc: no oid bounds/is_free guard) + runtime/include/alaska/ShardedFreeList.hpp:68-104 (pop/free_local)",
+                "preconditions": "Eager RC + GC config; binarytrees single mutator; a free path pushes an object pointer that does not belong to the page whose headers/objects bases are used for the subsequent set_mapping, OR the same object is pop()'d while still linked (free-list cycle), producing a duplicate live backing.",
+                "reachability": "high",
+                "signature_fit": "Survives NO_COMPACT/NO_GC_FREE/NO_FREE_DEC/NO_REUSE_CACHE precisely because none of them touch this mutator-only path; eager-RC; deposited value is literally set_mapping's (Mapping*)/8 = 0x8000xxxx+slot with top-32 zero; corrupts a live node's obj[0]; intermittency from heap layout / which page sits adjacent.",
+                "why_header_shaped": "set_mapping (SizedPage.hpp:67) stores (uint64_t)&m/8; for a real live Mapping at handle-table base 0x400000000+slot*8 this is exactly 0x80000000+slot == 0x80015xxx with the size_slack high 32 bits left 0 -- a Header low word, not a heap/free-list pointer.",
+                "confirming_experiment": "READ-ONLY assertion in SizedPage::alloc (SizedPage.cpp:31) before set_mapping: ALASKA_ASSERT(oid >= 0 && oid < capacity && this->ind_to_header(oid)->is_free(), \"alloc oob/live slot\"); also assert object_to_ind(o) maps back: o>=objects && o<objects_end. A hit pinpoints the bad object pointer and which free returned it."
+            },
+            {
+                "id": "freelist-pop-no-page-membership-check",
+                "mechanism": "SizedAllocator::alloc (SizedAllocator.hpp:89-99) returns free_list.pop() with NO check that the popped object lies within [objects_start, objects_end); SizedPage::alloc (SizedPage.cpp:31-33) then unconditionally does oid=object_to_ind(o); ind_to_header(oid)->set_mapping(&m). object_to_ind (SizedPage.hpp:106-108) is (o-objects)/object_size with no clamp, so any free-list next-link that points just past objects_end yields oid slightly above capacity (capacity=87381; victim slot ~88064 is +683), and headers+oid*8 lands inside objects[] (header region ends at memory+699048, objects begin memory+699056; oid=88064 -> headers+704512 == objects+5456 == object #341). The bad next-link enters local_free when free_allocation frees a Mapping whose get_pointer() is an out-of-page/aliased base (e.g. a backing assigned from a different page's geometry, or a slot whose 8-byte word was reinterpreted).",
+                "location": "runtime/include/alaska/SizedAllocator.hpp:89-99 (pop result unchecked) + runtime/core/SizedPage.cpp:31-34 (header write unchecked)",
+                "preconditions": "A Mapping->get_pointer() that is not a valid in-page object base for the page that pt.get_unaligned(ptr) resolves to, freed via release_local (free_allocation, ThreadCache.cpp:117-134), so its address is linked into local_free and later popped.",
+                "reachability": "high",
+                "signature_fit": "Pure mutator alloc/free mechanics -> survives every GC/compaction/reuse kill switch; eager-RC irrelevant; corrupt slot ~88064 is exactly capacity+683 as the signature notes ('suspiciously close to capacity'); ~1/64-1/250 reflects how often a freed pointer lands just past a page boundary.",
+                "why_header_shaped": "The corrupting write is set_mapping(&m) which stores (Mapping*)/8; a free-list next-link by contrast is an objects[]/heap address (not 0x8000xxxx-shaped), so the DEPOSITED value being 0x80015xxx proves the wild write is the header store, while the out-of-bounds OID is what was produced by the poisoned/aliased free-list link.",
+                "confirming_experiment": "READ-ONLY: in SizedAllocator::alloc after pop(), assert object==nullptr || (object>=objects_start && object<objects_end) and ((uintptr_t)object - (uintptr_t)objects_start)%object_size==0. Always-on; first hit gives the exact bad object and stack."
+            },
+            {
+                "id": "double-free-or-aliased-backing-from-deferred-then-inline",
+                "mechanism": "A node handle can be queued by defer_free (ThreadCache.cpp:479-555, RECORD mode default) leaving its backing still 'allocated' in the page; if that same backing is also reached by an inline free or a second free path before/around the (inert) drain, free_allocation->release_local pushes the SAME object twice onto local_free (ShardedFreeList::free_local, no dup detection), creating a 2-cycle in the LIFO list. The next two halloc()s pop the same address, so two distinct Mappings m1,m2 share one backing. When m1 is later freed its backing is pushed while m2 is live; a subsequent halloc pops it and set_mapping(&m3) rewrites that backing's Header -- and because object_to_ind is computed once with this page's bases while the duplicated backing's true page differs, the oid can exceed capacity and the (Mapping*)/8 header word lands in the live node m2's obj[0].",
+                "location": "runtime/core/ThreadCache.cpp:413-432 (hfree_impl free + put) and 539 (deferred enqueue) + runtime/include/alaska/ShardedFreeList.hpp:99-104 (free_local has no duplicate guard)",
+                "preconditions": "Same backing reaches free_allocation twice without an intervening successful alloc consuming it (double free, or a defer_free enqueue racing the same handle through another free path), so local_free contains the address twice.",
+                "reachability": "medium",
+                "signature_fit": "Independent of compaction/cycle/reclaim/reuse-cache (survives those switches); eager-RC; the duplicate makes a live node's backing re-handed, and the re-alloc's set_mapping is the header-shaped wild write; rarity matches a narrow double-free window.",
+                "why_header_shaped": "The damaging store is set_mapping(&m3) (SizedPage.cpp:33), storing (Mapping*)/8 = 0x8000xxxx+slot; the size_slack store (bits 32-63) cannot produce the low word, so a value with top-32 zero and 0x8000xxxx low word is specifically the _mapping field of the re-allocated header overwriting obj[0].",
+                "confirming_experiment": "READ-ONLY: in ShardedFreeList::free_local, walk a bounded prefix of local_free and assert p is not already the head/near-head (cheap dup check), or maintain a debug count and assert num_local_free<=capacity. A trip means a duplicate/double-free entered the list."
+            }
+        ]
+    }
+}
+{
+    "type": "started",
+    "key": "v2:01309f489d4b29f061e593accee48c3861d6d417583567bb2fec707f8bcde290",
+    "agentId": "aeb8b409b902402e0"
+}
+{
+    "type": "result",
+    "key": "v2:c2704873a1e6cc610aa42c1045567302493aadf874f86f1cf3263d846db703f2",
+    "agentId": "a9592ca4408dd6994",
+    "result": {
+        "verdict": "SURVIVES",
+        "reason": "Under the SIGNATURE-CONSISTENCY lens (refute only if the mechanism produces a wrong-shaped value, is killed by a named switch, or contradicts timing), the hypothesis does not contradict any signature element, and its central value-identity claim is in fact CONFIRMED by the code. (1) VALUE SHAPE is exact: SizedPage.hpp:64-65 gives `uint64_t _mapping:(64-32)=32` then `uint32_t size_slack:32`; under the Itanium/SysV x86-64 ABI _mapping occupies bits 0-31 and size_slack bits 32-63, so sizeof(Header)==8 and _mapping IS the low 8-byte word (no static_assert pins this, but the geometry at SizedPage.cpp:66-84 only works with size 8). set_mapping (SizedPage.hpp:67) stores m/8. The handle table base is fixed at 0x400000000 (Configuration.hpp:21: 0x8000000000000000 >> (32-3) = 1<<34; HandleTable.cpp:39-44 MAP_FIXED there; Mapping is 8 bytes per alaska.hpp:403), so m/8 = 0x80000000+slot, and slot ~0x15xxx yields exactly 0x80015xxx with bit 63 clear. I also confirmed this top-32-zero 0x8000xxxx-shaped low word is UNIQUELY a set_mapping deposit: the only other Mapping-pointer /8 (encode(), alaska.hpp:353) feeds to_handle which sets bit 63 (alaska.hpp:358/367), and set_next stores the raw 0x4...-shaped address (alaska.hpp:167). (2) SWITCH SURVIVAL: the hypothesis names two header-store sub-mechanisms. The compact ones (*left=*right at SizedPage.cpp:195 and set_mapping at :198) are gated by ALASKA_NO_COMPACT (init.cpp:144,155 -> Heap.cpp:284); the only ungated extra caller, Localizer.cpp:74, is reached solely from yukon.cpp:166 / sim.cpp:94, which are inactive in refcount-gc-anchorage binarytrees, so NO_COMPACT genuinely kills the compact paths -- consistent with the crash surviving NO_COMPACT. The hypothesis explicitly designates the surviving path as alloc's set_mapping (SizedPage.cpp:33), which is gated by NONE of NO_COMPACT/NO_REUSE_CACHE/NO_GC_FREE/NO_FREE_DEC, so it survives all four. For a 16-byte node, alloc sets size_slack = object_size - size = 16-16 = 0 (SizedPage.cpp:34), giving exactly 0x00000000_80015xxx -- shape matches. (3) TIMING is not contradicted. Hence no signature contradiction -> not refuted. CAVEAT (mechanism, not signature): the surviving branch (oid>=capacity during alloc) is exactly the prior ALREADY-RULED-OUT scenario and the hypothesis supplies no concrete new gap. Geometry shows no header/object overlap (capacity=87381, headers=[0,699048), objects=round_up(699048,16)=699056, so ind_to_header(oid<capacity) never reaches object memory), and SizedAllocator only ever vends in-bounds addresses (extend() caps at objects_end, SizedAllocator.hpp:124-137; free list links live in the freed object itself, ShardedFreeList.hpp:101). The hypothesis's '88064 ~ capacity 87381' intuition conflates the handle-table slot index of the deposited Mapping (a property of the VALUE) with the SizedPage object capacity (a property of the VICTIM page) -- two unrelated indices whose numeric proximity is coincidental. So the value-identity core SURVIVES and is correct, but the mechanism's surviving branch remains unproven.",
+        "evidence": "runtime/include/alaska/SizedPage.hpp:64-67 (bitfield layout + set_mapping=m/8); runtime/include/alaska/Configuration.hpp:21 + runtime/core/HandleTable.cpp:39-44 (table base 0x400000000 -> 0x80000000+slot); runtime/rt/init.cpp:144,155 + runtime/core/Heap.cpp:284 (NO_COMPACT gates only the barrier compact, so compact sub-mechanism dies but alloc set_mapping at runtime/core/SizedPage.cpp:33-34 survives all switches); refutation-resistant gap: runtime/core/SizedPage.cpp:66-84 + runtime/include/alaska/SizedAllocator.hpp:124-142 show alloc can only target oid<capacity, and the '~88064 near capacity' link is a slot-index/object-capacity conflation"
+    }
+}
+{
+    "type": "started",
+    "key": "v2:9606a8be64433abd921a4747e7c8f73ab859fc0bd157926fe8238014ff220323",
+    "agentId": "afe3593fd0ef84ee0"
+}
+{
+    "type": "result",
+    "key": "v2:b357f8bf623302b753cc974754e8d606175b773577bf05746ce29ff132803f96",
+    "agentId": "a576ee50ccbfe72e6",
+    "result": {
+        "verdict": "REFUTED",
+        "reason": "The hypothesis is a self-refutation (it claims the reuse-consume path structurally CANNOT produce the crash), and the code confirms that claim, so the hypothesis \"reuse path is the wild-write mechanism\" is REFUTED by an existing structural guard. The reuse-consume fast path (runtime/core/ThreadCache.cpp:210-229) performs exactly four memory mutations after the local `e = ReuseEntry{}` reset: `m->reset()` (alaska.hpp:213, atomic store to the *Mapping* handle-table word), `m->set_pointer(ptr)` (alaska.hpp:144-153, CAS on the *Mapping* word), `pg->update_size_slack(ptr, slot)` (SizedPage.hpp:47-48), and the optional `memset(ptr,0,size)` (writes the object body). Of these, the ONLY write that touches a SizedPage Header is `update_size_slack`, and it assigns `ind_to_header(object_to_ind(ptr))->size_slack = object_size - requested`. Under the verified layout SIZE_BITS=32, the Header bitfields are `uint64_t _mapping : 32` (declared first → least-significant bits 0-31, the low word) and `uint32_t size_slack : 32` (bits 32-63, the high word) (SizedPage.hpp:63-66). On little-endian x86-64 a store to `size_slack` is a 4-byte store at byte offset +4 that never modifies the low word; even a same-unit RMW would preserve `_mapping`, and even an out-of-bounds `object_to_ind` would deposit a small `size_slack` value into the HIGH 32 bits of whatever 8-byte slot it hits — never a `0x80015xxx` value in the low word. The crash value `0x80015xxx` is precisely a `_mapping` low-word value (`0x80000000 + slot`, top-32-bits zero), which is produced ONLY by `set_mapping` (SizedPage.hpp:67). An exhaustive grep of the runtime for `set_mapping`/`_mapping =` writes (SizedPage.cpp:33 alloc, :42/:52 release writing nullptr, :198/:293/:297 compact/jumble, plus the hpp definition) shows NO `set_mapping` call on the reuse-consume path. The design comment at ThreadCache.hpp:135-138 explicitly states the reuse path keeps the existing Header pointing at the mapping (\"the page Header still points at the mapping\"), which is exactly why it calls only `update_size_slack` and never `set_mapping`. Therefore the reuse path cannot deposit a 0x8000xxxx-shaped low word into obj[0], matching the hypothesis's stated DIRECT REFUTATION of fit.",
+        "evidence": "runtime/include/alaska/SizedPage.hpp:47-48 (update_size_slack writes only size_slack) + SizedPage.hpp:63-67 (_mapping=bits0-31 low word via set_mapping, size_slack=bits32-63) + runtime/core/ThreadCache.cpp:219-224 (consume path: reset/set_pointer/update_size_slack/memset, no set_mapping); grep confirms set_mapping callers are only SizedPage.cpp:33,42,52,198,293,297 — none in the reuse path"
+    }
+}
+{
+    "type": "started",
+    "key": "v2:ea98c289ab0bc3fecc4b0e58d3fd29d24b4a6e01a2eb3da07a273004faa707a9",
+    "agentId": "a2aceed65f2611614"
+}
+{
+    "type": "result",
+    "key": "v2:320d23ffaeb954e4c80a4ee2749869f63116c2f751662d8a66635ab821fe3226",
+    "agentId": "a87bd541e6b4afb91",
+    "result": {
+        "verdict": "REFUTED",
+        "reason": "The hypothesis needs a pointer with object_to_ind(p) >= capacity (page-offset >= 2097152, \"the immediately following 2MiB page\") to reach alloc/release_*/size_of/update_size_slack on a class-0 SizedPage so that ind_to_header(oid)=headers+oid aliases the live object region. Existing code makes this unreachable on every arm. (1) The alloc arm cannot produce an OOB oid: SizedAllocator only returns pointers from [objects_start, objects_end). The bump allocator clamps to objects_end (SizedAllocator.hpp:128: `if (end > (off_t)objects_end) end = (off_t)objects_end;`), and the free list only holds previously bump-allocated slots, so object_to_ind(o) (SizedPage.cpp:31) is always in [0,capacity); the HEADER-word value the crash signature requires comes from alloc's set_mapping (SizedPage.cpp:33), and alloc never indexes OOB. (2) The release_*/size_of/update_size_slack arms are always reached after the owning page is resolved by HeapPageTable::get_unaligned (ThreadCache.cpp:120,277,668,709; the value passed is m.get_pointer(), the stored object base — alaska.hpp:99-103,141-154). get_unaligned (Heap.cpp:117-125) floors the pointer to its 2MiB-aligned page (page_size=2MiB, HeapPage.hpp:24-25) and looks up the HeapPage registered for exactly that page, so a pointer in the next 2MiB page routes to the NEXT page's HeapPage, never to this page's release_*. That routing IS the guard that defeats the \"foreign pointer one page over\" precondition. (3) For class 0 the geometry has zero end-slack: objects=round_up(headers+capacity)=699056 and objects_end=699056+87381*16=2097152=page end (SizedPage.cpp:84,90; SizedAllocator.hpp:142), so no within-page address has oid>=capacity — any such address is already in the next 2MiB page and is rerouted. The hypothesis concedes it has no upstream producer (\"pairs with whichever upstream path supplies the off-by-one/foreign pointer\"); with the bump clamp + get_unaligned routing + zero end-slack, no path supplies such a pointer, so the (real) missing oid<capacity check is never exercised and its confirming assert would never fire on the live path.",
+        "evidence": "runtime/core/Heap.cpp:117-125 (get_unaligned floors ptr to its owning 2MiB page); runtime/include/alaska/SizedAllocator.hpp:128 (bump clamp to objects_end) and :142 (objects_end = page end for class 0); runtime/core/SizedPage.cpp:84,90 (objects region zero end-slack); call sites runtime/core/ThreadCache.cpp:120,129,132,222,734 all pass m.get_pointer() resolved through get_unaligned"
+    }
+}
+{
+    "type": "started",
+    "key": "v2:d1051a24071e93dd47fa9e26e78abe1b8747170afe3636d0d903e3400ecb54e1",
+    "agentId": "a7cfce9c19c37f283"
+}
+{
+    "type": "result",
+    "key": "v2:01309f489d4b29f061e593accee48c3861d6d417583567bb2fec707f8bcde290",
+    "agentId": "aeb8b409b902402e0",
+    "result": {
+        "verdict": "REFUTED",
+        "reason": "The hypothesis is self-refuting by design (it claims the reuse consume path CANNOT cause the crash), and the code confirms that claim, so as a root-cause mechanism it is REFUTED: it produces a differently-shaped value than the signature requires. The consume fast path (runtime/core/ThreadCache.cpp:210-229) performs exactly: m->reset() (alaska.hpp:210-215, atomic store to the Mapping/handle-table word, not object memory), m->set_pointer(ptr) (alaska.hpp:141-154, CAS on the Mapping word, not object memory), pg->update_size_slack(ptr, slot) (SizedPage.cpp/hpp:47-48), and an optional memset(ptr,0,size) (line 223, deposits only zeros). There is NO set_mapping/h->_mapping= store in this block; grep confirms set_mapping callers are only SizedPage.cpp:33, 198, 293, 297 (alloc/compact/jumble), none in ThreadCache. The deposited crash value 0x80015xxx is a Header LOW word: bits 0-31 = _mapping = (Mapping*)/8 = 0x80000000+slot, bits 32-63 = size_slack = 0. Under the Header bitfield (SizedPage.hpp:64-65) with SIZE_BITS=32, _mapping is uint64_t:32 occupying the low word (bits 0-31) and size_slack is a distinct-typed uint32_t:32 occupying the high word (bits 32-63); only set_mapping (line 67) writes the low word. update_size_slack (line 48) writes ONLY size_slack with object_size-requested, a tiny value (0..16 for the 16-byte node class), landing in bits 32-63 as ~0x0000000X_00000000 — the OPPOSITE half from, and structurally never equal to, 0x00000000_80015xxx. Even a wildly wrong header index from a corrupt object_to_ind would still write the high word, never the 0x8000xxxx+slot low word. Therefore the reuse consume path cannot deposit the observed signature value; the mechanism produces a differently-shaped value and is refuted as the crash cause (also consistent with the bug surviving NO_REUSE_CACHE, since the path is irrelevant to the signature regardless of the switch).",
+        "evidence": "runtime/include/alaska/SizedPage.hpp:48 (update_size_slack writes only size_slack = object_size-requested) vs SizedPage.hpp:64-67 (_mapping is the low-word bitfield, set only by set_mapping); runtime/core/ThreadCache.cpp:219-224 (consume block has reset/set_pointer/update_size_slack/memset, no set_mapping); grep shows set_mapping callers only at runtime/core/SizedPage.cpp:33,198,293,297"
+    }
+}
+{
+    "type": "started",
+    "key": "v2:67f705b754af7e08c4b72facbfda7e613a9a2e0eb5c4abe56dde2db50b12e947",
+    "agentId": "a9fdfbf248e9b0849"
+}
+{
+    "type": "result",
+    "key": "v2:95a6630efeff7d9459f7e64101b74768c01171476139a080236b01bbf6d1b714",
+    "agentId": "aff10ca08c5882fa7",
+    "result": {
+        "verdict": "REFUTED",
+        "reason": "The hypothesis is a self-refuting elimination, and the code confirms it: the reuse consume fast path cannot produce the 0x80015xxx header-low-word signature. The consume block (runtime/core/ThreadCache.cpp:214-225) executes only e=ReuseEntry{}, m->reset(), m->set_pointer(ptr), pg->update_size_slack(ptr, slot), and an optional memset — there is no set_mapping or h->_mapping= store. reset() (alaska.hpp:210-215) and set_pointer() (alaska.hpp:141-154) both write reinterpret_cast<uint64_t*>(this), i.e. the Mapping word in the handle table at base 0x400000000, never object memory or a SizedPage Header, so they cannot land in a live node's obj[0]. update_size_slack (SizedPage.hpp:47-49) writes ->size_slack, which under ALASKA_SIZE_BITS=32 is bits 32-63 (the HIGH word of the 8-byte Header), whereas the crash value is the full 64-bit obj[0] value 0x80015xxx with high word zero — a _mapping/low-word shape. Even a wildly out-of-bounds object_to_ind(ptr) inside update_size_slack would deposit object_size-requested into bits 32-63 of whatever word it aliases, producing a high-word value, structurally never a 0x8000xxxx+slot full-value low word. A grep confirms the only _mapping/set_mapping low-word writers in the entire runtime are SizedPage::alloc:33, release_local/remote:42/52 (which write nullptr=0), and compact:198/293/297 — none reachable from the consume path. Independently, the crash SURVIVES ALASKA_NO_REUSE_CACHE; that kill-switch (ThreadCache.cpp:341-345) gates the stash at line 390 and, by keeping the cache empty, makes the consume hit at line 214 (e.m != nullptr) unreachable — so disabling it removes the entire reuse path, yet the crash persists, definitionally excluding this path. The hypothesis's signature-fit claim (DIRECT REFUTATION) is correct as written; as a candidate root cause it is REFUTED.",
+        "evidence": "runtime/core/ThreadCache.cpp:219-224 (consume: reset/set_pointer/update_size_slack, no set_mapping) + runtime/include/alaska/SizedPage.hpp:48 (update_size_slack writes only size_slack, bits 32-63 under SIZE_BITS=32) + runtime/include/alaska/alaska.hpp:144,213 (reset/set_pointer write the handle-table Mapping word, not object memory) + runtime/core/ThreadCache.cpp:341-345,390,214 (NO_REUSE_CACHE kill-switch disables both stash and consume; crash survives it)"
+    }
+}
+{
+    "type": "started",
+    "key": "v2:1820dcd7291e4a21ee1dc39456712bc6b8a13c743dcaa3156a6e7249579f1033",
+    "agentId": "a13e0363b770fab14"
+}
+{
+    "type": "result",
+    "key": "v2:67f705b754af7e08c4b72facbfda7e613a9a2e0eb5c4abe56dde2db50b12e947",
+    "agentId": "a9fdfbf248e9b0849",
+    "result": {
+        "verdict": "REFUTED",
+        "reason": "The hypothesis's only theoretical hole is \"a stale entry left in reuse_cache[cls] while reuse_cache_enabled()==false.\" Existing code makes that precondition unreachable. (1) The array is value-initialized to all-null at construction: ReuseEntry uses NSDMIs m=nullptr/ptr=nullptr/page=nullptr (ThreadCache.hpp:140-142) and is a plain member ReuseEntry reuse_cache[num_size_classes] (ThreadCache.hpp:144); the ctor (ThreadCache.cpp:66-80) never touches it, so no garbage initial entry exists. (2) A grep over runtime/ confirms the ONLY site that assigns a non-null entry is ThreadCache.cpp:406, reuse_cache[cls] = ReuseEntry{m,ptr,size_classes[cls]}, which lives inside the if opened at line 390 whose first conjunct is reuse_cache_enabled(); every other write is the clearing form ReuseEntry{} (lines 144, 219). So the gated stash is the sole producer of entries the ungated consume (210-229) could ever see. (3) The gate is read-once-cached: reuse_cache_enabled() stores getenv(\"ALASKA_NO_REUSE_CACHE\") into static int v on first call and never re-evaluates (ThreadCache.cpp:341-345), so it cannot flip true->false mid-run. Consequence: under ALASKA_NO_REUSE_CACHE=1 the gate at 390 is false on every free, line 406 never runs, no entry is ever created, and the ungated consume at 214 always observes e.m==nullptr and falls through. The stash/consume gating asymmetry is therefore provably benign and the NO_REUSE_CACHE kill-switch elimination is sound. The hypothesis also explicitly disclaims signature fit (no _mapping low-word write on the consume path — only update_size_slack at 222, bits 32-63), so it cannot produce the 0x80015xxx header word regardless. The guard makes the precondition impossible: REFUTED.",
+        "evidence": "runtime/core/ThreadCache.cpp:390 (gate on sole producer at 406) + 341-345 (read-once-cached getenv) + runtime/include/alaska/ThreadCache.hpp:140-144 (value-initialized array; NSDMI nullptr)"
+    }
+}
+{
+    "type": "started",
+    "key": "v2:9fe2f89f8a6627ace4961e9f0e8139ce108e807fca2facc6932e318961cbb592",
+    "agentId": "adcf1ddb41c76ab45"
+}
+{
+    "type": "result",
+    "key": "v2:75be3377aac7b689c9540cce703ebc2bf70142af89b454b648f237e6706860a9",
+    "agentId": "ab79bba34c1946af7",
+    "result": {
+        "evidence": "runtime/CMakeLists.txt:181-183 (rt/sim.cpp gated by if(ALASKA_HTLB_SIM)); build/refcount-gc-anchorage/CMakeCache.txt (ALASKA_HTLB_SIM:BOOL=OFF, ALASKA_YUKON:BOOL=OFF); build/refcount-gc-anchorage/compile_commands.json (3x rt/barrier.cpp, 0x rt/sim.cpp/yukon.cpp); runtime/rt/init.cpp:155 (the only barrier-thread compaction, gated by if(!no_compact) at init.cpp:144); bench/src/GCBench/binarytrees.c (malloc/free only, no localize_structure); Localizer.cpp:62,73-74 (relocation reached only via feed_hotness_buffer); callers of feed_hotness_buffer = yukon.cpp:166 + sim.cpp:94 only.",
+        "reason": "The code-level hole is real (Localizer.cpp:73-74 calls compact_locality_pages()/compact_sizedpages() and tc.localize at :62 with no ALASKA_NO_COMPACT gate, unlike init.cpp:155 which is gated by !no_compact at init.cpp:144), but it is unreachable in this workload/config. The ONLY entry into relocation is Localizer::feed_hotness_buffer, whose only two callers are sim.cpp:94 and yukon.cpp:166. sim.cpp is compiled into libalaska solely under if(ALASKA_HTLB_SIM) (CMakeLists.txt:181-183), and the refcount-gc-anchorage build sets ALASKA_HTLB_SIM:BOOL=OFF (CMakeCache.txt) -- confirmed by compile_commands.json containing zero rt/sim.cpp entries (only 3x rt/barrier.cpp). yukon.cpp lives in a separate 'yukon' shared library, ALASKA_YUKON:BOOL=OFF, and dump_htlb uses RISC-V CSR/rdcycle instructions, so it is absent from this x86 build. The actual service in this build is the barrier (rt/init.cpp), which contains no call to localize/feed_hotness_buffer/Localizer; its sole compaction (compact_sizedpages at init.cpp:155) IS gated by !no_compact, so it is exactly what the NO_COMPACT A/B disables. Finally, plain binarytrees.c uses only malloc/free and never calls localize_structure (that extern is invoked only from test/tree.c:53), so the halloc.cpp:316 path is also dead here. With every relocation entry point compiled out or never called, the un-gated compact inside feed_hotness_buffer can deposit no 0x80015xxx header word, and the 'crash survives NO_COMPACT' elimination remains intact for this workload. The hypothesis itself rated reachability 'low' and conceded the gap 'likely not exercised'; the build evidence converts that to definitively not exercised.",
+        "verdict": "REFUTED"
+    }
+}
+{
+    "type": "started",
+    "key": "v2:f04c365726bac571008408ea6525e622b661f8b9fc630a5983189b6b093e5b88",
+    "agentId": "a5eb3c5edb5028a49"
+}
+{
+    "type": "result",
+    "key": "v2:b8e2953c23c5c6b6652408d30d97a773891e87abc724a2acc32c40a489a154b9",
+    "agentId": "a9dd7f77319ccfac5",
+    "result": {
+        "verdict": "REFUTED",
+        "reason": "The mechanism requires a genuine concurrent race between one thread's release_remote->free_remote and another thread's owner-side swap/pop/extend on the same class-0 SizedPage, but that concurrency cannot occur in the binarytrees run. (1) binarytrees is a single-threaded \"plain malloc/free port\" with no pthread_create/omp/#pragma (bench/src/GCBench/binarytrees.c, only the header-comment line matches; no thread spawn). (2) The only other thread, barrier_thread (rt/init.cpp:232), never does halloc/class-0 allocation: barrier_thread_func (rt/init.cpp:76-184) only drains/compacts/reclaims, so it never owns a class-0 page and never runs alloc_slow/swap/pop/extend on one. (3) Every GC-side free (drain_deferred->hfree_impl->free_allocation->release_local/release_remote, reclaim's tc.hfree, compaction) runs inside Runtime::with_barrier (Runtime.hpp:96-116) which calls lock_all_thread_caches() (Runtime.cpp:144-149, taking every tc->lock) and barrier_manager->begin() — a stop-the-world that parks all mutators in rv_park (barrier.cpp:524-627), so the mutator is frozen for the whole callback and cannot run swap/pop/extend while the GC thread frees. The required race window does not exist. (4) Even granting two concurrent threads, the cited \"counts and linked list desync\" cannot corrupt a next link: free_remote and swap interact only via atomic CAS on remote_free (ShardedFreeList.hpp:82-92, 109-120), while pop/free_local/extend touch only the owner-private local_free; num_local_free/num_remote_free (ShardedFreeList.hpp:59-60) are advisory, feed only num_free()/available() (line 31-34), and never participate in computing a next pointer or object_to_ind — so the counter race cannot produce an out-of-page o. (5) The hypothesis's separate \"re-adopt without set_size_class\" claim is true (Heap.hpp:191-206 skips init_fn on magazine reuse) but inert: the magazine is per-size-class (Heap.hpp:184, indexed by cls in Heap.cpp:177), so a re-adopted page keeps the same class-0 geometry and set_size_class would be a no-op; no geometry desync. The value-shape (Header low word in obj[0]) and survival of all GC kill-switches are consistent with hypothesis 1's wrong-oid write, so the refutation is on precondition/reachability, not signature shape: the second allocating mutator the hypothesis admits it needs does not exist.",
+        "evidence": "rt/init.cpp:76-184 (barrier thread does no class-0 alloc; world-stopped GC) + Runtime.hpp:96-116 and Runtime.cpp:144-149 (with_barrier locks all tc locks + stop-the-world) + barrier.cpp:524-627 (begin() parks all mutators) refute the concurrent-race precondition; ShardedFreeList.hpp:82-92,109-120 vs 59-60,31-34 show the counter desync cannot corrupt a next link; Heap.hpp:184,191-206 + Heap.cpp:177 show the set_size_class-skip is geometry-inert."
+    }
+}
+{
+    "type": "started",
+    "key": "v2:951685743e31130f606592fcbcb6f00e4273a43cbaf91aa27fb7b9bbc444b99f",
+    "agentId": "a36612e5f13461119"
+}
+{
+    "type": "result",
+    "key": "v2:1820dcd7291e4a21ee1dc39456712bc6b8a13c743dcaa3156a6e7249579f1033",
+    "agentId": "a13e0363b770fab14",
+    "result": {
+        "verdict": "REFUTED",
+        "reason": "The hypothesis is self-refuting and the code confirms it. The ungated consume block (ThreadCache.cpp:210-229) only does work when reuse_cache[cls].m != nullptr (line 214). The ONLY site that ever creates a non-null entry is line 406 (reuse_cache[cls] = ReuseEntry{m,ptr,page}); a full grep of runtime/ + compiler/ shows no other writer (other references at 141/144/153/213/219/403 are clears, reads, or flushes). Line 406 is reachable only past the guard at line 390, which begins reuse_cache_enabled() && ... With ALASKA_NO_REUSE_CACHE=1 that helper returns false (it caches getenv once: static int v=-1; if(v<0) v=(getenv(...)!=nullptr)?0:1; ThreadCache.cpp:341-345), so the stash never runs and no entry is created. The array is zero-initialized because every ReuseEntry member has an in-class default initializer = nullptr (ThreadCache.hpp:139-143). The gate is read-once and never flips mid-process, so a 'stale entry across a toggle' cannot occur. Therefore the precondition (an entry present while reuse_cache_enabled()==false) is unreachable, the NO_REUSE_CACHE elimination is sound, and the asymmetry is a benign code-quality wart. Independently, the path is also not signature-fitting: even when reuse IS enabled, the consume block's sole header write is pg->update_size_slack(ptr, slot) at line 222, which mutates only size_slack (bits 32-63) and can never deposit the 0x80015xxx low-word _mapping value that defines the crash; there is no set_mapping or whole-Header store on this path. The crash also survives NO_REUSE_CACHE per the signature, which this analysis explains rather than contradicts.",
+        "evidence": "runtime/core/ThreadCache.cpp:390 (stash gated by reuse_cache_enabled()) vs :214 (consume ungated) and :406 (sole entry-creating write); :341-345 (read-once-cached gate, returns false under ALASKA_NO_REUSE_CACHE); runtime/include/alaska/ThreadCache.hpp:139-144 (ReuseEntry default-null members, zero-init array); :222 (consume's only header write is update_size_slack = size_slack bits 32-63, not _mapping low word)"
+    }
+}
+{
+    "type": "started",
+    "key": "v2:ccc3301b9fe5b4a94be4d67e146e4f9de4870d08387ff4fa25bbc1fda69f32de",
+    "agentId": "af6320cc69f4ba93c"
+}
+{
+    "type": "result",
+    "key": "v2:a606b8eff3d71c48b4dc2e1b2171668bd33e716f01e2962a800729b93f3e6d0a",
+    "agentId": "a9dbd2e89aaf636f5",
+    "result": {
+        "verdict": "REFUTED",
+        "reason": "The hypothesis requires ThreadCache::localize's release_remote->free_remote CAS push onto remote_free to run concurrently with the owner thread's non-atomic free_local/swap/pop on the same source page's ShardedFreeList. Two independent existing guards make that race impossible in this config. First, reachability: every production caller of ThreadCache::localize is gated by Runtime::with_barrier, which at Runtime.hpp:103-114 calls lock_all_thread_caches(), then barrier_manager->begin() to stop the world (barrier.cpp:524; the comment at barrier.cpp:386 confirms \"while the world is stopped\"), and only then runs the callback cb() containing the localize calls, before end()/unlock. localize is invoked at halloc.cpp:330 inside the with_barrier block opened at halloc.cpp:327 (localize_structure), and at Localizer.cpp:62 inside the with_barrier block opened at Localizer.cpp:50 (feed_hotness_buffer). With all thread-cache locks held and all mutators suspended, no owner thread can be executing free_local (ShardedFreeList.hpp:99-104), swap (80-92), or pop (67-76) concurrently, so the claimed lost-update/relink cannot occur. Second, the precondition is not even met: grep of the complete caller set (runtime, test, yukon, sim, halloc) shows the only paths into localize are localize_structure (referenced solely by test/tree.c) and feed_hotness_buffer (driven only by yukon.cpp:166 and sim.cpp:94). Both binarytrees source files (bench/src/GCBench/binarytrees.c and waterline/patches/GCBench/binarytrees.c) contain no reference to localize/feed_hotness/with_barrier (grep EXIT 1, no matches), so localize is dormant in the binarytrees config. The hypothesis's own preconditions concede both points. The guard (with_barrier serialization) plus non-reachability fully closes the window.",
+        "evidence": "runtime/include/alaska/Runtime.hpp:103-114 (with_barrier: lock_all_thread_caches + begin/stop-the-world wrap the localize callback); halloc.cpp:327-330 and Localizer.cpp:50-62 (the only two localize call paths, both inside with_barrier); binarytrees.c has no localize/feed_hotness caller (grep EXIT 1)"
+    }
+}
+{
+    "type": "started",
+    "key": "v2:ee58398174b91f22171d22aa6acc3b51493a234acbec831fe3d395cd7e5c07e6",
+    "agentId": "adce7e262c9fc2be6"
+}
+{
+    "type": "result",
+    "key": "v2:9fe2f89f8a6627ace4961e9f0e8139ce108e807fca2facc6932e318961cbb592",
+    "agentId": "adcf1ddb41c76ab45",
+    "result": {
+        "verdict": "SURVIVES",
+        "reason": "The hypothesis is a self-described BENIGN code-quality gap (asymmetric gating), not a crash explanation, and every load-bearing claim holds against the source. (1) The consume block IS ungated: ThreadCache.cpp:214-225 is guarded only by `if (e.m != nullptr)` and `if (e.page == size_classes[cls])`, with no reuse_cache_enabled() call, whereas the stash at ThreadCache.cpp:390 begins with reuse_cache_enabled(). (2) The gate is read-once-cached: reuse_cache_enabled() at ThreadCache.cpp:341-345 caches getenv in `static int v = -1`. (3) The ONLY site that assigns a non-empty ReuseEntry is ThreadCache.cpp:406, inside the block gated at line 390; all other touches only read (403) or clear to ReuseEntry{} (144, 219, 227), and ReuseEntry default-member-inits all fields null (ThreadCache.hpp:139-143). Hence under ALASKA_NO_REUSE_CACHE the gate is false -> line 406 never runs -> reuse_cache[cls].m stays null -> the ungated consume's `if (e.m != nullptr)` at line 214 never fires. The asymmetry is therefore inert when disabled, and the NO_REUSE_CACHE elimination is sound. Applying the SIGNATURE lens to try to make it fit and refute the benign verdict: even if consume fired, its only header write is update_size_slack (ThreadCache.cpp:222 -> SizedPage.hpp:47-48), which writes only `h->size_slack` (the uint32_t:32 field = bits 32-63 under SIZE_BITS=32, SizedPage.hpp:64-65), never the `_mapping` low word, so it provably cannot deposit a 0x80015xxx top-32-zero Header low word; and the write targets e.page's own slot header (in-bounds via object_to_ind/ind_to_header, SizedPage.hpp:105-107, under the line-215 same-page guard), not a foreign live node's obj[0]. There is no avenue by which the mechanism produces the observed value or survives-because-it-fires; it neither fits the signature nor is killed by NO_REUSE_CACHE for the reason claimed. The hypothesis's own conclusion (non-signature-fitting, benign, confirms the elimination) is correct and survives.",
+        "evidence": "runtime/core/ThreadCache.cpp:214 (ungated consume entry) vs 390 (gated stash) vs 406 (sole entry-creation site, gated) vs 341-345 (read-once gate); runtime/include/alaska/SizedPage.hpp:48 (update_size_slack writes only size_slack) and :64-65 (size_slack is bits 32-63, never the _mapping low word)"
+    }
+}
+{
+    "type": "started",
+    "key": "v2:6daf5a3d1f287de17f6a3cc3f6ee20e5515ac68023571a849bb1a0086573ecbe",
+    "agentId": "aa5f80ab4a957298a"
+}
+{
+    "type": "started",
+    "key": "v2:58d4a3802c269df5ccdeebadad0ae7398b91ea522cc474dba0cbf7ae7612c866",
+    "agentId": "ac9acf4a5a684d719"
+}
+{
+    "type": "started",
+    "key": "v2:3eeec6148b5691607cef789ceb12315f5cafea58dc9d657ca8e4b0f29cc8b124",
+    "agentId": "a3bb4b2fc7fe00688"
+}
+{
+    "type": "started",
+    "key": "v2:06eea213efcdcb18e970a09972747450af5974a525de665cebc6055088e75975",
+    "agentId": "aa1540e924b32661a"
+}
+{
+    "type": "started",
+    "key": "v2:44ee49ba950acba266e1f7f1f65febdc53ee706768107cc24ae45eaa76e96e2b",
+    "agentId": "af285840ca58a0b9a"
+}
+{
+    "type": "started",
+    "key": "v2:d179f3b5a0c6b3621d2dba7f8810f148fb6282c8ac3583200e2d82e03cee770f",
+    "agentId": "aaef681f52380e783"
+}
+{
+    "type": "started",
+    "key": "v2:4bb0986f4f486cf8d2b3021ca3b14a48ee9ef32a1e670478e75dd293eb76ffff",
+    "agentId": "adfc426217c3072f2"
+}
+{
+    "type": "started",
+    "key": "v2:c20b42e46e72a041e12650f8829932062d9187641eaca9fde8e3e2d535cc5dba",
+    "agentId": "a283716926fe9972f"
+}
+{
+    "type": "started",
+    "key": "v2:24577bea0052050da88cd9f510cc99d0ff0bdcad0354a446238e9650c3a3ef29",
+    "agentId": "a41f0170ac2c86303"
+}
+{
+    "type": "started",
+    "key": "v2:c62bb1b46bb306f91c934a88b86afede6d68bf35a73e4aabdcff7d89434ad410",
+    "agentId": "adde754306caae4dc"
+}
+{
+    "type": "started",
+    "key": "v2:1b055b28fb0be6302196797c6b9fc1199eee01985308a4fd039c52540740b1ee",
+    "agentId": "a9a26eaf7fd84e74d"
+}
+{
+    "type": "started",
+    "key": "v2:77dde5ae579ab7b341b55fedcbb6d9938b32492c513640deb341332d98ff39fd",
+    "agentId": "a1d090e01414d4914"
+}
+{
+    "type": "started",
+    "key": "v2:4900c84d7765a6601fc118eb0b7ed0c981850057e9c88a8193442484e23d3ebb",
+    "agentId": "ae51712c3fb49e385"
+}
+{
+    "type": "started",
+    "key": "v2:1664dbc6ede5edb620ef3bea2542f8da857e4664d1f09b4277cb42df7abec229",
+    "agentId": "ab5fb656e3d0fa14e"
+}
+{
+    "type": "started",
+    "key": "v2:c662c98c9ab7f94ccb700f45dafc1d46033d63f2c77786e76740175d949df2a9",
+    "agentId": "aac5d9e02db503473"
+}
