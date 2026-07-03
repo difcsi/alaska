@@ -64,6 +64,21 @@ void defs(void) {
   printf("-D__STDC_CONSTANT_MACROS\n");
   printf("-D__STDC_FORMAT_MACROS\n");
   printf("-D__STDC_LIMIT_MACROS\n");
+  // Mirror the runtime's configure-time feature settings so the installed headers
+  // (alaska.h) expose each feature's API -- and instrumented programs / tests can
+  // self-gate -- only when the runtime was built with that feature.
+  // PORT-NOTE: dev's build does not yet define these ALASKA_ENABLE_* macros at
+  // compile time; when undefined each #if evaluates to 0 (no flag emitted), so
+  // this is inert until the runtime/build side sets them.
+#if ALASKA_ENABLE_REFCOUNT
+  printf("-DALASKA_ENABLE_REFCOUNT=1\n");
+#endif
+#if ALASKA_ENABLE_CYCLE_COLLECTION
+  printf("-DALASKA_ENABLE_CYCLE_COLLECTION=1\n");
+#endif
+#if ALASKA_ENABLE_ANCHORAGE
+  printf("-DALASKA_ENABLE_ANCHORAGE=1\n");
+#endif
 }
 
 

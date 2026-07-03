@@ -56,6 +56,38 @@ do
 				shift
 				;;
 
+			# "Yukon" stack-to-heap promotion. These set environment variables that
+			# alaska-transform and the stack-promote pass (run via opt) inherit.
+			--stack-promote)
+				export ALASKA_STACK_PROMOTE=1
+				shift
+				;;
+			--heap-hints)
+				export ALASKA_HEAP_HINTS="$(realpath "$2")"
+				shift
+				shift
+				;;
+			--heap-hints=*)
+				export ALASKA_HEAP_HINTS="$(realpath "${1#*=}")"
+				shift
+				;;
+			--promote-free)
+				export ALASKA_STACK_PROMOTE_FREE=1
+				shift
+				;;
+			--no-promote-free)
+				export ALASKA_STACK_PROMOTE_FREE=0
+				shift
+				;;
+
+			# Keep-raw (leaving provably non-escaping malloc/calloc on the libc
+			# allocator instead of promoting them to handles) is ON by default;
+			# this disables it for the build (e.g. to A/B a baseline).
+			--no-keep-raw)
+				export ALASKA_NO_KEEP_RAW=1
+				shift
+				;;
+
 			-O*)
 				OPT="$1"
 				shift

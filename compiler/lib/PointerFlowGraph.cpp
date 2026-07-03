@@ -53,6 +53,17 @@ struct NodeConstructionVisitor : public llvm::InstVisitor<NodeConstructionVisito
     // alloca has no color. it is not an allocation we care about.
   }
 
+  void visitCallInst(llvm::CallInst &I) {
+    // A malloc/calloc the keep-raw pass left on the libc allocator is a raw
+    // pointer, not a handle. Like an alloca, it is a Source with no color, so it
+    // never seeds a translation through its loads/stores.
+    if (I.getMetadata("alaska.keepraw")) {
+      node.type = alaska::Source;
+      return;
+    }
+    visitInstruction(I);
+  }
+
   // all else
   void visitInstruction(llvm::Instruction &I) {
     node.type = alaska::Source;

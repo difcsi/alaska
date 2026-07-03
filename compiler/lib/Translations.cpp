@@ -271,6 +271,9 @@ bool alaska::shouldTranslate(llvm::Value *val) {
   if (auto call = dyn_cast<CallInst>(val)) {
     auto *func = call->getCalledFunction();
     if (func && func->getName() == "_Znam") return false;
+    // A malloc/calloc the keep-raw pass left on the libc allocator is a raw
+    // pointer, not a handle -- treat it like an alloca and never translate it.
+    if (call->getMetadata("alaska.keepraw")) return false;
   }
 
   if (auto arg = dyn_cast<Argument>(val)) {

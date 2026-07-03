@@ -16,6 +16,7 @@ add_llvm_library(Alaska MODULE
 	passes/Alaska.cpp
 
 	lib/PointerFlowGraph.cpp
+	lib/EscapeAnalysis.cpp
 	lib/Utils.cpp
 	lib/TranslationForest.cpp
 	lib/Translations.cpp
@@ -67,6 +68,8 @@ add_llvm_library(Alaska MODULE
 	passes/ArgPinElision.cpp
 	passes/Normalize.cpp
 	passes/Escape.cpp
+	passes/StackPromote.cpp
+	passes/HoistInductionTranslate.cpp
 	passes/TranslatePass.cpp
 	passes/Replacement.cpp
 	passes/Lower.cpp

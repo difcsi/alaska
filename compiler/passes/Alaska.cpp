@@ -407,6 +407,8 @@ extern "C" LLVM_ATTRIBUTE_WEAK ::llvm::PassPluginLibraryInfo llvmGetPassPluginIn
             return true;
           }
           REGISTER("alaska-inline", TranslationInlinePass);
+          REGISTER("alaska-stack-promote", AlaskaStackPromotePass);
+          REGISTER("alaska-hoist-induction", AlaskaHoistInductionTranslatePass);
           REGISTER("alaska-refcount-inc", RefcountIncPass);
           REGISTER("alaska-refcount-dec", RefcountDecPass);
 
