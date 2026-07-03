@@ -58,6 +58,13 @@ alaska_switch(ALASKA_ENABLE_CYCLE_COLLECTION OFF)
 alaska_switch(ALASKA_ENABLE_EVENT_COUNTERS   OFF)
 alaska_switch(ALASKA_ENABLE_CACHE_PROBE      OFF)
 alaska_switch(ALASKA_ENABLE_DEFER_RC         OFF)
+# REUSE_CACHE: Perceus-flavored refcount<=1 reuse cache. A uniquely-owned handle
+# freed on the synchronous path stashes its (mapping, backing) pair in a per-size
+# -class slot instead of returning them to the freelists; the next same-size halloc
+# re-hands them, skipping the alloc round-trip. Ported from main-rc, adapted to dev's
+# ObjectHeader allocator. Requires REFCOUNT; defaulted OFF (touches the alloc/free
+# fast path, so opt-in until validated on dev).
+alaska_switch(ALASKA_ENABLE_REUSE_CACHE      OFF)
 # ANCHORAGE: in-barrier heap compaction (defragmentation). When ON, the periodic
 # barrier thread calls Heap::compact_sizedpages() each tick (see runtime/rt/init.cpp),
 # relocating live objects out of fragmented sized pages -- dev already implemented the
@@ -70,6 +77,9 @@ if(ALASKA_ENABLE_CYCLE_COLLECTION AND NOT ALASKA_ENABLE_REFCOUNT)
 endif()
 if(ALASKA_ENABLE_DEFER_RC AND NOT ALASKA_ENABLE_REFCOUNT)
   message(FATAL_ERROR "ALASKA_ENABLE_DEFER_RC requires ALASKA_ENABLE_REFCOUNT")
+endif()
+if(ALASKA_ENABLE_REUSE_CACHE AND NOT ALASKA_ENABLE_REFCOUNT)
+  message(FATAL_ERROR "ALASKA_ENABLE_REUSE_CACHE requires ALASKA_ENABLE_REFCOUNT")
 endif()
 
 alaska_option(ALASKA_SIZE_BITS 32)

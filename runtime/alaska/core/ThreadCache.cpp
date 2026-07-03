@@ -82,11 +82,42 @@ namespace alaska {
 #endif  // ALASKA_ENABLE_DEFER_RC
 
 
+#if ALASKA_ENABLE_REUSE_CACHE
+  // Reclaim a cached (mapping, backing) entry through the normal free path: release the
+  // backing to whatever page now owns it and return the handle slot to the table. Used when
+  // the cached page is swapped out or at teardown -- exactly the tail of ThreadCache::hfree.
+  void ThreadCache::flush_reuse_class(int cls) {
+    ReuseEntry &e = reuse_cache[cls];
+    if (e.m == nullptr) return;
+    alaska::Mapping *m = e.m;
+    void *ptr = e.ptr;
+    e = ReuseEntry{};
+    auto *heap_page = alaska::Heap::get_page(ptr);
+    if (heap_page != nullptr) {
+      if (heap_page->is_owned_by(this))
+        heap_page->release_local(*m, ptr);
+      else
+        heap_page->release_remote(*m, ptr);
+    }
+    m->set_pointer(nullptr);
+    this->runtime.handle_table.put(m, this);
+  }
+
+  void ThreadCache::flush_reuse_cache(void) {
+    for (int cls = 0; cls < alaska::num_size_classes; cls++)
+      flush_reuse_class(cls);
+  }
+#endif
 
 
   SizedPage *ThreadCache::new_sized_page(int cls) {
     // alaska::printf("Thread %d needs new sized page for class %d\n", id, cls);
     heap_churn++;
+#if ALASKA_ENABLE_REUSE_CACHE
+    // The cached entry for this class lives on the page we are about to swap out; reclaim it
+    // the normal way before it stops being our current page for the class.
+    flush_reuse_class(cls);
+#endif
     // Get a new heap
     auto *heap = runtime.heap.get_sizedpage(alaska::class_to_size(cls), this);
 
@@ -220,6 +251,31 @@ namespace alaska {
       return NULL;
     }
 
+#if ALASKA_ENABLE_REUSE_CACHE
+    // Perceus fast path: re-hand the (mapping, backing) a uniquely-owned free stashed for
+    // this size class, skipping the freelist round-trip. Only if the cached page is still
+    // this tc's current page for the class (else the entry is stale -> flush it). The backing
+    // is returned uninitialized (halloc semantics); hcalloc's zeroing runs at the rt level.
+    {
+      ReuseEntry &e = reuse_cache[cls];
+      if (e.m != nullptr) {
+        if (e.page == size_classes[cls]) {
+          alaska::Mapping *m = e.m;
+          void *ptr = e.ptr;
+          e = ReuseEntry{};  // consume
+          m->reset();        // refcount -> 0, flags cleared (matches a fresh mapping)
+          auto *header = alaska::ObjectHeader::from(ptr);
+          header->set_mapping(m);
+          header->set_object_size(size);
+          m->set_pointer(header->data());  // == ptr
+          halloc_track(halloc_fastpath);
+          return m->to_handle(0);
+        }
+        flush_reuse_class(cls);  // stale (page swapped out): free normally, fall through
+      }
+    }
+#endif
+
     if (likely(size < alaska::max_small_size)) {
       // Grab the sized page for this size class.
       auto *sp = size_classes[cls];
@@ -315,6 +371,25 @@ namespace alaska {
     auto *heap_page = alaska::Heap::get_page(ptr);
 
     bool heap_owned = heap_page->is_owned_by(this);
+
+#if ALASKA_ENABLE_REUSE_CACHE
+    // Perceus stash: a uniquely-owned (refcount <= 1), locally-owned handle freed here is the
+    // only live reference, so its slot+backing can be re-handed to the next same-size alloc
+    // without aliasing a survivor. Stash the (mapping, backing, page) triple instead of freeing
+    // it -- iff the page is still this tc's current page for the object's class and the per-class
+    // slot is empty (single-entry cache; else fall through to the normal free). The GC
+    // nullcount/candidate sets were already cleared for this handle by the global hfree wrapper
+    // (rt/halloc.cpp), so a stashed live slot cannot be reclaimed underneath us.
+    if (heap_owned && m->get_refcount() <= 1 && !m->is_pinned()) {
+      auto *rheader = alaska::ObjectHeader::from(ptr);
+      int rcls = alaska::size_to_class(rheader->object_size());
+      if (rcls > 0 && rcls < alaska::num_size_classes &&
+          (alaska::HeapPage *)size_classes[rcls] == heap_page && reuse_cache[rcls].m == nullptr) {
+        reuse_cache[rcls] = ReuseEntry{m, ptr, size_classes[rcls]};
+        return;
+      }
+    }
+#endif
 
     // Now the slow path.
 

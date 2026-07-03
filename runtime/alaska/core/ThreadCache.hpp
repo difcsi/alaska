@@ -64,6 +64,27 @@ namespace alaska {
     long generic_count = 0;
     long generic_collect_count = 0;
 
+#if ALASKA_ENABLE_REUSE_CACHE
+    // Perceus-flavored reuse cache (see CMakeLists ALASKA_ENABLE_REUSE_CACHE). One slot per
+    // size class: when a uniquely-owned handle (refcount <= 1) is freed on the synchronous
+    // path, hfree stashes its still-live (mapping, backing, page) triple here instead of
+    // returning the backing to the page freelist and the slot to the handle table. The next
+    // same-size halloc re-hands the same handle + backing, skipping the round-trip. `page` is
+    // recorded so the alloc path can verify it is still this tc's current page for the class
+    // (a swapped-out page invalidates the entry). Adapted to dev's ObjectHeader allocator.
+    struct ReuseEntry {
+      alaska::Mapping *m = nullptr;
+      void *ptr = nullptr;
+      alaska::SizedPage *page = nullptr;
+    };
+    ReuseEntry reuse_cache[alaska::num_size_classes];
+
+    // Drop a cached entry back through the normal free path (free backing + return slot).
+    void flush_reuse_class(int cls);
+    // Flush every cached entry (page swap-out / thread-cache teardown).
+    void flush_reuse_cache(void);
+#endif
+
 #if ALASKA_ENABLE_DEFER_RC
     // Deferred-RC increment log (Levanoni-Petrank; see defer_inc / drain_inc). A fixed,
     // preallocated single-producer buffer of target mappings awaiting a batched refcount

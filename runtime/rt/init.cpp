@@ -68,7 +68,16 @@ static void *barrier_thread_func(void *) {
       {
         static int no_compact = -1;
         if (no_compact < 0) no_compact = (getenv("ALASKA_NO_COMPACT") != nullptr) ? 1 : 0;
-        if (!no_compact) rt.heap.compact_sizedpages();
+        if (!no_compact) {
+#if ALASKA_ENABLE_REUSE_CACHE
+          // Flush every thread's reuse-cache stash BEFORE compacting: a stashed backing is
+          // held out of the freelist but still marked allocated in its page, so compaction
+          // must not relocate it while reuse still hands out the old address. World-stopped.
+          for (auto *tcx : rt.tcs)
+            tcx->flush_reuse_cache();
+#endif
+          rt.heap.compact_sizedpages();
+        }
       }
 #endif
     });
