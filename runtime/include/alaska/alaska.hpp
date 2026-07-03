@@ -397,6 +397,21 @@ namespace alaska {
     static ALASKA_INLINE bool is_handle(void *ptr) {
       return (int64_t)ptr < 0;  // This is quicker than shifting and masking :)
     }
+
+    // Fast conservative-scan pre-filter. from_handle decodes a word as `word >> (SIZE-SQUEEZE)`
+    // (29), so a word can only name a REAL, 8-byte-aligned mapping slot if (a) its handle/sign bit
+    // is set AND (b) the three bits that become the decoded pointer's low (alignment) bits -- i.e.
+    // bits [29,31] of the word -- are clear. One mask test rejects ~15/16 of arbitrary stack/
+    // register words before any handle-table load or Runtime::get(). NECESSARY, NOT SUFFICIENT:
+    // a caller that passes this must still run HandleTable::is_live_handle (bounds + is_free +
+    // backing) -- a freed slot's raw free-list link is aligned and in-range but must be rejected.
+    // Real handles are never filtered: an object offset < 2^29 leaves bits [29,31] zero.
+    static ALASKA_INLINE bool could_be_aligned_handle(void *ptr) {
+      constexpr unsigned kShift = ALASKA_SIZE_BITS - ALASKA_SQUEEZE_BITS;
+      constexpr uintptr_t kAlignBits = (uintptr_t)(sizeof(alaska::Mapping) - 1) << kShift;
+      constexpr uintptr_t kSignBit = 1ULL << 63;
+      return ((uintptr_t)ptr & (kSignBit | kAlignBits)) == kSignBit;
+    }
   };
 
 

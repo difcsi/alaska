@@ -181,7 +181,10 @@ void alaska_dec_refcount_slow(void *ptr, int new_count) {
 // is_free() reports it live and the inc/dec below would CAS-corrupt that link. See
 // HandleTable::is_live_handle. (Mirrors CycleCollector::is_collectable.)
 static inline bool word_is_live_handle(void *p) {
-  auto *m = alaska::Mapping::from_handle_safe(p);
+  // Cheap early-out via the alignment invariant (see Mapping::could_be_aligned_handle): only a
+  // sign-bit-set word whose >>29 is 8-aligned can name a real slot -- skip the table load otherwise.
+  if (not alaska::Mapping::could_be_aligned_handle(p)) return false;
+  auto *m = alaska::Mapping::from_handle(p);
   return alaska::Runtime::get().handle_table.is_live_handle(m);
 }
 

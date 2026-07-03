@@ -166,6 +166,15 @@ namespace alaska {
 
 
   bool HandleTable::valid_handle(Mapping *m) const {
+    // A real handle slot is base + slot*sizeof(Mapping), and base (m_table) is 8-aligned, so any
+    // genuine mapping pointer is 8-byte aligned. The conservative stack/register scanners
+    // (barrier record_handle, refcount word_is_live_handle) feed ARBITRARY words here via
+    // Mapping::from_handle (word >> 29), which for a false positive can land MISALIGNED inside the
+    // table. Without this check such a word passes, and set_pinned's `lock or (1<<61)` then does a
+    // MISALIGNED 8-byte atomic OR whose high byte spills into the ADJACENT mapping word -- flipping
+    // bit 13 of a live neighbor's backing pointer (the intermittent binarytrees SIGSEGV). Real
+    // handles are never rejected: the object offset lives in the low bits, so word>>29 stays aligned.
+    if ((uintptr_t)m & (sizeof(alaska::Mapping) - 1)) return false;
     return mapping_slab_idx(m) < (slabidx_t)m_slabs.size();
   }
 
