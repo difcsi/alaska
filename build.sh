@@ -6,14 +6,11 @@
 #      bootstraps clang+gclang under `./local` via `tools/get_llvm.sh` /
 #      `tools/build_gclang.sh` and exposes it through the top-level `./enable`. All
 #      toolchain paths below were retargeted from `opt/llvm` -> `local` accordingly.
-#   2. Anchorage is INERT on dev: dev has no anchorage heap-defrag service yet, and
-#      the ALASKA_ENABLE_ANCHORAGE gate in CMakeLists.txt is an accepted-but-inert
-#      switch (see the comment there). The `anchorage`, `refcount-anchorage`,
-#      `refcount-gc-anchorage`, and `refcount-gc-anchorage-defer` presets therefore
-#      configure and build cleanly but are behaviorally identical to their
-#      non-anchorage counterparts until the service is ported. They are kept so the
-#      harness (build.sh + CMakePresets.json + benchmarks/) is a faithful copy of
-#      main-rc's.
+#   2. Anchorage is FUNCTIONAL on dev: the ALASKA_ENABLE_ANCHORAGE gate wires dev's
+#      existing Heap::compact_sizedpages() into the periodic barrier thread (see
+#      runtime/rt/init.cpp), so the `anchorage`, `refcount-anchorage`,
+#      `refcount-gc-anchorage`, and `refcount-gc-anchorage-defer` presets perform
+#      real in-barrier heap compaction. Runtime kill-switch: ALASKA_NO_COMPACT=1.
 
 ROOT="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 
@@ -96,7 +93,8 @@ fi
 # dir, install prefix, and opt/enable-alaska-<config> script. Their feature triple
 # (REFCOUNT / CYCLE_COLLECTION / ANCHORAGE) is set by the matching preset in
 # CMakePresets.json.
-# PORT-NOTE: the *-anchorage configs are inert on dev (no anchorage service yet).
+# PORT-NOTE: the *-anchorage configs perform real in-barrier compaction on dev
+# (Heap::compact_sizedpages wired into the barrier thread; ALASKA_NO_COMPACT to disable).
 for config in noservice anchorage refcount refcount-anchorage refcount-gc refcount-gc-anchorage refcount-gc-anchorage-defer; do
   INSTALL_DIR=${ROOT}/opt/alaska-${config}
 

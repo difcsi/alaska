@@ -47,6 +47,23 @@ static void *barrier_thread_func(void *) {
 
     rt.with_barrier([&]() {
       toWait = rt.scheduler.tick(toWait);
+
+#if ALASKA_ENABLE_ANCHORAGE
+      // Anchorage: in-barrier heap compaction (defragmentation). Heap compaction and
+      // cycle collection are duals (Deutsch & Bobrow) -- both walk the heap with the
+      // world stopped -- so we piggy-back on the same barrier the scheduler already
+      // took. dev's Heap::compact_sizedpages() relocates live objects out of
+      // fragmented sized pages and rewrites each moved handle's Mapping backing
+      // pointer; on-stack handles are pinned by with_barrier, so compact() leaves
+      // them in place. Ported from main-rc's barrier-thread compaction step.
+      // Diagnostic kill-switch: ALASKA_NO_COMPACT=1 disables it (to isolate a
+      // premature-free/corruption source without turning the whole service off).
+      {
+        static int no_compact = -1;
+        if (no_compact < 0) no_compact = (getenv("ALASKA_NO_COMPACT") != nullptr) ? 1 : 0;
+        if (!no_compact) rt.heap.compact_sizedpages();
+      }
+#endif
     });
   }
 

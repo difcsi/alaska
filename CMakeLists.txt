@@ -58,11 +58,11 @@ alaska_switch(ALASKA_ENABLE_CYCLE_COLLECTION OFF)
 alaska_switch(ALASKA_ENABLE_EVENT_COUNTERS   OFF)
 alaska_switch(ALASKA_ENABLE_CACHE_PROBE      OFF)
 alaska_switch(ALASKA_ENABLE_DEFER_RC         OFF)
-# ANCHORAGE: dev has NO anchorage heap-defragmentation service implemented yet, so
-# this gate is currently INERT -- it is accepted (and emits ALASKA_ENABLE_ANCHORAGE=1
-# when ON) purely so main-rc's presets/harness configure and build cleanly. Until the
-# service is ported, anchorage builds are equivalent to their non-anchorage
-# counterparts. Defaulted OFF.
+# ANCHORAGE: in-barrier heap compaction (defragmentation). When ON, the periodic
+# barrier thread calls Heap::compact_sizedpages() each tick (see runtime/rt/init.cpp),
+# relocating live objects out of fragmented sized pages -- dev already implemented the
+# compaction machinery (Heap::compact_sizedpages / SizedPage::compact); this gate wires
+# it into the barrier. Runtime kill-switch: ALASKA_NO_COMPACT=1. Defaulted OFF.
 alaska_switch(ALASKA_ENABLE_ANCHORAGE        OFF)
 
 if(ALASKA_ENABLE_CYCLE_COLLECTION AND NOT ALASKA_ENABLE_REFCOUNT)
