@@ -182,7 +182,11 @@ add_subdirectory(runtime)
 
 if(ALASKA_ENABLE_COMPILER)
   # configure LLVM
-  find_package(LLVM 21.1.0 REQUIRED CONFIG)
+  # Must match the toolchain tools/get_llvm.sh provisions (LLVM_VERSION=16.0.4) and the LLVM
+  # era the compiler passes are written against (main-rc pins `find_package(LLVM 16)`; dev's
+  # passes use LLVM-16 APIs, e.g. StringRef::starts_with). The prior `21.1.0` requirement did
+  # not match the fetched 16.0.4 toolchain, so configure always failed against ./local.
+  find_package(LLVM 16 REQUIRED CONFIG)
 
   set(LLVM_RUNTIME_OUTPUT_INTDIR ${CMAKE_BINARY_DIR}/${CMAKE_CFG_INTDIR}/)
   set(LLVM_LIBRARY_OUTPUT_INTDIR ${CMAKE_BINARY_DIR}/${CMAKE_CFG_INTDIR}/)
