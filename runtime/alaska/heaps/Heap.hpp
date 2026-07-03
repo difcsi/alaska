@@ -91,6 +91,9 @@ namespace alaska {
       return addr >= (uintptr_t)heap_start && addr < (uintptr_t)heap_end;
     }
 
+    // Start of the contiguous backing heap (for liballocs metadata export).
+    inline void *get_start(void) const { return heap_start; }
+
     const ck::vec<alaska::HeapPage *> &get_page_table(void) const { return page_table; }
 
 

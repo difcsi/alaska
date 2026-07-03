@@ -50,6 +50,30 @@ namespace alaska {
       return (float)num_free_in_free_list() / (float)object_extent();
     }
 
+    // liballocs metadata helpers (see HeapPage). Objects are laid out from objects_start
+    // with stride (object_size + sizeof(ObjectHeader)) as [ObjectHeader][data]; data =
+    // header + sizeof(ObjectHeader). Correct-by-construction against alloc() (SizedPage.cpp).
+    void *object_base(void *interior) override {
+      if ((uintptr_t)interior < (uintptr_t)objects_start ||
+          (uintptr_t)interior >= (uintptr_t)objects_end)
+        return nullptr;
+      size_t real = object_size + sizeof(alaska::ObjectHeader);
+      size_t ind = ((uintptr_t)interior - (uintptr_t)objects_start) / real;
+      auto *h = (alaska::ObjectHeader *)((uintptr_t)objects_start + ind * real);
+      return h->data();
+    }
+    size_t size_of(void *interior) override {
+      return ((uintptr_t)interior >= (uintptr_t)objects_start &&
+                 (uintptr_t)interior < (uintptr_t)objects_end)
+                 ? object_size
+                 : 0;
+    }
+    alaska::Mapping *mapping_of(void *interior) override {
+      void *base = object_base(interior);
+      if (base == nullptr) return nullptr;
+      return alaska::ObjectHeader::from(base)->get_mapping();
+    }
+
 
     // How many free slots are there? (We return an estimate!)
     inline size_t available(void) override { return num_free() * object_size; }

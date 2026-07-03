@@ -82,6 +82,16 @@ if(ALASKA_ENABLE_REUSE_CACHE AND NOT ALASKA_ENABLE_REFCOUNT)
   message(FATAL_ERROR "ALASKA_ENABLE_REUSE_CACHE requires ALASKA_ENABLE_REFCOUNT")
 endif()
 
+# liballocs integration: when Alaska is built inside a liballocs tree, that build injects
+# -DALASKA_LIBALLOCS_INSERT_RESERVE=8 (== sizeof(struct insert)) so each allocation reserves a
+# trailing insert for liballocs metadata; a standalone dev build reserves nothing (0). The
+# exported metadata helpers live in runtime/rt/liballocs_export.cpp.
+if(NOT DEFINED ALASKA_LIBALLOCS_INSERT_RESERVE)
+  set(ALASKA_LIBALLOCS_INSERT_RESERVE 0)
+endif()
+add_compile_definitions(ALASKA_LIBALLOCS_INSERT_RESERVE=${ALASKA_LIBALLOCS_INSERT_RESERVE})
+message(STATUS "ALASKA_LIBALLOCS_INSERT_RESERVE=${ALASKA_LIBALLOCS_INSERT_RESERVE}")
+
 alaska_option(ALASKA_SIZE_BITS 32)
 alaska_option(CMAKE_BUILD_TYPE Release)
 alaska_option_nodef(ALASKA_ENABLE_COMPONENTS "compiler;compiler-rts")

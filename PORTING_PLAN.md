@@ -16,6 +16,8 @@ unvalidated code compiles out of it.
 | Atomic refcount | ✅ | `Mapping::inc/dec_refcount` now whole-word CAS, **dev's Mapping layout preserved** (field mutated through the bitfield). |
 | Zero-refcount reclaim | ✅ (gated) | `alaska_refcount_reclaim` + nullcount query API; uses dev's barrier handle-**pinning** instead of a separate present bitmap. |
 | Cycle collector | ✅ (gated) | Bacon-Rajan trial deletion (`alaska/CycleCollector.{hpp,cpp}`), adapted to dev's ThreadCache/Runtime; C-API stubs when off. |
+| Perceus reuse cache | ✅ (gated) | `ALASKA_ENABLE_REUSE_CACHE`: per-size-class stash of a uniquely-owned free's (mapping, backing, page), re-handed by the next same-size halloc. Adapted to dev's ObjectHeader allocator (exact-pointer only, no layout guesses). Flushed on page swap-out / before compaction. |
+| liballocs metadata export | ◑ (partial) | `runtime/rt/liballocs_export.cpp` exports heap_start/size, object_base/size, handle_for, page_extent for the external liballocs preload, via new `HeapPage::object_base/size_of/mapping_of` (SizedPage overrides, correct-by-construction) + `Heap::get_start` + `ALASKA_LIBALLOCS_INSERT_RESERVE` (default 0). PORT-NOTE: huge-object resolution NOT ported (dev's HugeObjectAllocator lacks interior→base/extent lookup); the deeper "route cycle reclaim through stackscan" is not ported (dev reclaim uses barrier pinning instead). |
 | Deferred RC (Levanoni-Petrank) | ✅ (gated) | `ALASKA_ENABLE_DEFER_RC`: per-thread preallocated inc-log on ThreadCache (`defer_inc`/`drain_inc`, ctor alloc/dtor free), the inc barrier routes through `defer_inc` (eager fallback on overflow), and every world-stopped barrier (periodic / reclaim / cycle-collect) drains all logs FIRST so no free decision reads an undercounted handle. Cap via `ALASKA_INC_LOG_CAP`. |
 | Anchorage (compaction) | ✅ (gated) | `ALASKA_ENABLE_ANCHORAGE` now wires dev's existing `Heap::compact_sizedpages()`/`SizedPage::compact()` into the barrier thread each tick (init.cpp), + an `ALASKA_ENABLE_EVENT_COUNTERS` compaction tally. dev already had the compaction machinery; it was never called. Kill-switch `ALASKA_NO_COMPACT`. |
 | Dec-on-free + copy-inc | ✅ (gated) | `alaska_hfree_dec_children` (drops an aggregate's child refs on free) + `alaska_inc_handles_in_range` (re-balances memcpy'd handle refs, emitted by RefcountInc). Uses dev's `ThreadCache::get_size`/`reverse_lookup` + `is_live_handle` + `could_be_aligned_handle`/`ALASKA_KEEP_HANDLE_ALIVE`. Defined always (links), work gated so dev's default free is unchanged and inc/dec stay balanced. Env opt-outs `ALASKA_NO_FREE_DEC` / `ALASKA_NO_COPY_INC`. |
@@ -30,9 +32,13 @@ unvalidated code compiles out of it.
   is dropped; the side bitmap is the source of truth.
 - (Deferred increments, dec-on-free + copy-inc, and anchorage — previously listed here
   as deferred — are now ported; see the status table above.)
-- **liballocs integration**, **Yukon runtime hooks**, **Perceus reuse cache** — not
-  ported (the runtime `runtime/core/liballoc.c`, `liballocs_export.cpp`, huge-object
-  refcount paths). Compiler-side StackPromote *is* in.
+- **Perceus reuse cache** and the **liballocs metadata export** are now ported (see the
+  status table). Still NOT ported: **liballocs huge-object resolution** (dev's
+  HugeObjectAllocator lacks interior→base/extent lookup) and the liballocs "route cycle
+  reclaim through stackscan" path (dev reclaim uses barrier handle-pinning instead); the
+  embedded `runtime/core/liballoc.c` internal malloc (dev has its own internal malloc);
+  and **Yukon stack→heap promotion**'s runtime hooks (the compiler-side StackPromote pass
+  *is* in).
 - **Benchmark/plot harness** (`plotgen/`, `benchmarks/`, `run_all.sh`) — main-only;
   dev has no such harness, so intentionally skipped.
 - `a.json` crash dump — dropped (artifact).

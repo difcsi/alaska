@@ -91,6 +91,14 @@ namespace alaska {
     virtual size_t committed_bytes(void) { return header()->end - header()->start; }
     virtual size_t available(void) = 0;  // how many bytes are available for allocation?
 
+    // liballocs metadata helpers: given a raw BACKING pointer (interior allowed) into this
+    // page, resolve the containing object. The base class returns "unknown"; SizedPage
+    // overrides using its object layout. Consumed by rt/liballocs_export.cpp so an external
+    // liballocs preload can answer base/size/type queries for Alaska-backed objects.
+    virtual void* object_base(void* interior) { return nullptr; }
+    virtual size_t size_of(void* interior) { return 0; }
+    virtual alaska::Mapping* mapping_of(void* interior) { return nullptr; }
+
 
     void* start(void) const { return memory; }
     void* end(void) const { return (void*)((uintptr_t)memory + page_size); }

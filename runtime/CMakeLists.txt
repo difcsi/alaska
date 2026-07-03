@@ -154,6 +154,7 @@ if(NOT ALASKA_CORE_ONLY) # -----------------------------------------------------
     rt/compat.c
     rt/barrier.cpp
     rt/refcount.cpp
+    rt/liballocs_export.cpp
     $<TARGET_OBJECTS:alaska_core_objects>
   )
 
