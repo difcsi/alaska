@@ -79,6 +79,7 @@ add_llvm_library(Alaska MODULE
 	passes/Normalize.cpp
 	passes/Escape.cpp
 	passes/StackPromote.cpp
+	passes/HoistInductionTranslate.cpp
 	passes/TranslatePass.cpp
 	passes/Replacement.cpp
 	passes/Lower.cpp

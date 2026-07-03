@@ -81,6 +81,23 @@ class AlaskaEscapePass : public llvm::PassInfoMixin<AlaskaEscapePass> {
 
 
 /**
+ * AlaskaHoistInductionTranslatePass - Strength-reduce translations of loop
+ * pointer-induction variables into "translated space". AlaskaTranslatePass
+ * anchors a translation at the induction phi (phis are unconditional roots),
+ * so a pointer walked through a loop is re-translated every iteration. This
+ * pass hoists the translate of the loop-invariant base into the preheader and
+ * advances a translated induction pointer in the loop, removing the per-edge
+ * translate. See HoistInductionTranslate.cpp for the pinning argument. Opt-in;
+ * must run after `alaska-translate` and before `alaska-tracking`.
+ */
+class AlaskaHoistInductionTranslatePass
+    : public llvm::PassInfoMixin<AlaskaHoistInductionTranslatePass> {
+ public:
+  llvm::PreservedAnalyses run(llvm::Module &M, llvm::ModuleAnalysisManager &AM);
+};
+
+
+/**
  * AlaskaStackPromotePass ("Yukon") - Promote address-taken stack objects to the
  * heap so they become handles. A pycallocs/Python proxy can only be built for a
  * heap object (Python may relocate it, e.g. on list.append), so any stack

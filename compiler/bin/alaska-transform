@@ -26,6 +26,10 @@ parser.add_argument('input', help='The input .bc file to apply alaska transforma
 parser.add_argument('--disable-tracking', action='store_true')
 parser.add_argument('--disable-hoisting', action='store_true')
 parser.add_argument('--disable-inlining', action='store_true')
+parser.add_argument('--hoist-induction', action='store_true',
+    help='Strength-reduce translations of loop pointer-induction variables into '
+         'translated space (removes per-iteration alaska_translate on streaming '
+         'pointer walks, e.g. CSR adjacency scans). Opt-in.')
 
 # "Yukon" stack-to-heap promotion: rewrite address-taken stack objects into
 # halloc handles so a pycallocs/Python proxy can be built for them.
@@ -110,10 +114,15 @@ if not args.baseline:
   # translation: the halloc calls it introduces are picked up as translation
   # roots, whereas the allocas they replace would never be translated.
   promote = ['alaska-stack-promote'] if args.stack_promote else []
+  # Optional induction-translate strength reduction runs right after translation
+  # (while alaska.root/alaska.translate markers are still present) and before
+  # tracking, so PinTracking pins the hoisted translation across the back-edge
+  # safepoint PlaceSafepoints later inserts.
+  induction = ['alaska-hoist-induction'] if args.hoist_induction else []
   if not args.disable_hoisting:
-    run_passes(['alaska-replace'] + promote + ['alaska-translate'])
+    run_passes(['alaska-replace'] + promote + ['alaska-translate'] + induction)
   else:
-    run_passes(['alaska-replace'] + promote + ['alaska-translate-nohoist'])
+    run_passes(['alaska-replace'] + promote + ['alaska-translate-nohoist'] + induction)
 
 
   # run_passes(['alaska-translate'])

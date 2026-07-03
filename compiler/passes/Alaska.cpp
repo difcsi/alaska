@@ -200,6 +200,7 @@ extern "C" LLVM_ATTRIBUTE_WEAK ::llvm::PassPluginLibraryInfo llvmGetPassPluginIn
           }
 
           REGISTER("alaska-stack-promote", AlaskaStackPromotePass);
+          REGISTER("alaska-hoist-induction", AlaskaHoistInductionTranslatePass);
           REGISTER("alaska-escape", AlaskaEscapePass);
           if (name == "alaska-lower") {
             MPM.addPass(AlaskaLowerPass());

@@ -148,6 +148,11 @@ class AlaskaStage(wl.pipeline.Stage):
     aux_args = []
     if self.baseline:
       aux_args.append('--baseline')
+    # A/B toggle for the induction-translate strength reduction (opt-in pass).
+    # Set ALASKA_HOIST_INDUCTION=1 to enable it for the whole sweep without
+    # editing code, so the same command reproduces both arms of the comparison.
+    if not self.baseline and os.environ.get("ALASKA_HOIST_INDUCTION", "").lower() in ("1", "true", "yes", "on"):
+      aux_args.append('--hoist-induction')
     env = os.environ.copy()
     if benchmark.suite.name == "SPEC2017":
       if benchmark.name == '602.gcc_s':
@@ -177,10 +182,11 @@ class OptStage(waterline.pipeline.Stage):
 # Set ALASKA_BENCH_QUICK=1 for a representative subset that finishes in ~1h, or tune
 # any knob individually (env overrides QUICK):
 #   ALASKA_BENCH_QUICK   shrink everything for a ~1h sweep      (off by default)
-#   ALASKA_SUITES        which suites to run, comma-separated   (embench,gap,nas;
-#                        add `olden` for the pointer-intensive suite, `gcbench` for
-#                        the alloc/free tree workloads that actually exercise hfree,
-#                        or `mibench` for the embedded-workload suite)
+#   ALASKA_SUITES        which suites to run, comma-separated   (embench,gap,nas,olden;
+#                        `olden` (pointer-intensive) is now on by default and is
+#                        quick-shrunk under ALASKA_BENCH_QUICK. Add `gcbench` for the
+#                        alloc/free tree workloads that actually exercise hfree, or
+#                        `mibench` for the embedded-workload suite)
 #   ALASKA_BENCH         run only these benchmark(s) within the selected suites,
 #                        comma-separated (e.g. binarytrees). Applies to suites that
 #                        support per-benchmark selection (gcbench, olden); empty=all
@@ -196,7 +202,7 @@ NAS_CLASS = os.environ.get("ALASKA_NAS_CLASS", "W" if _quick else "B")
 # the sweep's wall-clock even at class W. The lighter kernels still run.
 NAS_EXCLUDE = ("bt", "sp", "lu") if _quick else ()
 RUNS = int(os.environ.get("ALASKA_RUNS", "2"))
-_suites = [s.strip() for s in os.environ.get("ALASKA_SUITES", "embench,gap,nas").lower().split(",") if s.strip()]
+_suites = [s.strip() for s in os.environ.get("ALASKA_SUITES", "embench,gap,nas,olden").lower().split(",") if s.strip()]
 # Per-benchmark selector: run only these named benchmarks within suites that
 # support a `benchmarks=` subset (gcbench, olden). None => run the whole suite.
 _bench_filter = [b.strip() for b in os.environ.get("ALASKA_BENCH", "").split(",") if b.strip()] or None
@@ -219,7 +225,7 @@ if "nas" in _suites:
   space.add_suite(wl.suites.NAS, enable_openmp=False, suite_class=NAS_CLASS, exclude=NAS_EXCLUDE)
 # Olden: pointer-intensive heap workloads that allocate AND free handle-linked
 # structures -- the suite that actually exercises decref / dec-on-free / GC
-# reclamation. Opt-in (not in the default ALASKA_SUITES list). Quick mode shrinks
+# reclamation. On by default (in the default ALASKA_SUITES list). Quick mode shrinks
 # every benchmark's problem size (see Olden.QUICK_ARGS), like the other suites.
 if "olden" in _suites:
   space.add_suite(wl.suites.Olden, quick=_quick, benchmarks=_bench_filter)
@@ -235,14 +241,28 @@ if "gcbench" in _suites:
 if "mibench" in _suites:
   space.add_suite(wl.suites.MiBench, quick=_quick)
 
-# Attempt to find SPEC2017 CPU on the system.
+# Attempt to find SPEC2017 CPU on the system. Two sources, in priority order:
+#   1. A distribution tarball (SPEC2017.tar.gz) in one of the find_spec() paths --
+#      unpacked & installed fresh into the workspace.
+#   2. An already-installed SPEC tree at the suite's DEFAULT_SPEC_DIR
+#      (/usr/local/src/spec-cpu2017) -- copied into the workspace as-is.
+# Previously only (1) was honored, so a machine with SPEC installed but no tarball
+# silently skipped the whole suite.
+_spec_install_dir = wl.suites.spec2017.DEFAULT_SPEC_DIR
 spec = find_spec()
 if spec:
-  # If we found spec, add it to the suite
-  print('Found spec here:', spec)
+  print('Found spec tarball here:', spec)
   space.add_suite(wl.suites.SPEC2017,
                   tar=spec,
                   config=get_spec_size())
+elif os.path.isdir(_spec_install_dir):
+  print('Found installed spec here:', _spec_install_dir)
+  space.add_suite(wl.suites.SPEC2017,
+                  spec_dir=_spec_install_dir,
+                  config=get_spec_size())
+else:
+  print(f'SPEC2017 not found (no tarball and no install at '
+        f'{_spec_install_dir}); skipping SPEC.')
 
 space.clear_pipelines()
 
