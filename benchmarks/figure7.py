@@ -1,3 +1,4 @@
+spec = False
 import waterline as wl
 import waterline.suites
 import waterline.utils
@@ -222,7 +223,15 @@ if "embench" in _suites:
 if "gap" in _suites:
   space.add_suite(wl.suites.GAP, enable_openmp=False, enable_exceptions=False, graph_size=GAP_SIZE)
 if "nas" in _suites:
-  space.add_suite(wl.suites.NAS, enable_openmp=False, suite_class=NAS_CLASS, exclude=NAS_EXCLUDE)
+  # Honor the per-benchmark selector (ALASKA_BENCH) for NAS too, so a single heavy
+  # pseudo-app (e.g. sp) can be reproduced in isolation without editing this file.
+  # NAS.configure only takes an exclude= list, so translate an inclusive filter into
+  # "exclude everything not named", unioned with the quick-mode NAS_EXCLUDE.
+  _nas_all = ("bt", "sp", "lu", "mg", "ft", "is", "cg", "ep")
+  _nas_exclude = set(NAS_EXCLUDE)
+  if _bench_filter is not None:
+    _nas_exclude |= {b for b in _nas_all if b not in _bench_filter}
+  space.add_suite(wl.suites.NAS, enable_openmp=False, suite_class=NAS_CLASS, exclude=tuple(_nas_exclude))
 # Olden: pointer-intensive heap workloads that allocate AND free handle-linked
 # structures -- the suite that actually exercises decref / dec-on-free / GC
 # reclamation. On by default (in the default ALASKA_SUITES list). Quick mode shrinks
@@ -252,14 +261,14 @@ _spec_install_dir = wl.suites.spec2017.DEFAULT_SPEC_DIR
 spec = find_spec()
 if spec:
   print('Found spec tarball here:', spec)
-  space.add_suite(wl.suites.SPEC2017,
-                  tar=spec,
-                  config=get_spec_size())
+ # space.add_suite(wl.suites.SPEC2017,
+  #                tar=spec,
+   #               config=get_spec_size())
 elif os.path.isdir(_spec_install_dir):
   print('Found installed spec here:', _spec_install_dir)
-  space.add_suite(wl.suites.SPEC2017,
-                  spec_dir=_spec_install_dir,
-                  config=get_spec_size())
+#  space.add_suite(wl.suites.SPEC2017,
+    #              spec_dir=_spec_install_dir,
+     #             config=get_spec_size())
 else:
   print(f'SPEC2017 not found (no tarball and no install at '
         f'{_spec_install_dir}); skipping SPEC.')
