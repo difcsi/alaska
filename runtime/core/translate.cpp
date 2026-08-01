@@ -177,8 +177,25 @@ extern "C" void alaska_inc_refcount_nullcount(void *ptr);
 extern "C" void alaska_defer_inc(alaska::Mapping *m);
 #endif
 
+// Validate-and-decode a word the compiler-inserted barriers hand us. The DEC
+// barrier's operand is the *loaded old value* of the store target -- for a
+// first store to an uninitialized slot (e.g. a caller-stack out-parameter,
+// which the passes cannot prove is stack) that is arbitrary garbage, and with
+// bit 63 set from_handle_safe would decode it to an out-of-table Mapping*
+// whose CAS faults (observed: xmlConvertUriToPath's first `*out` store under
+// the instrumented libxml2). Same filter as rt/refcount.cpp's
+// word_is_live_handle: the alignment invariant, then the handle table's
+// no-deref bounds/liveness check -- which also stops an in-range-garbage inc
+// from CAS-corrupting a free-list link.
+static ALASKA_INLINE alaska::Mapping *barrier_live_mapping(void *ptr) {
+  if (!alaska::Mapping::could_be_aligned_handle(ptr)) return nullptr;
+  auto *m = alaska::Mapping::from_handle(ptr);
+  if (!alaska::Runtime::get().handle_table.is_live_handle(m)) return nullptr;
+  return m;
+}
+
 extern "C" void alaska_inc_refcount(void *ptr) {
-  auto *m = alaska::Mapping::from_handle_safe(ptr);  // null / non-handle -> nullptr
+  auto *m = barrier_live_mapping(ptr);  // null / non-handle / garbage -> nullptr
   if (m == nullptr) return;
 #if ALASKA_ENABLE_DEFER_RC
   alaska_defer_inc(m);
@@ -205,7 +222,7 @@ extern "C" void alaska_dec_refcount_slow(void *ptr, int new_count);
 #endif
 
 extern "C" void alaska_dec_refcount(void *ptr) {
-  auto *m = alaska::Mapping::from_handle_safe(ptr);  // null / non-handle -> nullptr
+  auto *m = barrier_live_mapping(ptr);  // null / non-handle / garbage -> nullptr
   if (m == nullptr) return;
   auto new_count = m->dec_refcount();
 #if ALASKA_ENABLE_CYCLE_COLLECTION

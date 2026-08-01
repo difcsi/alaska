@@ -461,12 +461,12 @@ add_custom_target(redis_alaska_large_csv DEPENDS ${ALASKA_REDIS_LARGE_CSV})
 add_custom_command(
   OUTPUT ${ALASKA_REDIS_FIG11_PDF}
   COMMAND ${CMAKE_COMMAND} -E echo "Plotting figure 11"
-  COMMAND /bin/bash -lc ". ${CMAKE_SOURCE_DIR}/venv/bin/activate && python3 ${CMAKE_SOURCE_DIR}/plotgen/figure9.py"
+  COMMAND /bin/bash -lc ". ${CMAKE_SOURCE_DIR}/venv/bin/activate && python3 ${CMAKE_SOURCE_DIR}/plotgen/figure11.py"
   WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
   DEPENDS
     ${ALASKA_VENV_TOUCHFILE}
     ${ALASKA_REDIS_LARGE_CSV}
-    ${CMAKE_SOURCE_DIR}/plotgen/figure9.py
+    ${CMAKE_SOURCE_DIR}/plotgen/figure11.py
   USES_TERMINAL
   VERBATIM
 )
